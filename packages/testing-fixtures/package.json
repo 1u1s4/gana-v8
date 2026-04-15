@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Shared fixture builders and deterministic test data placeholders.",
+  "description": "Synthetic fixture packs and sandbox profile scaffolding for isolated testing.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs testing-fixtures",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
+    "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },

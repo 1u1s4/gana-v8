@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Isolated sandbox execution entrypoint for replay and experiment workflows.",
+  "description": "Isolated sandbox execution entrypoint for smoke, replay, and cron validation workflows.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,8 +19,8 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs sandbox-runner",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm --filter @gana-v8/testing-fixtures build && tsx --test tests/**/*.test.ts",
+    "typecheck": "pnpm --filter @gana-v8/testing-fixtures build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
