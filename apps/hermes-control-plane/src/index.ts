@@ -13,6 +13,10 @@ import {
   workspaceInfo as orchestrationWorkspaceInfo,
 } from "../../../packages/orchestration-sdk/src/index.js";
 import {
+  loadRuntimeConfig,
+  type RuntimeConfig,
+} from "../../../packages/config-runtime/src/index.js";
+import {
   FakeFootballApiClient,
   FootballApiFacade,
   ingestFixturesWindow,
@@ -42,9 +46,20 @@ export function describeWorkspace() {
   return `${workspaceInfo.workspaceName} (${workspaceInfo.category}) -> ${describeOrchestrationSdk()}`;
 }
 
+export interface DemoRunRuntime {
+  readonly appEnv: RuntimeConfig["app"]["env"];
+  readonly profile: RuntimeConfig["app"]["profile"];
+  readonly providerSource: RuntimeConfig["provider"]["source"];
+  readonly providerBaseUrl: string;
+  readonly logLevel: RuntimeConfig["logging"]["level"];
+  readonly dryRun: boolean;
+  readonly demoMode: boolean;
+}
+
 export interface DemoRunSummary {
   readonly triggeredAt: string;
   readonly workspace: string;
+  readonly runtime: DemoRunRuntime;
   readonly registeredIntents: readonly WorkflowIntent[];
   readonly queuedBeforeRun: number;
   readonly completedCount: number;
@@ -62,31 +77,58 @@ export interface DemoRunResult {
   readonly warnings: readonly string[];
 }
 
-const createFixtureFacade = () =>
+export interface DemoRunOptions {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+const toProviderSourceName = (runtimeConfig: RuntimeConfig): string =>
+  `${runtimeConfig.provider.source}:${runtimeConfig.provider.baseUrl}`;
+
+const createDemoRunRuntime = (runtimeConfig: RuntimeConfig): DemoRunRuntime => ({
+  appEnv: runtimeConfig.app.env,
+  profile: runtimeConfig.app.profile,
+  providerSource: runtimeConfig.provider.source,
+  providerBaseUrl: runtimeConfig.provider.baseUrl,
+  logLevel: runtimeConfig.logging.level,
+  dryRun: runtimeConfig.flags.dryRun,
+  demoMode: runtimeConfig.flags.demoMode,
+});
+
+export const loadHermesRuntimeConfig = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): RuntimeConfig =>
+  loadRuntimeConfig({
+    appName: workspaceInfo.workspaceName,
+    env,
+  });
+
+const createFixtureFacade = (runtimeConfig: RuntimeConfig) =>
   new FootballApiFacade(new FakeFootballApiClient(sampleFixtures(), sampleOdds()), {
     now: () => new Date("2026-04-15T12:00:00.000Z"),
     providerCode: "api-football",
     runIdFactory: () => "demo-run-fixtures",
-    sourceName: "api-football-demo",
+    sourceName: toProviderSourceName(runtimeConfig),
   });
 
-const createOddsFacade = () =>
+const createOddsFacade = (runtimeConfig: RuntimeConfig) =>
   new FootballApiFacade(new FakeFootballApiClient(sampleFixtures(), sampleOdds()), {
     now: () => new Date("2026-04-15T12:15:00.000Z"),
     providerCode: "api-football",
     runIdFactory: () => "demo-run-odds",
-    sourceName: "api-football-demo",
+    sourceName: toProviderSourceName(runtimeConfig),
   });
 
 const stableId = (value: string): string => createHash("sha256").update(value).digest("hex").slice(0, 12);
 
-export const createHermesJobRouter = () =>
+export const createHermesJobRouter = (
+  runtimeConfig: RuntimeConfig = loadHermesRuntimeConfig(),
+) =>
   createWorkflowRouter([
     {
       intent: "ingest-fixtures",
       async handle(envelope: TaskEnvelope<Record<string, unknown>>) {
         const payload = envelope.payload as unknown as FetchFixturesWindowInput & { league?: string };
-        const result = await ingestFixturesWindow(createFixtureFacade(), {
+        const result = await ingestFixturesWindow(createFixtureFacade(runtimeConfig), {
           ...(payload.league ? { league: payload.league } : {}),
           window: payload.window,
         });
@@ -105,7 +147,7 @@ export const createHermesJobRouter = () =>
       async handle(envelope: TaskEnvelope<Record<string, unknown>>) {
         const payload = envelope.payload as unknown as FetchOddsWindowInput;
         const fixtureIds = sampleFixtures().map((fixture) => fixture.providerFixtureId);
-        const result = await ingestOddsWindow(createOddsFacade(), {
+        const result = await ingestOddsWindow(createOddsFacade(runtimeConfig), {
           fixtureIds: payload.fixtureIds ?? fixtureIds,
           ...(payload.marketKeys ? { marketKeys: payload.marketKeys } : {}),
           window: payload.window,
@@ -133,11 +175,13 @@ export const buildHermesCronSpecs = (): readonly CronWorkflowSpec[] =>
 
 export const runDemoControlPlane = async (
   now: Date = new Date("2026-04-15T12:00:00.000Z"),
+  options: DemoRunOptions = {},
 ): Promise<DemoRunSummary> => {
+  const runtimeConfig = loadHermesRuntimeConfig(options.env);
   const queue = new SimpleInMemoryQueue();
   const specs = buildHermesCronSpecs();
   const scheduler = new SimpleCronScheduler(specs, queue);
-  const router = createHermesJobRouter();
+  const router = createHermesJobRouter(runtimeConfig);
 
   scheduler.tick(now);
   const queuedBeforeRun = queue.stats().queued;
@@ -178,6 +222,7 @@ export const runDemoControlPlane = async (
     queuedBeforeRun,
     registeredIntents: router.intents(),
     results,
+    runtime: createDemoRunRuntime(runtimeConfig),
     triggeredAt: now.toISOString(),
     workspace: describeWorkspace(),
   };

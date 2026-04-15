@@ -9,6 +9,7 @@
   "include": [
     "src/**/*.ts",
     "tests/**/*.test.ts",
+    "../../packages/config-runtime/src/**/*.ts",
     "../../packages/orchestration-sdk/src/**/*.ts",
     "../../packages/source-connectors/src/**/*.ts"
   ],

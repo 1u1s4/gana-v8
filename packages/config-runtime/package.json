@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs config-runtime",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node ../../scripts/workspace-test.mjs .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
