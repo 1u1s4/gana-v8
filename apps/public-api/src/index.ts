@@ -1,3 +1,5 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+
 import {
   createFixture,
   createParlay,
@@ -47,6 +49,15 @@ export interface PublicApiHandlers {
   readonly validationSummary: () => ValidationSummary;
   readonly health: () => PublicApiHealth;
   readonly snapshot: () => OperationSnapshot;
+}
+
+export interface PublicApiHttpOptions {
+  readonly snapshot?: OperationSnapshot;
+}
+
+export interface PublicApiResponse {
+  readonly status: number;
+  readonly body: unknown;
 }
 
 export const publicApiEndpointPaths = {
@@ -185,6 +196,65 @@ export function createPublicApiHandlers(
     health: () => getHealth(snapshot),
     snapshot: () => snapshot,
   };
+}
+
+export function routePublicApiRequest(
+  handlers: PublicApiHandlers,
+  requestPath: string,
+): PublicApiResponse {
+  switch (normalizeRequestPath(requestPath)) {
+    case publicApiEndpointPaths.fixtures:
+      return { status: 200, body: handlers.fixtures() };
+    case publicApiEndpointPaths.predictions:
+      return { status: 200, body: handlers.predictions() };
+    case publicApiEndpointPaths.parlays:
+      return { status: 200, body: handlers.parlays() };
+    case publicApiEndpointPaths.validationSummary:
+      return { status: 200, body: handlers.validationSummary() };
+    case publicApiEndpointPaths.health:
+      return { status: 200, body: handlers.health() };
+    case publicApiEndpointPaths.snapshot:
+      return { status: 200, body: handlers.snapshot() };
+    default:
+      return {
+        status: 404,
+        body: {
+          error: "not_found",
+          message: `Unknown public API path: ${requestPath}`,
+          availablePaths: Object.values(publicApiEndpointPaths),
+        },
+      };
+  }
+}
+
+export function createPublicApiServer(
+  options: PublicApiHttpOptions = {},
+): Server {
+  const handlers = createPublicApiHandlers(options.snapshot ?? createOperationSnapshot());
+  return createServer((request, response) => {
+    handlePublicApiRequest(request, response, handlers);
+  });
+}
+
+export function handlePublicApiRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  handlers: PublicApiHandlers = createPublicApiHandlers(),
+): void {
+  const method = request.method ?? "GET";
+
+  if (method !== "GET") {
+    writeJsonResponse(response, 405, {
+      error: "method_not_allowed",
+      message: `Unsupported method: ${method}`,
+      allowedMethods: ["GET"],
+    });
+    return;
+  }
+
+  const requestPath = request.url ?? "/";
+  const routedResponse = routePublicApiRequest(handlers, requestPath);
+  writeJsonResponse(response, routedResponse.status, routedResponse.body);
 }
 
 export function listFixtures(snapshot: OperationSnapshot): readonly FixtureEntity[] {
@@ -329,4 +399,30 @@ export function createDemoValidations(
       executedAt: "2026-04-15T00:45:00.000Z",
     }),
   ];
+}
+
+function normalizeRequestPath(requestPath: string): string {
+  const [pathname] = requestPath.split("?", 1);
+  if (!pathname) {
+    return "/";
+  }
+
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    return pathname.slice(0, -1);
+  }
+
+  return pathname;
+}
+
+function writeJsonResponse(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+): void {
+  const payload = JSON.stringify(body, null, 2);
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(payload);
 }
