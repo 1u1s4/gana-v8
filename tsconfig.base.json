@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "baseUrl": ".",
+    "paths": {
+      "@gana-v8/domain-core": ["packages/domain-core/src"],
+      "@gana-v8/contract-schemas": ["packages/contract-schemas/src"],
+      "@gana-v8/orchestration-sdk": ["packages/orchestration-sdk/src"],
+      "@gana-v8/source-connectors": ["packages/source-connectors/src"],
+      "@gana-v8/canonical-pipeline": ["packages/canonical-pipeline/src"],
+      "@gana-v8/research-engine": ["packages/research-engine/src"],
+      "@gana-v8/feature-store": ["packages/feature-store/src"],
+      "@gana-v8/prediction-engine": ["packages/prediction-engine/src"],
+      "@gana-v8/parlay-engine": ["packages/parlay-engine/src"],
+      "@gana-v8/validation-engine": ["packages/validation-engine/src"],
+      "@gana-v8/policy-engine": ["packages/policy-engine/src"],
+      "@gana-v8/audit-lineage": ["packages/audit-lineage/src"],
+      "@gana-v8/observability": ["packages/observability/src"],
+      "@gana-v8/storage-adapters": ["packages/storage-adapters/src"],
+      "@gana-v8/queue-adapters": ["packages/queue-adapters/src"],
+      "@gana-v8/testing-fixtures": ["packages/testing-fixtures/src"],
+      "@gana-v8/config-runtime": ["packages/config-runtime/src"]
+    }
+  }
+}
