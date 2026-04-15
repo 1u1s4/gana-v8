@@ -1,0 +1,290 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Environment {
+  prod
+  staging
+  sandbox
+}
+
+enum FixtureStatus {
+  scheduled
+  live
+  completed
+  cancelled
+}
+
+enum TaskKind {
+  fixture_ingestion @map("fixture-ingestion")
+  odds_ingestion    @map("odds-ingestion")
+  research
+  prediction
+  validation
+  sandbox_replay    @map("sandbox-replay")
+}
+
+enum TaskStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum TaskRunStatus {
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum AiRunStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+enum PredictionStatus {
+  draft
+  published
+  settled
+  voided
+}
+
+enum PredictionMarket {
+  moneyline
+  totals
+  spread
+  both_teams_score @map("both-teams-score")
+}
+
+enum PredictionOutcome {
+  home
+  away
+  draw
+  over
+  under
+  yes
+  no
+}
+
+enum ParlayStatus {
+  draft
+  ready
+  submitted
+  settled
+  voided
+}
+
+enum ParlaySource {
+  manual
+  automatic
+}
+
+enum ParlayLegStatus {
+  pending
+  won
+  lost
+  voided
+}
+
+enum ValidationStatus {
+  pending
+  passed
+  failed
+  partial
+}
+
+enum ValidationKind {
+  fixture_result         @map("fixture-result")
+  prediction_settlement  @map("prediction-settlement")
+  parlay_settlement      @map("parlay-settlement")
+  sandbox_regression     @map("sandbox-regression")
+}
+
+enum ValidationTargetType {
+  fixture
+  task
+  task_run          @map("task-run")
+  ai_run            @map("ai-run")
+  prediction
+  parlay
+  audit_event       @map("audit-event")
+  sandbox_namespace @map("sandbox-namespace")
+}
+
+model Fixture {
+  id           String        @id
+  sport        String
+  competition  String
+  homeTeam     String
+  awayTeam     String
+  scheduledAt  DateTime
+  status       FixtureStatus
+  scoreHome    Int?
+  scoreAway    Int?
+  metadata     Json
+  predictions  Prediction[]
+  parlayLegs   ParlayLeg[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([competition, scheduledAt])
+}
+
+model Task {
+  id           String      @id
+  kind         TaskKind
+  status       TaskStatus
+  priority     Int
+  payload      Json
+  scheduledFor DateTime?
+  taskRuns     TaskRun[]
+  aiRuns       AiRun[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model TaskRun {
+  id            String        @id
+  taskId        String
+  task          Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptNumber Int
+  status        TaskRunStatus
+  startedAt     DateTime
+  finishedAt    DateTime?
+  error         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([taskId, attemptNumber])
+  @@index([taskId, startedAt])
+}
+
+model AiRun {
+  id                    String      @id
+  taskId                String
+  task                  Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  provider              String
+  model                 String
+  promptVersion         String
+  status                AiRunStatus
+  usagePromptTokens     Int?
+  usageCompletionTokens Int?
+  usageTotalTokens      Int?
+  outputRef             String?
+  error                 String?
+  predictions           Prediction[]
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([taskId, createdAt])
+}
+
+model Prediction {
+  id            String            @id
+  fixtureId     String
+  fixture       Fixture           @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
+  aiRunId       String?
+  aiRun         AiRun?            @relation(fields: [aiRunId], references: [id], onDelete: SetNull)
+  market        PredictionMarket
+  outcome       PredictionOutcome
+  status        PredictionStatus
+  confidence    Float
+  probabilities Json
+  rationale     Json
+  publishedAt   DateTime?
+  settledAt     DateTime?
+  parlayLegs    ParlayLeg[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([fixtureId, createdAt])
+  @@index([aiRunId])
+}
+
+model Parlay {
+  id               String       @id
+  status           ParlayStatus
+  stake            Float
+  source           ParlaySource
+  correlationScore Float
+  expectedPayout   Float
+  submittedAt      DateTime?
+  settledAt        DateTime?
+  legs             ParlayLeg[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+}
+
+model ParlayLeg {
+  id           String          @id
+  parlayId     String
+  parlay       Parlay          @relation(fields: [parlayId], references: [id], onDelete: Cascade)
+  predictionId String
+  prediction   Prediction      @relation(fields: [predictionId], references: [id], onDelete: Restrict)
+  fixtureId    String
+  fixture      Fixture         @relation(fields: [fixtureId], references: [id], onDelete: Restrict)
+  index        Int
+  market       String
+  outcome      String
+  price        Float
+  status       ParlayLegStatus
+
+  @@unique([parlayId, index])
+  @@index([predictionId])
+  @@index([fixtureId])
+}
+
+model Validation {
+  id         String               @id
+  targetType ValidationTargetType
+  targetId   String
+  kind       ValidationKind
+  status     ValidationStatus
+  checks     Json
+  summary    String
+  executedAt DateTime?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  @@index([targetType, targetId, createdAt])
+}
+
+model AuditEvent {
+  id            String   @id
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  actor         String?
+  payload       Json
+  occurredAt    DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([aggregateType, aggregateId, occurredAt])
+}
+
+model SandboxNamespace {
+  id            String      @id
+  environment   Environment
+  sandboxId     String?
+  scope         String
+  storagePrefix String
+  queuePrefix   String
+  metadata      Json
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([environment, sandboxId, scope])
+  @@index([environment, createdAt])
+}

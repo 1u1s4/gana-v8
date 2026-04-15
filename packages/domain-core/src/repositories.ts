@@ -1,10 +1,12 @@
 import type { EntityId, Repository } from './common.js';
+import type { AuditEventEntity } from './entities/audit-event.js';
 import type { AiRunEntity } from './entities/ai-run.js';
 import type { FixtureEntity } from './entities/fixture.js';
 import type { ParlayEntity } from './entities/parlay.js';
 import type { PredictionEntity } from './entities/prediction.js';
 import type { SandboxNamespace } from './entities/sandbox.js';
 import type { TaskEntity } from './entities/task.js';
+import type { TaskRunEntity } from './entities/task-run.js';
 import type { ValidationEntity } from './entities/validation.js';
 
 export interface FixtureRepository extends Repository<FixtureEntity> {
@@ -19,6 +21,10 @@ export interface AiRunRepository extends Repository<AiRunEntity> {
   findByTaskId(taskId: EntityId): Promise<AiRunEntity[]>;
 }
 
+export interface TaskRunRepository extends Repository<TaskRunEntity> {
+  findByTaskId(taskId: EntityId): Promise<TaskRunEntity[]>;
+}
+
 export interface PredictionRepository extends Repository<PredictionEntity> {
   findByFixtureId(fixtureId: EntityId): Promise<PredictionEntity[]>;
 }
@@ -29,6 +35,10 @@ export interface ParlayRepository extends Repository<ParlayEntity> {
 
 export interface ValidationRepository extends Repository<ValidationEntity> {
   findByTargetId(targetId: EntityId): Promise<ValidationEntity[]>;
+}
+
+export interface AuditEventRepository extends Repository<AuditEventEntity> {
+  findByAggregate(aggregateType: string, aggregateId: EntityId): Promise<AuditEventEntity[]>;
 }
 
 export interface SandboxNamespaceRepository extends Repository<SandboxNamespace> {

@@ -1,6 +1,8 @@
 import type {
   AiRunEntity,
   AiRunRepository,
+  AuditEventEntity,
+  AuditEventRepository,
   AuditableEntity,
   EntityId,
   FixtureEntity,
@@ -13,6 +15,8 @@ import type {
   SandboxNamespaceRepository,
   TaskEntity,
   TaskRepository,
+  TaskRunEntity,
+  TaskRunRepository,
   ValidationEntity,
   ValidationRepository,
 } from "@gana-v8/domain-core";
@@ -59,6 +63,16 @@ export class InMemoryTaskRepository
   }
 }
 
+export class InMemoryTaskRunRepository
+  extends InMemoryRepository<TaskRunEntity>
+  implements TaskRunRepository
+{
+  async findByTaskId(taskId: EntityId): Promise<TaskRunEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.taskId === taskId);
+  }
+}
+
 export class InMemoryAiRunRepository
   extends InMemoryRepository<AiRunEntity>
   implements AiRunRepository
@@ -98,6 +112,22 @@ export class InMemoryValidationRepository
   async findByTargetId(targetId: EntityId): Promise<ValidationEntity[]> {
     const items = await this.list();
     return items.filter((item) => item.targetId === targetId);
+  }
+}
+
+export class InMemoryAuditEventRepository
+  extends InMemoryRepository<AuditEventEntity>
+  implements AuditEventRepository
+{
+  async findByAggregate(
+    aggregateType: string,
+    aggregateId: EntityId,
+  ): Promise<AuditEventEntity[]> {
+    const items = await this.list();
+    return items.filter(
+      (item) =>
+        item.aggregateType === aggregateType && item.aggregateId === aggregateId,
+    );
   }
 }
 

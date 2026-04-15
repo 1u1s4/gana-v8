@@ -15,8 +15,8 @@
     "@gana-v8/domain-core": "workspace:*"
   },
   "scripts": {
-    "build": "pnpm --filter @gana-v8/domain-core build && tsc -p tsconfig.json",
-    "typecheck": "pnpm --filter @gana-v8/domain-core build && tsc -p tsconfig.json --noEmit",
+    "build": "pnpm --dir ../.. db:generate && pnpm --filter @gana-v8/domain-core build && tsc -p tsconfig.json",
+    "typecheck": "pnpm --dir ../.. db:generate && pnpm --filter @gana-v8/domain-core build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test dist/tests/**/*.test.js"
   }
 }

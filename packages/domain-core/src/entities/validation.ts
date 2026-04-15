@@ -7,6 +7,15 @@ export type ValidationKind =
   | "prediction-settlement"
   | "parlay-settlement"
   | "sandbox-regression";
+export type ValidationTargetType =
+  | "fixture"
+  | "task"
+  | "task-run"
+  | "ai-run"
+  | "prediction"
+  | "parlay"
+  | "audit-event"
+  | "sandbox-namespace";
 
 export interface ValidationCheck {
   readonly code: string;
@@ -15,6 +24,7 @@ export interface ValidationCheck {
 }
 
 export interface ValidationEntity extends AuditableEntity {
+  readonly targetType: ValidationTargetType;
   readonly targetId: string;
   readonly kind: ValidationKind;
   readonly status: ValidationStatus;

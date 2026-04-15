@@ -275,6 +275,7 @@ export const replayValidationRun = (request: ValidationReplayRequest): Validatio
   const validation = finalizeValidation(
     createValidation({
       id: request.id,
+      targetType: "sandbox-namespace",
       targetId: request.id,
       kind: "sandbox-regression",
       status: "pending",

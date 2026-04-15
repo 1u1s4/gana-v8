@@ -365,6 +365,7 @@ export function createDemoValidations(
   return [
     createValidation({
       id: "val-parlay-core",
+      targetType: "parlay",
       targetId: parlays[0]?.id ?? "parlay-core-slate",
       kind: "parlay-settlement",
       status: "passed",
@@ -380,6 +381,7 @@ export function createDemoValidations(
     }),
     createValidation({
       id: "val-predictions-market-shape",
+      targetType: "prediction",
       targetId: predictions[0]?.id ?? "pred-boca-home",
       kind: "prediction-settlement",
       status: "partial",

@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createAuditEvent,
   createFixture,
   createPrediction,
   createSandboxNamespace,
+  createTaskRun,
   publishPrediction,
   transitionFixtureStatus,
 } from "../src/index.js";
@@ -53,4 +55,26 @@ test("sandbox namespaces require sandbox id when environment is sandbox", () => 
   });
 
   assert.equal(namespace.sandboxId, "sbx-42");
+});
+
+test("task runs and audit events get default timestamps", () => {
+  const taskRun = createTaskRun({
+    id: "task-1:attempt:1",
+    taskId: "task-1",
+    attemptNumber: 1,
+    status: "running",
+    startedAt: "2026-04-15T09:00:00.000Z",
+  });
+
+  const auditEvent = createAuditEvent({
+    id: "audit-1",
+    aggregateType: "task",
+    aggregateId: "task-1",
+    eventType: "task.started",
+    payload: { attemptNumber: 1 },
+  });
+
+  assert.equal(taskRun.taskId, "task-1");
+  assert.equal(auditEvent.aggregateId, "task-1");
+  assert.ok(auditEvent.occurredAt);
 });
