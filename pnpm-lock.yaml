@@ -167,6 +167,9 @@ importers:
       '@gana-v8/domain-core':
         specifier: workspace:*
         version: link:../domain-core
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../observability
 
   packages/authz:
     dependencies:
@@ -244,6 +247,9 @@ importers:
 
   packages/parlay-engine:
     dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
       '@gana-v8/policy-engine':
         specifier: workspace:*
         version: link:../policy-engine
@@ -262,15 +268,18 @@ importers:
 
   packages/prediction-engine:
     dependencies:
-      '@gana-v8/contract-schemas':
+      '@gana-v8/domain-core':
         specifier: workspace:*
-        version: link:../contract-schemas
+        version: link:../domain-core
       '@gana-v8/feature-store':
         specifier: workspace:*
         version: link:../feature-store
       '@gana-v8/model-registry':
         specifier: workspace:*
         version: link:../model-registry
+      '@gana-v8/research-contracts':
+        specifier: workspace:*
+        version: link:../research-contracts
 
   packages/publication-engine:
     dependencies:
@@ -301,6 +310,9 @@ importers:
 
   packages/research-engine:
     dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../observability
@@ -337,6 +349,12 @@ importers:
       '@gana-v8/audit-lineage':
         specifier: workspace:*
         version: link:../audit-lineage
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+      '@gana-v8/parlay-engine':
+        specifier: workspace:*
+        version: link:../parlay-engine
       '@gana-v8/prediction-engine':
         specifier: workspace:*
         version: link:../prediction-engine

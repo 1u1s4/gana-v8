@@ -16,14 +16,15 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/observability build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs audit-lineage",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node ../../scripts/workspace-test.mjs .",
+    "typecheck": "pnpm --filter @gana-v8/observability build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
-    "@gana-v8/domain-core": "workspace:*"
+    "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/observability": "workspace:*"
   }
 }
