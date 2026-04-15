@@ -100,7 +100,13 @@ export interface AtomicLegSettlement {
   readonly status: AtomicLegVerdict;
 }
 
-export interface SettledLeg extends ParlayLeg {
+export interface SettledLeg {
+  readonly predictionId: string;
+  readonly fixtureId: string;
+  readonly market: string;
+  readonly outcome: string;
+  readonly price: number;
+  readonly status: ParlayLegStatus;
   readonly settlementStatus: ParlayLegStatus;
 }
 

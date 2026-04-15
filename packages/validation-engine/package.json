@@ -16,11 +16,11 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/prediction-engine build && pnpm --filter @gana-v8/parlay-engine build && pnpm --filter @gana-v8/audit-lineage build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs validation-engine",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "tsx --test tests/**/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node ../../scripts/workspace-test.mjs .",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/prediction-engine build && pnpm --filter @gana-v8/parlay-engine build && pnpm --filter @gana-v8/audit-lineage build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {

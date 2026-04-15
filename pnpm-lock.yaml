@@ -71,6 +71,9 @@ importers:
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/public-api':
+        specifier: workspace:*
+        version: link:../public-api
 
   apps/public-api:
     dependencies:
@@ -83,6 +86,9 @@ importers:
       '@gana-v8/contract-schemas':
         specifier: workspace:*
         version: link:../../packages/contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
