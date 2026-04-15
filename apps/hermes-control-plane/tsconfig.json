@@ -1,12 +1,16 @@
 {
   "extends": "../../tsconfig.app.json",
   "compilerOptions": {
-    "rootDir": "./src",
+    "rootDir": "../..",
     "outDir": "./dist",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "types": ["node"]
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "tests/**/*.test.ts",
+    "../../packages/orchestration-sdk/src/**/*.ts",
+    "../../packages/source-connectors/src/**/*.ts"
   ],
   "exclude": [
     "dist",

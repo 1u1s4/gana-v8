@@ -20,7 +20,7 @@ test("buildHermesCronSpecs exposes hermes-native schedules for fixtures and odds
 test("router registers ingest workflows", () => {
   const router = createHermesJobRouter();
 
-  assert.deepEqual(router.intents().sort(), ["ingest-fixtures", "ingest-odds"]);
+  assert.deepEqual([...router.intents()].sort(), ["ingest-fixtures", "ingest-odds"]);
   assert.match(describeWorkspace(), /hermes-control-plane/);
 });
 

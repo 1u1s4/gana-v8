@@ -87,7 +87,7 @@ export const createHermesJobRouter = () =>
       async handle(envelope: TaskEnvelope<Record<string, unknown>>) {
         const payload = envelope.payload as unknown as FetchFixturesWindowInput & { league?: string };
         const result = await ingestFixturesWindow(createFixtureFacade(), {
-          league: payload.league,
+          ...(payload.league ? { league: payload.league } : {}),
           window: payload.window,
         });
 
@@ -107,7 +107,7 @@ export const createHermesJobRouter = () =>
         const fixtureIds = sampleFixtures().map((fixture) => fixture.providerFixtureId);
         const result = await ingestOddsWindow(createOddsFacade(), {
           fixtureIds: payload.fixtureIds ?? fixtureIds,
-          marketKeys: payload.marketKeys,
+          ...(payload.marketKeys ? { marketKeys: payload.marketKeys } : {}),
           window: payload.window,
         });
 
@@ -162,13 +162,13 @@ export const runDemoControlPlane = async (
       | undefined;
 
     results.push({
-      batchId: output?.batchId,
-      checksum: output?.checksum,
       intent: reservation.envelope.intent,
       observedRecords: output?.observedRecords ?? 0,
       status: execution.status,
       taskId: reservation.envelope.id,
       warnings: output?.warnings ?? [],
+      ...(output?.batchId ? { batchId: output.batchId } : {}),
+      ...(output?.checksum ? { checksum: output.checksum } : {}),
     });
   }
 
