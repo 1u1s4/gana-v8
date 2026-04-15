@@ -1,8 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": [
+      "ES2022"
+    ],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -12,25 +15,103 @@
     "sourceMap": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
     "baseUrl": ".",
     "paths": {
-      "@gana-v8/domain-core": ["packages/domain-core/src"],
-      "@gana-v8/contract-schemas": ["packages/contract-schemas/src"],
-      "@gana-v8/orchestration-sdk": ["packages/orchestration-sdk/src"],
-      "@gana-v8/source-connectors": ["packages/source-connectors/src"],
-      "@gana-v8/canonical-pipeline": ["packages/canonical-pipeline/src"],
-      "@gana-v8/research-engine": ["packages/research-engine/src"],
-      "@gana-v8/feature-store": ["packages/feature-store/src"],
-      "@gana-v8/prediction-engine": ["packages/prediction-engine/src"],
-      "@gana-v8/parlay-engine": ["packages/parlay-engine/src"],
-      "@gana-v8/validation-engine": ["packages/validation-engine/src"],
-      "@gana-v8/policy-engine": ["packages/policy-engine/src"],
-      "@gana-v8/audit-lineage": ["packages/audit-lineage/src"],
-      "@gana-v8/observability": ["packages/observability/src"],
-      "@gana-v8/storage-adapters": ["packages/storage-adapters/src"],
-      "@gana-v8/queue-adapters": ["packages/queue-adapters/src"],
-      "@gana-v8/testing-fixtures": ["packages/testing-fixtures/src"],
-      "@gana-v8/config-runtime": ["packages/config-runtime/src"]
+      "@gana-v8/domain-core": [
+        "packages/domain-core/src/index.ts"
+      ],
+      "@gana-v8/contract-schemas": [
+        "packages/contract-schemas/src/index.ts"
+      ],
+      "@gana-v8/orchestration-sdk": [
+        "packages/orchestration-sdk/src/index.ts"
+      ],
+      "@gana-v8/source-connectors": [
+        "packages/source-connectors/src/index.ts"
+      ],
+      "@gana-v8/canonical-pipeline": [
+        "packages/canonical-pipeline/src/index.ts"
+      ],
+      "@gana-v8/research-contracts": [
+        "packages/research-contracts/src/index.ts"
+      ],
+      "@gana-v8/research-engine": [
+        "packages/research-engine/src/index.ts"
+      ],
+      "@gana-v8/feature-store": [
+        "packages/feature-store/src/index.ts"
+      ],
+      "@gana-v8/model-registry": [
+        "packages/model-registry/src/index.ts"
+      ],
+      "@gana-v8/prediction-engine": [
+        "packages/prediction-engine/src/index.ts"
+      ],
+      "@gana-v8/parlay-engine": [
+        "packages/parlay-engine/src/index.ts"
+      ],
+      "@gana-v8/validation-engine": [
+        "packages/validation-engine/src/index.ts"
+      ],
+      "@gana-v8/publication-engine": [
+        "packages/publication-engine/src/index.ts"
+      ],
+      "@gana-v8/policy-engine": [
+        "packages/policy-engine/src/index.ts"
+      ],
+      "@gana-v8/audit-lineage": [
+        "packages/audit-lineage/src/index.ts"
+      ],
+      "@gana-v8/observability": [
+        "packages/observability/src/index.ts"
+      ],
+      "@gana-v8/config-runtime": [
+        "packages/config-runtime/src/index.ts"
+      ],
+      "@gana-v8/storage-adapters": [
+        "packages/storage-adapters/src/index.ts"
+      ],
+      "@gana-v8/queue-adapters": [
+        "packages/queue-adapters/src/index.ts"
+      ],
+      "@gana-v8/authz": [
+        "packages/authz/src/index.ts"
+      ],
+      "@gana-v8/testing-fixtures": [
+        "packages/testing-fixtures/src/index.ts"
+      ],
+      "@gana-v8/dev-cli": [
+        "packages/dev-cli/src/index.ts"
+      ],
+      "@gana-v8/hermes-control-plane": [
+        "apps/hermes-control-plane/src/index.ts"
+      ],
+      "@gana-v8/operator-console": [
+        "apps/operator-console/src/index.ts"
+      ],
+      "@gana-v8/public-api": [
+        "apps/public-api/src/index.ts"
+      ],
+      "@gana-v8/scoring-worker": [
+        "apps/scoring-worker/src/index.ts"
+      ],
+      "@gana-v8/ingestion-worker": [
+        "apps/ingestion-worker/src/index.ts"
+      ],
+      "@gana-v8/research-worker": [
+        "apps/research-worker/src/index.ts"
+      ],
+      "@gana-v8/validation-worker": [
+        "apps/validation-worker/src/index.ts"
+      ],
+      "@gana-v8/publisher-worker": [
+        "apps/publisher-worker/src/index.ts"
+      ],
+      "@gana-v8/sandbox-runner": [
+        "apps/sandbox-runner/src/index.ts"
+      ]
     }
   }
 }

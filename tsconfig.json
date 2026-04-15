@@ -1,0 +1,98 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/domain-core"
+    },
+    {
+      "path": "packages/contract-schemas"
+    },
+    {
+      "path": "packages/orchestration-sdk"
+    },
+    {
+      "path": "packages/source-connectors"
+    },
+    {
+      "path": "packages/canonical-pipeline"
+    },
+    {
+      "path": "packages/research-contracts"
+    },
+    {
+      "path": "packages/research-engine"
+    },
+    {
+      "path": "packages/feature-store"
+    },
+    {
+      "path": "packages/model-registry"
+    },
+    {
+      "path": "packages/prediction-engine"
+    },
+    {
+      "path": "packages/parlay-engine"
+    },
+    {
+      "path": "packages/validation-engine"
+    },
+    {
+      "path": "packages/publication-engine"
+    },
+    {
+      "path": "packages/policy-engine"
+    },
+    {
+      "path": "packages/audit-lineage"
+    },
+    {
+      "path": "packages/observability"
+    },
+    {
+      "path": "packages/config-runtime"
+    },
+    {
+      "path": "packages/storage-adapters"
+    },
+    {
+      "path": "packages/queue-adapters"
+    },
+    {
+      "path": "packages/authz"
+    },
+    {
+      "path": "packages/testing-fixtures"
+    },
+    {
+      "path": "packages/dev-cli"
+    },
+    {
+      "path": "apps/hermes-control-plane"
+    },
+    {
+      "path": "apps/operator-console"
+    },
+    {
+      "path": "apps/public-api"
+    },
+    {
+      "path": "apps/scoring-worker"
+    },
+    {
+      "path": "apps/ingestion-worker"
+    },
+    {
+      "path": "apps/research-worker"
+    },
+    {
+      "path": "apps/validation-worker"
+    },
+    {
+      "path": "apps/publisher-worker"
+    },
+    {
+      "path": "apps/sandbox-runner"
+    }
+  ]
+}
