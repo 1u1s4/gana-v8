@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs hermes-control-plane",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
+    "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
@@ -28,6 +28,7 @@
     "@gana-v8/config-runtime": "workspace:*",
     "@gana-v8/observability": "workspace:*",
     "@gana-v8/policy-engine": "workspace:*",
-    "@gana-v8/audit-lineage": "workspace:*"
+    "@gana-v8/audit-lineage": "workspace:*",
+    "@gana-v8/source-connectors": "workspace:*"
   }
 }
