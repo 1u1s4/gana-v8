@@ -1,0 +1,430 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.12.2
+      prettier:
+        specifier: ^3.6.2
+        version: 3.8.3
+      turbo:
+        specifier: ^2.5.5
+        version: 2.9.6
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  apps/hermes-control-plane:
+    dependencies:
+      '@gana-v8/audit-lineage':
+        specifier: workspace:*
+        version: link:../../packages/audit-lineage
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@gana-v8/orchestration-sdk':
+        specifier: workspace:*
+        version: link:../../packages/orchestration-sdk
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
+
+  apps/ingestion-worker:
+    dependencies:
+      '@gana-v8/canonical-pipeline':
+        specifier: workspace:*
+        version: link:../../packages/canonical-pipeline
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@gana-v8/source-connectors':
+        specifier: workspace:*
+        version: link:../../packages/source-connectors
+
+  apps/operator-console:
+    dependencies:
+      '@gana-v8/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+
+  apps/public-api:
+    dependencies:
+      '@gana-v8/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../../packages/contract-schemas
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+
+  apps/publisher-worker:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
+      '@gana-v8/publication-engine':
+        specifier: workspace:*
+        version: link:../../packages/publication-engine
+
+  apps/research-worker:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@gana-v8/research-contracts':
+        specifier: workspace:*
+        version: link:../../packages/research-contracts
+      '@gana-v8/research-engine':
+        specifier: workspace:*
+        version: link:../../packages/research-engine
+
+  apps/sandbox-runner:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/dev-cli':
+        specifier: workspace:*
+        version: link:../../packages/dev-cli
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@gana-v8/testing-fixtures':
+        specifier: workspace:*
+        version: link:../../packages/testing-fixtures
+
+  apps/scoring-worker:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/feature-store':
+        specifier: workspace:*
+        version: link:../../packages/feature-store
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@gana-v8/prediction-engine':
+        specifier: workspace:*
+        version: link:../../packages/prediction-engine
+
+  apps/validation-worker:
+    dependencies:
+      '@gana-v8/audit-lineage':
+        specifier: workspace:*
+        version: link:../../packages/audit-lineage
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../../packages/config-runtime
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@gana-v8/validation-engine':
+        specifier: workspace:*
+        version: link:../../packages/validation-engine
+
+  packages/audit-lineage:
+    dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/authz:
+    dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../policy-engine
+
+  packages/canonical-pipeline:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+      '@gana-v8/source-connectors':
+        specifier: workspace:*
+        version: link:../source-connectors
+
+  packages/config-runtime:
+    dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/contract-schemas:
+    dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/dev-cli:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../config-runtime
+      '@gana-v8/testing-fixtures':
+        specifier: workspace:*
+        version: link:../testing-fixtures
+
+  packages/domain-core: {}
+
+  packages/feature-store:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/model-registry:
+    dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/observability:
+    dependencies:
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/orchestration-sdk:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/parlay-engine:
+    dependencies:
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../policy-engine
+      '@gana-v8/prediction-engine':
+        specifier: workspace:*
+        version: link:../prediction-engine
+
+  packages/policy-engine:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/prediction-engine:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/feature-store':
+        specifier: workspace:*
+        version: link:../feature-store
+      '@gana-v8/model-registry':
+        specifier: workspace:*
+        version: link:../model-registry
+
+  packages/publication-engine:
+    dependencies:
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../policy-engine
+      '@gana-v8/prediction-engine':
+        specifier: workspace:*
+        version: link:../prediction-engine
+
+  packages/queue-adapters:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/research-contracts:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/research-engine:
+    dependencies:
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@gana-v8/research-contracts':
+        specifier: workspace:*
+        version: link:../research-contracts
+
+  packages/source-connectors:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/storage-adapters:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/testing-fixtures:
+    dependencies:
+      '@gana-v8/contract-schemas':
+        specifier: workspace:*
+        version: link:../contract-schemas
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+
+  packages/validation-engine:
+    dependencies:
+      '@gana-v8/audit-lineage':
+        specifier: workspace:*
+        version: link:../audit-lineage
+      '@gana-v8/prediction-engine':
+        specifier: workspace:*
+        version: link:../prediction-engine
+
+packages:
+
+  '@turbo/darwin-64@2.9.6':
+    resolution: {integrity: sha512-X/56SnVXIQZBLKwniGTwEQTGmtE5brSACnKMBWpY3YafuxVYefrC2acamfjgxP7BG5w3I+6jf0UrLoSzgPcSJg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@turbo/darwin-arm64@2.9.6':
+    resolution: {integrity: sha512-aalBeSl4agT/QtYGDyf/XLajedWzUC9Vg/pm/YO6QQ93vkQ91Vz5uK1ta5RbVRDozQSz4njxUNqRNmOXDzW+qw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@turbo/linux-64@2.9.6':
+    resolution: {integrity: sha512-YKi05jnNHaD7vevgYwahpzGwbsNNTwzU2c7VZdmdFm7+cGDP4oREUWSsainiMfRqjRuolQxBwRn8wf1jmu+YZA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@turbo/linux-arm64@2.9.6':
+    resolution: {integrity: sha512-02o/ZS69cOYEDczXvOB2xmyrtzjQ2hVFtWZK1iqxXUfzMmTjZK4UumrfNnjckSg+gqeBfnPRHa0NstA173Ik3g==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@turbo/windows-64@2.9.6':
+    resolution: {integrity: sha512-wVdQjvnBI15wB6JrA+43CtUtagjIMmX6XYO758oZHAsCNSxqRlJtdyujih0D8OCnwCRWiGWGI63zAxR0hO6s9g==}
+    cpu: [x64]
+    os: [win32]
+
+  '@turbo/windows-arm64@2.9.6':
+    resolution: {integrity: sha512-1XUUyWW0W6FTSqGEhU8RHVqb2wP1SPkr7hIvBlMEwH9jr+sJQK5kqeosLJ/QaUv4ecSAd1ZhIrLoW7qslAzT4A==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@types/node@24.12.2':
+    resolution: {integrity: sha512-A1sre26ke7HDIuY/M23nd9gfB+nrmhtYyMINbjI1zHJxYteKR6qSMX56FsmjMcDb3SMcjJg5BiRRgOCC/yBD0g==}
+
+  prettier@3.8.3:
+    resolution: {integrity: sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==}
+    engines: {node: '>=14'}
+    hasBin: true
+
+  turbo@2.9.6:
+    resolution: {integrity: sha512-+v2QJey7ZUeUiuigkU+uFfklvNUyPI2VO2vBpMYJA+a1hKFLFiKtUYlRHdb3P9CrAvMzi0upbjI4WT+zKtqkBg==}
+    hasBin: true
+
+  typescript@5.9.3:
+    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
+  undici-types@7.16.0:
+    resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
+
+snapshots:
+
+  '@turbo/darwin-64@2.9.6':
+    optional: true
+
+  '@turbo/darwin-arm64@2.9.6':
+    optional: true
+
+  '@turbo/linux-64@2.9.6':
+    optional: true
+
+  '@turbo/linux-arm64@2.9.6':
+    optional: true
+
+  '@turbo/windows-64@2.9.6':
+    optional: true
+
+  '@turbo/windows-arm64@2.9.6':
+    optional: true
+
+  '@types/node@24.12.2':
+    dependencies:
+      undici-types: 7.16.0
+
+  prettier@3.8.3: {}
+
+  turbo@2.9.6:
+    optionalDependencies:
+      '@turbo/darwin-64': 2.9.6
+      '@turbo/darwin-arm64': 2.9.6
+      '@turbo/linux-64': 2.9.6
+      '@turbo/linux-arm64': 2.9.6
+      '@turbo/windows-64': 2.9.6
+      '@turbo/windows-arm64': 2.9.6
+
+  typescript@5.9.3: {}
+
+  undici-types@7.16.0: {}

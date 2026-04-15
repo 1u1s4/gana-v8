@@ -2,49 +2,76 @@
 
 Hermes-native sports prediction ops platform.
 
-## Qué es
+## Qué incluye este scaffold
 
-gana-v8 es la evolución de gana-v7 hacia una plataforma modular donde Hermes funciona como control plane para:
+Este slice materializa el scaffold inicial del monorepo con:
 
-- ingestión diaria e intradía de fixtures, odds y resultados
-- research multiagente por fixture
-- predicciones atómicas estructuradas
-- construcción de parlays con reglas de riesgo y correlación
-- validación ex post y auditoría completa
-- sandbox/replay para pruebas aisladas del ecosistema
+- workspaces reales en `apps/*` y `packages/*`
+- configuración TypeScript compartida para apps y paquetes
+- scripts uniformes de `build`, `lint`, `test`, `typecheck` y `clean`
+- placeholders compilables para los bounded contexts definidos en la arquitectura
+- estructura base adicional para `data-contracts/`, `docs/`, `fixtures/`, `infra/`, `notebooks/`, `registry/`, `scripts/` y `tests/`
 
-## Estado actual
+## Workspaces incluidos
 
-Este repo ya nace con:
+### Apps
+- `apps/hermes-control-plane`
+- `apps/operator-console`
+- `apps/public-api`
+- `apps/scoring-worker`
+- `apps/ingestion-worker`
+- `apps/research-worker`
+- `apps/validation-worker`
+- `apps/publisher-worker`
+- `apps/sandbox-runner`
 
-- arquitectura V8 consolidada
-- monorepo base con apps y packages
-- documentación maestra de migración V7 → V8
-- diagramas y ADRs iniciales
-- slices base para control plane, operator console, API, workers y contratos
-
-## Repos fuente analizados
-
-- `v0-v7` como fuente principal de capacidades implementadas
-- `gana-v7` como fuente principal de visión, SRS y modelo objetivo
-
-## Estructura
-
-- `apps/` procesos desplegables
-- `packages/` lógica reusable por dominio
-- `data-contracts/` contratos versionados
-- `docs/` arquitectura, ADRs y runbooks
-- `scripts/` bootstrap, migraciones y replays
-- `tests/` smoke, contract, integration y sandbox
+### Packages
+- `packages/domain-core`
+- `packages/contract-schemas`
+- `packages/orchestration-sdk`
+- `packages/source-connectors`
+- `packages/canonical-pipeline`
+- `packages/research-contracts`
+- `packages/research-engine`
+- `packages/feature-store`
+- `packages/model-registry`
+- `packages/prediction-engine`
+- `packages/parlay-engine`
+- `packages/validation-engine`
+- `packages/publication-engine`
+- `packages/policy-engine`
+- `packages/audit-lineage`
+- `packages/observability`
+- `packages/config-runtime`
+- `packages/storage-adapters`
+- `packages/queue-adapters`
+- `packages/authz`
+- `packages/testing-fixtures`
+- `packages/dev-cli`
 
 ## Comandos
 
 ```bash
 pnpm install
 pnpm lint
+pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+## Convenciones del scaffold
+
+- Cada workspace expone `src/index.ts` como punto de entrada mínimo.
+- `build` compila a `dist/` con TypeScript.
+- `lint` valida convenciones mínimas del workspace y su manifest.
+- `test` verifica que el artefacto compilado exporte metadata consistente.
+- `typecheck` ejecuta TypeScript sin emitir artefactos.
+
+## Próximos pasos naturales
+
+- agregar implementación real por slice sobre cada app/package
+- introducir runtimes específicos por servicio cuando exista código funcional
+- conectar CI para ejecutar `pnpm install && pnpm verify`
 
 ## Planes clave
 
