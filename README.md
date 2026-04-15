@@ -2,6 +2,12 @@
 
 Hermes-native sports prediction ops platform.
 
+## Diagrama de arquitectura
+
+![Diagrama de arquitectura de gana-v8](docs/architecture/gana-v8-architecture.png)
+
+Versión navegable: `docs/architecture/gana-v8-architecture.html`
+
 ## Qué incluye este scaffold
 
 Este slice materializa el scaffold inicial del monorepo con:
