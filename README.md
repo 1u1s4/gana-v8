@@ -16,7 +16,9 @@ Este slice materializa el scaffold inicial del monorepo con:
 - configuración TypeScript compartida para apps y paquetes
 - scripts uniformes de `build`, `lint`, `test`, `typecheck` y `clean`
 - placeholders compilables para los bounded contexts definidos en la arquitectura
-- estructura base adicional para `data-contracts/`, `docs/`, `fixtures/`, `infra/`, `notebooks/`, `registry/`, `scripts/` y `tests/`
+- sólo rutas materializadas en git cuando ya existe contenido real
+
+El layout objetivo completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-monorepo-layout.md`. Directorios como `data-contracts/`, `fixtures/`, `infra/`, `notebooks/`, `registry/`, `scripts/`, `tests/` y partes de `docs/` se crean a medida que tengan artefactos concretos, en vez de preservarse con placeholders vacíos.
 
 ## Workspaces incluidos
 
