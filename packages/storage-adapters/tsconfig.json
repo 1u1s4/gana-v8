@@ -1,15 +1,12 @@
 {
-  "extends": "../../tsconfig.package.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "./src",
-    "outDir": "./dist",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@gana-v8/domain-core": ["../domain-core/dist/src/index.d.ts"]
+    },
+    "types": ["node"]
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "dist",
-    "node_modules"
-  ]
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

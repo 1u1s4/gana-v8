@@ -1,12 +1,9 @@
-export const workspaceInfo = {
-  packageName: "@gana-v8/domain-core",
-  workspaceName: "domain-core",
-  category: "package",
-  description: "Foundational domain types shared across gains workflows.",
-  dependencies: [
-  ],
-};
-
-export function describeWorkspace() {
-  return `${workspaceInfo.workspaceName} (${workspaceInfo.category})`;
-}
+export * from './common.js';
+export * from './entities/ai-run.js';
+export * from './entities/fixture.js';
+export * from './entities/parlay.js';
+export * from './entities/prediction.js';
+export * from './entities/sandbox.js';
+export * from './entities/task.js';
+export * from './entities/validation.js';
+export * from './repositories.js';
