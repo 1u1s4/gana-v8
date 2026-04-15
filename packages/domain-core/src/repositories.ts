@@ -1,11 +1,11 @@
-import { EntityId, Repository } from './common.js';
-import { AiRunEntity } from './entities/ai-run.js';
-import { FixtureEntity } from './entities/fixture.js';
-import { ParlayEntity } from './entities/parlay.js';
-import { PredictionEntity } from './entities/prediction.js';
-import { SandboxNamespace } from './entities/sandbox.js';
-import { TaskEntity } from './entities/task.js';
-import { ValidationEntity } from './entities/validation.js';
+import type { EntityId, Repository } from './common.js';
+import type { AiRunEntity } from './entities/ai-run.js';
+import type { FixtureEntity } from './entities/fixture.js';
+import type { ParlayEntity } from './entities/parlay.js';
+import type { PredictionEntity } from './entities/prediction.js';
+import type { SandboxNamespace } from './entities/sandbox.js';
+import type { TaskEntity } from './entities/task.js';
+import type { ValidationEntity } from './entities/validation.js';
 
 export interface FixtureRepository extends Repository<FixtureEntity> {
   findByCompetition(competition: string): Promise<FixtureEntity[]>;

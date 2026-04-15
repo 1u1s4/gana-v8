@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Outcome settlement, scorecards, and retrospective validation primitives.",
+  "description": "Outcome settlement, scorecards, retrospective validation, and lightweight replay primitives.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,11 +19,13 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs validation-engine",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
+    "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
+    "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/parlay-engine": "workspace:*",
     "@gana-v8/prediction-engine": "workspace:*",
     "@gana-v8/audit-lineage": "workspace:*"
   }

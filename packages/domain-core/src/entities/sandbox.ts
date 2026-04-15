@@ -1,10 +1,5 @@
-import {
-  AuditableEntity,
-  DomainError,
-  Environment,
-  ISODateString,
-  nowIso,
-} from "../common.js";
+import { DomainError, nowIso } from "../common.js";
+import type { AuditableEntity, Environment, ISODateString } from "../common.js";
 
 export interface SandboxNamespace extends AuditableEntity {
   readonly environment: Environment;

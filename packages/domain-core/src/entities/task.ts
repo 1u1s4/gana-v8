@@ -1,9 +1,5 @@
-import {
-  AuditableEntity,
-  DomainError,
-  ISODateString,
-  nowIso,
-} from "../common.js";
+import { DomainError, nowIso } from "../common.js";
+import type { AuditableEntity, ISODateString } from "../common.js";
 
 export type TaskKind =
   | "fixture-ingestion"
