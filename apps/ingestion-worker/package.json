@@ -1,0 +1,32 @@
+{
+  "name": "@gana-v8/ingestion-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Runs connectors, landing jobs, and normalization checkpoints.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "node ../../scripts/workspace-dev.mjs ingestion-worker",
+    "lint": "node ../../scripts/workspace-lint.mjs .",
+    "test": "node ../../scripts/workspace-test.mjs .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
+  },
+  "dependencies": {
+    "@gana-v8/source-connectors": "workspace:*",
+    "@gana-v8/canonical-pipeline": "workspace:*",
+    "@gana-v8/config-runtime": "workspace:*",
+    "@gana-v8/observability": "workspace:*"
+  }
+}

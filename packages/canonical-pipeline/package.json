@@ -1,0 +1,31 @@
+{
+  "name": "@gana-v8/canonical-pipeline",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Normalization scaffolding from raw provider payloads to canonical entities.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/contract-schemas build && pnpm --filter @gana-v8/source-connectors build && tsc -p tsconfig.build.json",
+    "dev": "node ../../scripts/workspace-dev.mjs canonical-pipeline",
+    "lint": "node ../../scripts/workspace-lint.mjs .",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node ../../scripts/workspace-test.mjs .",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/contract-schemas build && pnpm --filter @gana-v8/source-connectors build && tsc -p tsconfig.json --noEmit",
+    "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
+  },
+  "dependencies": {
+    "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/contract-schemas": "workspace:*",
+    "@gana-v8/source-connectors": "workspace:*"
+  }
+}

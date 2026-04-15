@@ -1,0 +1,30 @@
+{
+  "name": "@gana-v8/audit-lineage",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Traceability primitives for workflows, artifacts, and operator actions.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @gana-v8/observability build && tsc -p tsconfig.build.json",
+    "dev": "node ../../scripts/workspace-dev.mjs audit-lineage",
+    "lint": "node ../../scripts/workspace-lint.mjs .",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node ../../scripts/workspace-test.mjs .",
+    "typecheck": "pnpm --filter @gana-v8/observability build && tsc -p tsconfig.json --noEmit",
+    "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
+  },
+  "dependencies": {
+    "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/observability": "workspace:*"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@gana-v8/operator-console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Internal operations surface placeholder for dashboards, approvals, and incident review.",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/public-api build && tsc -p tsconfig.json",
+    "dev": "node ../../scripts/workspace-dev.mjs operator-console",
+    "lint": "node ../../scripts/workspace-lint.mjs .",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node --input-type=module --eval \"import('./dist/src/index.js').then((module) => { if (module.workspaceInfo?.packageName !== '@gana-v8/operator-console') throw new Error('workspaceInfo.packageName mismatch'); if (!Array.isArray(module.workspaceInfo?.dependencies)) throw new Error('workspaceInfo.dependencies should be an array'); console.log('test ok: @gana-v8/operator-console'); })\"",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/public-api build && tsc -p tsconfig.json --noEmit",
+    "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
+  },
+  "dependencies": {
+    "@gana-v8/config-runtime": "workspace:*",
+    "@gana-v8/observability": "workspace:*",
+    "@gana-v8/authz": "workspace:*",
+    "@gana-v8/public-api": "workspace:*"
+  }
+}
