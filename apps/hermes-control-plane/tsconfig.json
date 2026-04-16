@@ -9,8 +9,11 @@
       "@gana-v8/config-runtime": ["../../packages/config-runtime/dist/index.d.ts"],
       "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
       "@gana-v8/orchestration-sdk": ["../../packages/orchestration-sdk/dist/src/index.d.ts"],
+      "@gana-v8/publisher-worker": ["../../apps/publisher-worker/dist/src/index.d.ts"],
+      "@gana-v8/scoring-worker": ["../../apps/scoring-worker/dist/src/index.d.ts"],
       "@gana-v8/source-connectors": ["../../packages/source-connectors/dist/index.d.ts"],
-      "@gana-v8/storage-adapters": ["../../packages/storage-adapters/dist/src/index.d.ts"]
+      "@gana-v8/storage-adapters": ["../../packages/storage-adapters/dist/src/index.d.ts"],
+      "@gana-v8/validation-worker": ["../../apps/validation-worker/dist/src/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.test.ts"],

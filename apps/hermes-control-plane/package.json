@@ -16,11 +16,11 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs hermes-control-plane",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "tsc -p tsconfig.json && node --test dist/tests/**/*.test.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && tsc -p tsconfig.json && node --test dist/tests/**/*.test.js",
+    "typecheck": "pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
@@ -30,7 +30,10 @@
     "@gana-v8/observability": "workspace:*",
     "@gana-v8/policy-engine": "workspace:*",
     "@gana-v8/audit-lineage": "workspace:*",
+    "@gana-v8/publisher-worker": "workspace:*",
+    "@gana-v8/scoring-worker": "workspace:*",
     "@gana-v8/source-connectors": "workspace:*",
-    "@gana-v8/storage-adapters": "workspace:*"
+    "@gana-v8/storage-adapters": "workspace:*",
+    "@gana-v8/validation-worker": "workspace:*"
   }
 }

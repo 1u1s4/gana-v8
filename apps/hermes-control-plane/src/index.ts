@@ -16,6 +16,12 @@ import {
   loadRuntimeConfig,
   type RuntimeConfig,
 } from "@gana-v8/config-runtime";
+import { runPublisherWorker, type PublishParlayMvpResult } from "@gana-v8/publisher-worker";
+import {
+  loadEligibleFixturesForScoring,
+  scoreFixturePrediction,
+  type FixtureScoreResult,
+} from "@gana-v8/scoring-worker";
 import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 import { createTask, createTaskRun, type TaskEntity, type TaskKind, type TaskRunEntity } from "@gana-v8/domain-core";
 import {
@@ -28,6 +34,7 @@ import {
   type FetchFixturesWindowInput,
   type FetchOddsWindowInput,
 } from "@gana-v8/source-connectors";
+import { runValidationWorker, type ValidationWorkerRunResult } from "@gana-v8/validation-worker";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/hermes-control-plane",
@@ -93,7 +100,7 @@ export interface PersistedTaskSummary {
   readonly latestTasks: readonly TaskEntity[];
 }
 
-export type PersistedTaskIntent = Extract<TaskKind, "research" | "prediction">;
+export type PersistedTaskIntent = Extract<TaskKind, "research" | "prediction" | "validation">;
 
 export interface EnqueuePersistedTaskInput {
   readonly id?: string;
@@ -119,6 +126,7 @@ export type PersistedTaskHandler = (
 export interface PersistedTaskHandlers {
   readonly research: PersistedTaskHandler;
   readonly prediction: PersistedTaskHandler;
+  readonly validation?: PersistedTaskHandler;
 }
 
 export interface RunNextPersistedTaskOptions {
@@ -131,6 +139,47 @@ export interface PersistedTaskExecution {
   readonly taskRun: TaskRunEntity;
   readonly output: PersistedTaskHandlerResult;
   readonly error?: Error;
+}
+
+export interface EnqueuePredictionForEligibleFixturesOptions {
+  readonly now?: Date;
+  readonly fixtureIds?: readonly string[];
+  readonly maxFixtures?: number;
+  readonly priority?: number;
+}
+
+export interface EnqueuePredictionForEligibleFixturesResult {
+  readonly queuedAt: string;
+  readonly eligibleFixtureCount: number;
+  readonly enqueuedCount: number;
+  readonly skippedCount: number;
+  readonly tasks: readonly TaskEntity[];
+  readonly skippedFixtures: readonly {
+    readonly fixtureId: string;
+    readonly reason: string;
+  }[];
+}
+
+export interface RunAutomationCycleOptions {
+  readonly now?: Date;
+  readonly fixtureIds?: readonly string[];
+  readonly maxFixtures?: number;
+  readonly predictionPriority?: number;
+  readonly scoringGeneratedAt?: string;
+  readonly parlayGeneratedAt?: string;
+  readonly validationExecutedAt?: string;
+  readonly validationTaskId?: string;
+}
+
+export interface AutomationCycleSummary {
+  readonly startedAt: string;
+  readonly enqueuedPredictions: EnqueuePredictionForEligibleFixturesResult;
+  readonly processedPredictionCount: number;
+  readonly predictionExecutions: readonly PersistedTaskExecution[];
+  readonly parlayResult: PublishParlayMvpResult;
+  readonly validationTask: TaskEntity;
+  readonly validationExecution: PersistedTaskExecution;
+  readonly validationResult: ValidationWorkerRunResult;
 }
 
 const toProviderSourceName = (runtimeConfig: RuntimeConfig): string =>
@@ -171,6 +220,10 @@ const createOddsFacade = (runtimeConfig: RuntimeConfig) =>
   });
 
 const stableId = (value: string): string => createHash("sha256").update(value).digest("hex").slice(0, 12);
+const AUTOMATION_PREDICTION_STEP = "score";
+const AUTOMATION_SOURCE = "hermes-control-plane";
+const AUTOMATION_PREDICTION_TASK_PREFIX = "automation:prediction:score";
+const AUTOMATION_VALIDATION_TASK_PREFIX = "automation:validation";
 
 export const createHermesJobRouter = (
   runtimeConfig: RuntimeConfig = loadHermesRuntimeConfig(),
@@ -283,6 +336,34 @@ export const runDemoControlPlane = async (
 const createPersistedTaskId = (kind: PersistedTaskIntent, payload: Record<string, unknown>, now: Date): string =>
   `persisted:${kind}:${stableId(JSON.stringify({ kind, now: now.toISOString(), payload }))}`;
 
+const createAutomationPredictionTaskId = (fixtureId: string): string =>
+  `${AUTOMATION_PREDICTION_TASK_PREFIX}:${fixtureId}`;
+
+const createAutomationValidationTaskId = (executedAt: string): string =>
+  `${AUTOMATION_VALIDATION_TASK_PREFIX}:${executedAt.replace(/[^a-zA-Z0-9]/g, "")}`;
+
+const requirePayloadString = (task: TaskEntity, key: string): string => {
+  const value = task.payload[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Persisted task ${task.id} is missing string payload.${key}`);
+  }
+
+  return value;
+};
+
+const loadPersistedTaskById = async (
+  databaseUrl: string,
+  taskId: string,
+): Promise<TaskEntity | null> => {
+  const client = createPrismaClient(databaseUrl);
+
+  try {
+    return createPrismaUnitOfWork(client).tasks.getById(taskId);
+  } finally {
+    await client.$disconnect();
+  }
+};
+
 const ensurePersistedTask = (task: TaskEntity | null, taskId: string): TaskEntity => {
   if (!task) {
     throw new Error(`Persisted task ${taskId} was not found after write`);
@@ -326,9 +407,17 @@ export const maybeClaimNextPersistedTask = async (
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
-    const nextTask = (await unitOfWork.tasks.findByStatus("queued")).find(
-      (candidate) => (kind ? candidate.kind === kind : true),
-    );
+    const nextTask = (await unitOfWork.tasks.findByStatus("queued")).find((candidate) => {
+      if (kind && candidate.kind !== kind) {
+        return false;
+      }
+
+      if (candidate.scheduledFor) {
+        return candidate.scheduledFor <= now.toISOString();
+      }
+
+      return true;
+    });
 
     if (!nextTask) {
       return null;
@@ -380,6 +469,10 @@ export const runNextPersistedTask = async (
     const unitOfWork = createPrismaUnitOfWork(client);
     const finishedAt = (options.now ?? new Date()).toISOString();
     const handler = handlers[claim.task.kind as PersistedTaskIntent];
+
+    if (!handler) {
+      throw new Error(`No persisted task handler registered for kind ${claim.task.kind}`);
+    }
 
     try {
       const output = await handler(claim.task, claim.taskRun);
@@ -446,6 +539,167 @@ export const loadPersistedTaskSummary = async (
   } finally {
     await client.$disconnect();
   }
+};
+
+export const enqueuePredictionForEligibleFixtures = async (
+  databaseUrl: string,
+  options: EnqueuePredictionForEligibleFixturesOptions = {},
+): Promise<EnqueuePredictionForEligibleFixturesResult> => {
+  const now = options.now ?? new Date();
+  const eligibleFixtures = await loadEligibleFixturesForScoring(databaseUrl);
+  const filteredFixtures = options.fixtureIds
+    ? eligibleFixtures.filter((candidate) => options.fixtureIds?.includes(candidate.fixture.id))
+    : eligibleFixtures;
+  const selectedFixtures =
+    options.maxFixtures !== undefined
+      ? filteredFixtures.filter((candidate) => candidate.eligible).slice(0, options.maxFixtures)
+      : filteredFixtures;
+
+  const tasks: TaskEntity[] = [];
+  const skippedFixtures: Array<{ fixtureId: string; reason: string }> = [];
+
+  for (const candidate of selectedFixtures) {
+    if (!candidate.eligible) {
+      skippedFixtures.push({
+        fixtureId: candidate.fixture.id,
+        reason: candidate.reason ?? "Fixture is not eligible for scoring.",
+      });
+      continue;
+    }
+
+    const taskId = createAutomationPredictionTaskId(candidate.fixture.id);
+    const existingTask = await loadPersistedTaskById(databaseUrl, taskId);
+    if (existingTask) {
+      skippedFixtures.push({
+        fixtureId: candidate.fixture.id,
+        reason: `Prediction task ${taskId} already exists with status ${existingTask.status}.`,
+      });
+      continue;
+    }
+
+    tasks.push(
+      await enqueuePersistedTask(databaseUrl, {
+        id: taskId,
+        kind: "prediction",
+        priority: options.priority ?? 50,
+        payload: {
+          fixtureId: candidate.fixture.id,
+          source: AUTOMATION_SOURCE,
+          step: AUTOMATION_PREDICTION_STEP,
+        },
+        scheduledFor: now,
+        now,
+      }),
+    );
+  }
+
+  return {
+    queuedAt: now.toISOString(),
+    eligibleFixtureCount: selectedFixtures.filter((candidate) => candidate.eligible).length,
+    enqueuedCount: tasks.length,
+    skippedCount: skippedFixtures.length,
+    tasks,
+    skippedFixtures,
+  };
+};
+
+export const runAutomationCycle = async (
+  databaseUrl: string,
+  options: RunAutomationCycleOptions = {},
+): Promise<AutomationCycleSummary> => {
+  const now = options.now ?? new Date();
+  const scoringGeneratedAt = options.scoringGeneratedAt ?? now.toISOString();
+  const parlayGeneratedAt = options.parlayGeneratedAt ?? now.toISOString();
+  const validationExecutedAt = options.validationExecutedAt ?? now.toISOString();
+  const validationTaskId =
+    options.validationTaskId ?? createAutomationValidationTaskId(validationExecutedAt);
+  const enqueuedPredictions = await enqueuePredictionForEligibleFixtures(databaseUrl, {
+    now,
+    ...(options.fixtureIds ? { fixtureIds: options.fixtureIds } : {}),
+    ...(options.maxFixtures !== undefined ? { maxFixtures: options.maxFixtures } : {}),
+    ...(options.predictionPriority !== undefined ? { priority: options.predictionPriority } : {}),
+  });
+
+  const handlers: PersistedTaskHandlers = {
+    research: async () => {
+      throw new Error("Research automation is not part of the minimal scoring pipeline.");
+    },
+    prediction: async (task) => {
+      const step = requirePayloadString(task, "step");
+      if (step !== AUTOMATION_PREDICTION_STEP) {
+        throw new Error(`Unsupported prediction automation step ${step}`);
+      }
+
+      const result = await scoreFixturePrediction(
+        databaseUrl,
+        requirePayloadString(task, "fixtureId"),
+        task.id,
+        {
+          generatedAt: scoringGeneratedAt,
+        },
+      );
+
+      return {
+        ...result,
+      };
+    },
+    validation: async () => {
+      const result = await runValidationWorker(databaseUrl, {
+        executedAt: validationExecutedAt,
+      });
+
+      return {
+        ...result,
+      };
+    },
+  };
+
+  const predictionExecutions: PersistedTaskExecution[] = [];
+  while (true) {
+    const execution = await runNextPersistedTask(databaseUrl, handlers, {
+      kind: "prediction",
+      now,
+    });
+    if (!execution) {
+      break;
+    }
+
+    predictionExecutions.push(execution);
+  }
+
+  const parlayResult = await runPublisherWorker(databaseUrl, { generatedAt: parlayGeneratedAt });
+  const validationTask =
+    (await loadPersistedTaskById(databaseUrl, validationTaskId)) ??
+    (await enqueuePersistedTask(databaseUrl, {
+      id: validationTaskId,
+      kind: "validation",
+      priority: 10,
+      payload: {
+        executedAt: validationExecutedAt,
+        source: AUTOMATION_SOURCE,
+      },
+      scheduledFor: now,
+      now,
+    }));
+  const validationExecution = await runNextPersistedTask(databaseUrl, handlers, {
+    kind: "validation",
+    now,
+  });
+
+  if (!validationExecution) {
+    throw new Error(`Validation task ${validationTask.id} could not be executed`);
+  }
+
+  return {
+    startedAt: now.toISOString(),
+    enqueuedPredictions,
+    processedPredictionCount: predictionExecutions.length,
+    predictionExecutions,
+    parlayResult,
+    validationTask,
+    validationExecution,
+    validationResult: validationExecution.output as unknown as ValidationWorkerRunResult,
+  };
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {

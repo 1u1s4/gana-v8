@@ -50,12 +50,21 @@ importers:
       '@gana-v8/policy-engine':
         specifier: workspace:*
         version: link:../../packages/policy-engine
+      '@gana-v8/publisher-worker':
+        specifier: workspace:*
+        version: link:../publisher-worker
+      '@gana-v8/scoring-worker':
+        specifier: workspace:*
+        version: link:../scoring-worker
       '@gana-v8/source-connectors':
         specifier: workspace:*
         version: link:../../packages/source-connectors
       '@gana-v8/storage-adapters':
         specifier: workspace:*
         version: link:../../packages/storage-adapters
+      '@gana-v8/validation-worker':
+        specifier: workspace:*
+        version: link:../validation-worker
 
   apps/ingestion-worker:
     dependencies:

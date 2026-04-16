@@ -74,7 +74,11 @@ export interface PublicApiHandlers {
   readonly rawBatches: () => readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots: () => readonly OddsSnapshotReadModel[];
   readonly predictions: () => readonly PredictionEntity[];
+  readonly predictionById: (predictionId: string) => PredictionEntity | null;
   readonly parlays: () => readonly ParlayEntity[];
+  readonly parlayById: (parlayId: string) => ParlayEntity | null;
+  readonly validations: () => readonly ValidationEntity[];
+  readonly validationById: (validationId: string) => ValidationEntity | null;
   readonly validationSummary: () => ValidationSummary;
   readonly health: () => PublicApiHealth;
   readonly snapshot: () => OperationSnapshot;
@@ -96,6 +100,7 @@ export const publicApiEndpointPaths = {
   oddsSnapshots: "/odds-snapshots",
   predictions: "/predictions",
   parlays: "/parlays",
+  validations: "/validations",
   validationSummary: "/validation-summary",
   health: "/health",
   snapshot: "/snapshot",
@@ -247,7 +252,11 @@ export function createPublicApiHandlers(
     rawBatches: () => listRawBatches(snapshot),
     oddsSnapshots: () => listOddsSnapshots(snapshot),
     predictions: () => listPredictions(snapshot),
+    predictionById: (predictionId: string) => findPredictionById(snapshot, predictionId),
     parlays: () => listParlays(snapshot),
+    parlayById: (parlayId: string) => findParlayById(snapshot, parlayId),
+    validations: () => listValidations(snapshot),
+    validationById: (validationId: string) => findValidationById(snapshot, validationId),
     validationSummary: () => getValidationSummary(snapshot),
     health: () => getHealth(snapshot),
     snapshot: () => snapshot,
@@ -263,16 +272,40 @@ export function routePublicApiRequest(
   if (fixtureDetail) {
     const fixture = handlers.fixtureById(fixtureDetail.fixtureId);
     if (!fixture) {
-      return {
-        status: 404,
-        body: {
-          error: "fixture_not_found",
-          fixtureId: fixtureDetail.fixtureId,
-        },
-      };
+      return createResourceNotFoundResponse("fixture", fixtureDetail.fixtureId);
     }
 
     return { status: 200, body: fixture };
+  }
+
+  const predictionDetail = matchPredictionDetailPath(normalizedPath);
+  if (predictionDetail) {
+    const prediction = handlers.predictionById(predictionDetail.predictionId);
+    if (!prediction) {
+      return createResourceNotFoundResponse("prediction", predictionDetail.predictionId);
+    }
+
+    return { status: 200, body: prediction };
+  }
+
+  const parlayDetail = matchParlayDetailPath(normalizedPath);
+  if (parlayDetail) {
+    const parlay = handlers.parlayById(parlayDetail.parlayId);
+    if (!parlay) {
+      return createResourceNotFoundResponse("parlay", parlayDetail.parlayId);
+    }
+
+    return { status: 200, body: parlay };
+  }
+
+  const validationDetail = matchValidationDetailPath(normalizedPath);
+  if (validationDetail) {
+    const validation = handlers.validationById(validationDetail.validationId);
+    if (!validation) {
+      return createResourceNotFoundResponse("validation", validationDetail.validationId);
+    }
+
+    return { status: 200, body: validation };
   }
 
   switch (normalizedPath) {
@@ -288,6 +321,8 @@ export function routePublicApiRequest(
       return { status: 200, body: handlers.predictions() };
     case publicApiEndpointPaths.parlays:
       return { status: 200, body: handlers.parlays() };
+    case publicApiEndpointPaths.validations:
+      return { status: 200, body: handlers.validations() };
     case publicApiEndpointPaths.validationSummary:
       return { status: 200, body: handlers.validationSummary() };
     case publicApiEndpointPaths.health:
@@ -365,8 +400,33 @@ export function listPredictions(
   return snapshot.predictions;
 }
 
+export function findPredictionById(
+  snapshot: OperationSnapshot,
+  predictionId: string,
+): PredictionEntity | null {
+  return snapshot.predictions.find((prediction) => prediction.id === predictionId) ?? null;
+}
+
 export function listParlays(snapshot: OperationSnapshot): readonly ParlayEntity[] {
   return snapshot.parlays;
+}
+
+export function findParlayById(
+  snapshot: OperationSnapshot,
+  parlayId: string,
+): ParlayEntity | null {
+  return snapshot.parlays.find((parlay) => parlay.id === parlayId) ?? null;
+}
+
+export function listValidations(snapshot: OperationSnapshot): readonly ValidationEntity[] {
+  return snapshot.validations;
+}
+
+export function findValidationById(
+  snapshot: OperationSnapshot,
+  validationId: string,
+): ValidationEntity | null {
+  return snapshot.validations.find((validation) => validation.id === validationId) ?? null;
 }
 
 export function getValidationSummary(
@@ -612,6 +672,44 @@ function matchFixtureDetailPath(requestPath: string): { fixtureId: string } | nu
   }
 
   return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchPredictionDetailPath(requestPath: string): { predictionId: string } | null {
+  const match = requestPath.match(/^\/predictions\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { predictionId: decodeURIComponent(match[1]) };
+}
+
+function matchParlayDetailPath(requestPath: string): { parlayId: string } | null {
+  const match = requestPath.match(/^\/parlays\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { parlayId: decodeURIComponent(match[1]) };
+}
+
+function matchValidationDetailPath(requestPath: string): { validationId: string } | null {
+  const match = requestPath.match(/^\/validations\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { validationId: decodeURIComponent(match[1]) };
+}
+
+function createResourceNotFoundResponse(resource: string, resourceId: string): PublicApiResponse {
+  return {
+    status: 404,
+    body: {
+      error: "resource_not_found",
+      resource,
+      resourceId,
+    },
+  };
 }
 
 function writeJsonResponse(
