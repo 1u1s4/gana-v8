@@ -28,6 +28,7 @@
     "@gana-v8/config-runtime": "workspace:*",
     "@gana-v8/domain-core": "workspace:*",
     "@gana-v8/observability": "workspace:*",
-    "@gana-v8/authz": "workspace:*"
+    "@gana-v8/authz": "workspace:*",
+    "@gana-v8/storage-adapters": "workspace:*"
   }
 }

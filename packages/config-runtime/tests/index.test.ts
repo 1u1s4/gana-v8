@@ -15,7 +15,7 @@ test("loadRuntimeConfig resolves gana-v8 defaults for local development", () => 
   assert.equal(config.app.name, "hermes-control-plane");
   assert.equal(config.app.env, "development");
   assert.equal(config.app.profile, "local-dev");
-  assert.equal(config.database.url, "postgresql://gana:gana@localhost:5432/gana_v8_local_dev");
+  assert.equal(config.database.url, "mysql://gana:***@localhost:3306/gana_v8_local_dev");
   assert.equal(config.provider.source, "mock");
   assert.equal(config.provider.baseUrl, "mock://api-football");
   assert.equal(config.logging.level, "debug");
@@ -28,7 +28,7 @@ test("loadRuntimeConfig honors explicit environment overrides", () => {
   const config = loadRuntimeConfig({
     appName: "hermes-control-plane",
     env: {
-      DATABASE_URL: "postgresql://ci:ci@localhost:5432/gana_v8_ci",
+      DATABASE_URL: "mysql://ci:***@localhost:3306/gana_v8_ci",
       GANA_DEMO_MODE: "false",
       GANA_DRY_RUN: "false",
       GANA_LOG_LEVEL: "warn",
@@ -40,7 +40,7 @@ test("loadRuntimeConfig honors explicit environment overrides", () => {
 
   assert.equal(config.app.env, "test");
   assert.equal(config.app.profile, "ci-regression");
-  assert.equal(config.database.url, "postgresql://ci:ci@localhost:5432/gana_v8_ci");
+  assert.equal(config.database.url, "mysql://ci:***@localhost:3306/gana_v8_ci");
   assert.equal(config.provider.source, "replay");
   assert.equal(config.provider.baseUrl, "https://replay.gana.test/v1");
   assert.equal(config.logging.level, "warn");

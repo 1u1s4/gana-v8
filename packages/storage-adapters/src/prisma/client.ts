@@ -2,11 +2,20 @@ import { PrismaClient } from "@prisma/client";
 
 let globalPrismaClient: PrismaClient | undefined;
 
-export const createPrismaClient = (): PrismaClient => new PrismaClient();
+export const createPrismaClient = (databaseUrl?: string): PrismaClient =>
+  databaseUrl
+    ? new PrismaClient({
+        datasources: {
+          db: {
+            url: databaseUrl,
+          },
+        },
+      })
+    : new PrismaClient();
 
-export const getPrismaClient = (): PrismaClient => {
+export const getPrismaClient = (databaseUrl?: string): PrismaClient => {
   if (!globalPrismaClient) {
-    globalPrismaClient = createPrismaClient();
+    globalPrismaClient = createPrismaClient(databaseUrl);
   }
 
   return globalPrismaClient;

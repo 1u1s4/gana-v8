@@ -4,12 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Runs connectors, landing jobs, and normalization checkpoints.",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     }
   },
   "files": [
@@ -19,14 +19,17 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs ingestion-worker",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
+    "test": "tsc -p tsconfig.json && node --test dist/tests/**/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
-    "@gana-v8/source-connectors": "workspace:*",
     "@gana-v8/canonical-pipeline": "workspace:*",
     "@gana-v8/config-runtime": "workspace:*",
-    "@gana-v8/observability": "workspace:*"
+    "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/observability": "workspace:*",
+    "@gana-v8/orchestration-sdk": "workspace:*",
+    "@gana-v8/source-connectors": "workspace:*",
+    "@gana-v8/storage-adapters": "workspace:*"
   }
 }

@@ -90,7 +90,7 @@ const defaultProviderBaseUrls: Readonly<Record<RuntimeProviderSource, string>> =
 };
 
 const createLocalDatabaseUrl = (databaseName: string): string =>
-  `postgresql://gana:gana@localhost:5432/${databaseName}`;
+  `mysql://gana:***@localhost:3306/${databaseName}`;
 
 const runtimeProfilePresets: Readonly<Record<RuntimeProfile, RuntimeProfilePreset>> = {
   "local-dev": {

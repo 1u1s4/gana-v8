@@ -11,11 +11,13 @@ import {
   type TaskExecutionResult,
   type WorkflowIntent,
   workspaceInfo as orchestrationWorkspaceInfo,
-} from "../../../packages/orchestration-sdk/src/index.js";
+} from "@gana-v8/orchestration-sdk";
 import {
   loadRuntimeConfig,
   type RuntimeConfig,
-} from "../../../packages/config-runtime/src/index.js";
+} from "@gana-v8/config-runtime";
+import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
+import { createTask, createTaskRun, type TaskEntity, type TaskKind, type TaskRunEntity } from "@gana-v8/domain-core";
 import {
   FakeFootballApiClient,
   FootballApiFacade,
@@ -25,7 +27,7 @@ import {
   sampleOdds,
   type FetchFixturesWindowInput,
   type FetchOddsWindowInput,
-} from "../../../packages/source-connectors/src/index.js";
+} from "@gana-v8/source-connectors";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/hermes-control-plane",
@@ -79,6 +81,56 @@ export interface DemoRunResult {
 
 export interface DemoRunOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+export interface PersistedTaskSummary {
+  readonly total: number;
+  readonly queued: number;
+  readonly running: number;
+  readonly succeeded: number;
+  readonly failed: number;
+  readonly cancelled: number;
+  readonly latestTasks: readonly TaskEntity[];
+}
+
+export type PersistedTaskIntent = Extract<TaskKind, "research" | "prediction">;
+
+export interface EnqueuePersistedTaskInput {
+  readonly id?: string;
+  readonly kind: PersistedTaskIntent;
+  readonly payload: Record<string, unknown>;
+  readonly priority?: number;
+  readonly scheduledFor?: Date;
+  readonly now?: Date;
+}
+
+export interface PersistedTaskClaim {
+  readonly task: TaskEntity;
+  readonly taskRun: TaskRunEntity;
+}
+
+export type PersistedTaskHandlerResult = Record<string, unknown>;
+
+export type PersistedTaskHandler = (
+  task: TaskEntity,
+  taskRun: TaskRunEntity,
+) => Promise<PersistedTaskHandlerResult> | PersistedTaskHandlerResult;
+
+export interface PersistedTaskHandlers {
+  readonly research: PersistedTaskHandler;
+  readonly prediction: PersistedTaskHandler;
+}
+
+export interface RunNextPersistedTaskOptions {
+  readonly kind?: PersistedTaskIntent;
+  readonly now?: Date;
+}
+
+export interface PersistedTaskExecution {
+  readonly task: TaskEntity;
+  readonly taskRun: TaskRunEntity;
+  readonly output: PersistedTaskHandlerResult;
+  readonly error?: Error;
 }
 
 const toProviderSourceName = (runtimeConfig: RuntimeConfig): string =>
@@ -226,6 +278,174 @@ export const runDemoControlPlane = async (
     triggeredAt: now.toISOString(),
     workspace: describeWorkspace(),
   };
+};
+
+const createPersistedTaskId = (kind: PersistedTaskIntent, payload: Record<string, unknown>, now: Date): string =>
+  `persisted:${kind}:${stableId(JSON.stringify({ kind, now: now.toISOString(), payload }))}`;
+
+const ensurePersistedTask = (task: TaskEntity | null, taskId: string): TaskEntity => {
+  if (!task) {
+    throw new Error(`Persisted task ${taskId} was not found after write`);
+  }
+
+  return task;
+};
+
+export const enqueuePersistedTask = async (
+  databaseUrl: string,
+  input: EnqueuePersistedTaskInput,
+): Promise<TaskEntity> => {
+  const client = createPrismaClient(databaseUrl);
+
+  try {
+    const unitOfWork = createPrismaUnitOfWork(client);
+    const now = input.now ?? new Date();
+    const task = createTask({
+      id: input.id ?? createPersistedTaskId(input.kind, input.payload, now),
+      kind: input.kind,
+      status: "queued",
+      priority: input.priority ?? 0,
+      payload: input.payload,
+      ...(input.scheduledFor ? { scheduledFor: input.scheduledFor.toISOString() } : {}),
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+
+    return unitOfWork.tasks.save(task);
+  } finally {
+    await client.$disconnect();
+  }
+};
+
+export const maybeClaimNextPersistedTask = async (
+  databaseUrl: string,
+  kind?: PersistedTaskIntent,
+  now: Date = new Date(),
+): Promise<PersistedTaskClaim | null> => {
+  const client = createPrismaClient(databaseUrl);
+
+  try {
+    const unitOfWork = createPrismaUnitOfWork(client);
+    const nextTask = (await unitOfWork.tasks.findByStatus("queued")).find(
+      (candidate) => (kind ? candidate.kind === kind : true),
+    );
+
+    if (!nextTask) {
+      return null;
+    }
+
+    const claimedAt = now.toISOString();
+    const claimResult = await client.task.updateMany({
+      where: { id: nextTask.id, status: "queued" },
+      data: { status: "running", updatedAt: new Date(claimedAt) },
+    });
+
+    if (claimResult.count === 0) {
+      return null;
+    }
+
+    const taskRun = await unitOfWork.taskRuns.save(
+      createTaskRun({
+        id: `${nextTask.id}:attempt:1`,
+        taskId: nextTask.id,
+        attemptNumber: 1,
+        status: "running",
+        startedAt: claimedAt,
+        createdAt: claimedAt,
+        updatedAt: claimedAt,
+      }),
+    );
+    const task = ensurePersistedTask(await unitOfWork.tasks.getById(nextTask.id), nextTask.id);
+
+    return { task, taskRun };
+  } finally {
+    await client.$disconnect();
+  }
+};
+
+export const runNextPersistedTask = async (
+  databaseUrl: string,
+  handlers: PersistedTaskHandlers,
+  options: RunNextPersistedTaskOptions = {},
+): Promise<PersistedTaskExecution | null> => {
+  const claim = await maybeClaimNextPersistedTask(databaseUrl, options.kind, options.now);
+
+  if (!claim) {
+    return null;
+  }
+
+  const client = createPrismaClient(databaseUrl);
+
+  try {
+    const unitOfWork = createPrismaUnitOfWork(client);
+    const finishedAt = (options.now ?? new Date()).toISOString();
+    const handler = handlers[claim.task.kind as PersistedTaskIntent];
+
+    try {
+      const output = await handler(claim.task, claim.taskRun);
+      const taskRun = await unitOfWork.taskRuns.save(
+        createTaskRun({
+          ...claim.taskRun,
+          status: "succeeded",
+          finishedAt,
+          updatedAt: finishedAt,
+        }),
+      );
+      await client.task.update({
+        where: { id: claim.task.id },
+        data: { status: "succeeded", updatedAt: new Date(finishedAt) },
+      });
+      const task = ensurePersistedTask(await unitOfWork.tasks.getById(claim.task.id), claim.task.id);
+
+      return { task, taskRun, output };
+    } catch (error) {
+      const taskError = error instanceof Error ? error : new Error(String(error));
+      const taskRun = await unitOfWork.taskRuns.save(
+        createTaskRun({
+          ...claim.taskRun,
+          status: "failed",
+          finishedAt,
+          error: taskError.message,
+          updatedAt: finishedAt,
+        }),
+      );
+      await client.task.update({
+        where: { id: claim.task.id },
+        data: { status: "failed", updatedAt: new Date(finishedAt) },
+      });
+      const task = ensurePersistedTask(await unitOfWork.tasks.getById(claim.task.id), claim.task.id);
+
+      return { task, taskRun, output: {}, error: taskError };
+    }
+  } finally {
+    await client.$disconnect();
+  }
+};
+
+export const loadPersistedTaskSummary = async (
+  databaseUrl: string,
+): Promise<PersistedTaskSummary> => {
+  const client = createPrismaClient(databaseUrl);
+
+  try {
+    const unitOfWork = createPrismaUnitOfWork(client);
+    const tasks = await unitOfWork.tasks.list();
+    const latestTasks = [...tasks]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 10);
+
+    return {
+      cancelled: tasks.filter((task) => task.status === "cancelled").length,
+      failed: tasks.filter((task) => task.status === "failed").length,
+      latestTasks,
+      queued: tasks.filter((task) => task.status === "queued").length,
+      running: tasks.filter((task) => task.status === "running").length,
+      succeeded: tasks.filter((task) => task.status === "succeeded").length,
+      total: tasks.length,
+    };
+  } finally {
+    await client.$disconnect();
+  }
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {

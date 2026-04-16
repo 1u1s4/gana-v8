@@ -67,6 +67,13 @@ pnpm test
 pnpm build
 ```
 
+## Base de datos por defecto
+
+- Prisma y el runtime quedan orientados a MySQL como default de desarrollo.
+- Copiá `.env.example` a `.env` y completá `DATABASE_URL` (y opcionalmente `DATABASE_ADMIN_URL`) con la conexión MySQL administrada en DigitalOcean.
+- Para DigitalOcean managed MySQL sin CA local configurada, usá `sslaccept=accept_invalid_certs` en la URL
+- El baseline actual de `prisma/migrations/` ya fue regenerado para MySQL.
+
 ## Convenciones del scaffold
 
 - Cada workspace expone `src/index.ts` como punto de entrada mínimo.

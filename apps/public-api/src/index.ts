@@ -4,12 +4,15 @@ import {
   createFixture,
   createParlay,
   createPrediction,
+  createTask,
   createValidation,
   type FixtureEntity,
   type ParlayEntity,
   type PredictionEntity,
+  type TaskEntity,
   type ValidationEntity,
 } from "@gana-v8/domain-core";
+import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
 export interface ValidationSummary {
   readonly total: number;
@@ -32,9 +35,31 @@ export interface PublicApiHealth {
   }[];
 }
 
+export interface RawIngestionBatchReadModel {
+  readonly id: string;
+  readonly endpointFamily: string;
+  readonly providerCode: string;
+  readonly extractionStatus: string;
+  readonly extractionTime: string;
+  readonly recordCount: number;
+}
+
+export interface OddsSnapshotReadModel {
+  readonly id: string;
+  readonly fixtureId?: string;
+  readonly providerFixtureId: string;
+  readonly bookmakerKey: string;
+  readonly marketKey: string;
+  readonly capturedAt: string;
+  readonly selectionCount: number;
+}
+
 export interface OperationSnapshot {
   readonly generatedAt: string;
   readonly fixtures: readonly FixtureEntity[];
+  readonly tasks: readonly TaskEntity[];
+  readonly rawBatches: readonly RawIngestionBatchReadModel[];
+  readonly oddsSnapshots: readonly OddsSnapshotReadModel[];
   readonly predictions: readonly PredictionEntity[];
   readonly parlays: readonly ParlayEntity[];
   readonly validations: readonly ValidationEntity[];
@@ -44,6 +69,10 @@ export interface OperationSnapshot {
 
 export interface PublicApiHandlers {
   readonly fixtures: () => readonly FixtureEntity[];
+  readonly fixtureById: (fixtureId: string) => FixtureEntity | null;
+  readonly tasks: () => readonly TaskEntity[];
+  readonly rawBatches: () => readonly RawIngestionBatchReadModel[];
+  readonly oddsSnapshots: () => readonly OddsSnapshotReadModel[];
   readonly predictions: () => readonly PredictionEntity[];
   readonly parlays: () => readonly ParlayEntity[];
   readonly validationSummary: () => ValidationSummary;
@@ -62,6 +91,9 @@ export interface PublicApiResponse {
 
 export const publicApiEndpointPaths = {
   fixtures: "/fixtures",
+  tasks: "/tasks",
+  rawBatches: "/raw-batches",
+  oddsSnapshots: "/odds-snapshots",
   predictions: "/predictions",
   parlays: "/parlays",
   validationSummary: "/validation-summary",
@@ -79,7 +111,8 @@ export const workspaceInfo = {
     { name: "@gana-v8/config-runtime", category: "workspace" },
     { name: "@gana-v8/contract-schemas", category: "workspace" },
     { name: "@gana-v8/domain-core", category: "workspace" },
-    { name: "@gana-v8/observability", category: "workspace" }
+    { name: "@gana-v8/observability", category: "workspace" },
+    { name: "@gana-v8/storage-adapters", category: "workspace" }
   ],
 };
 
@@ -116,6 +149,7 @@ export function summarizeValidations(
 export function createHealthReport(input: {
   readonly generatedAt: string;
   readonly fixtures: readonly FixtureEntity[];
+  readonly tasks: readonly TaskEntity[];
   readonly predictions: readonly PredictionEntity[];
   readonly parlays: readonly ParlayEntity[];
   readonly validationSummary: ValidationSummary;
@@ -125,6 +159,11 @@ export function createHealthReport(input: {
       name: "fixtures",
       status: input.fixtures.length > 0 ? "pass" : "warn",
       detail: `${input.fixtures.length} fixture(s) in snapshot`,
+    },
+    {
+      name: "tasks",
+      status: input.tasks.length > 0 ? "pass" : "warn",
+      detail: `${input.tasks.length} task(s) in snapshot`,
     },
     {
       name: "predictions",
@@ -157,12 +196,18 @@ export function createHealthReport(input: {
 export function createOperationSnapshot(input: {
   readonly generatedAt?: string;
   readonly fixtures?: readonly FixtureEntity[];
+  readonly tasks?: readonly TaskEntity[];
+  readonly rawBatches?: readonly RawIngestionBatchReadModel[];
+  readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
   readonly predictions?: readonly PredictionEntity[];
   readonly parlays?: readonly ParlayEntity[];
   readonly validations?: readonly ValidationEntity[];
 } = {}): OperationSnapshot {
   const generatedAt = input.generatedAt ?? "2026-04-15T01:00:00.000Z";
   const fixtures = [...(input.fixtures ?? createDemoFixtures())];
+  const tasks = [...(input.tasks ?? createDemoTasks())];
+  const rawBatches = [...(input.rawBatches ?? [])];
+  const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
   const predictions = [...(input.predictions ?? createDemoPredictions(fixtures))];
   const parlays = [...(input.parlays ?? createDemoParlays(predictions))];
   const validations = [...(input.validations ?? createDemoValidations(parlays, predictions))];
@@ -171,6 +216,9 @@ export function createOperationSnapshot(input: {
   return {
     generatedAt,
     fixtures,
+    tasks,
+    rawBatches,
+    oddsSnapshots,
     predictions,
     parlays,
     validations,
@@ -178,6 +226,7 @@ export function createOperationSnapshot(input: {
     health: createHealthReport({
       generatedAt,
       fixtures,
+      tasks,
       predictions,
       parlays,
       validationSummary,
@@ -190,6 +239,10 @@ export function createPublicApiHandlers(
 ): PublicApiHandlers {
   return {
     fixtures: () => listFixtures(snapshot),
+    fixtureById: (fixtureId: string) => findFixtureById(snapshot, fixtureId),
+    tasks: () => listTasks(snapshot),
+    rawBatches: () => listRawBatches(snapshot),
+    oddsSnapshots: () => listOddsSnapshots(snapshot),
     predictions: () => listPredictions(snapshot),
     parlays: () => listParlays(snapshot),
     validationSummary: () => getValidationSummary(snapshot),
@@ -202,9 +255,32 @@ export function routePublicApiRequest(
   handlers: PublicApiHandlers,
   requestPath: string,
 ): PublicApiResponse {
-  switch (normalizeRequestPath(requestPath)) {
+  const normalizedPath = normalizeRequestPath(requestPath);
+  const fixtureDetail = matchFixtureDetailPath(normalizedPath);
+  if (fixtureDetail) {
+    const fixture = handlers.fixtureById(fixtureDetail.fixtureId);
+    if (!fixture) {
+      return {
+        status: 404,
+        body: {
+          error: "fixture_not_found",
+          fixtureId: fixtureDetail.fixtureId,
+        },
+      };
+    }
+
+    return { status: 200, body: fixture };
+  }
+
+  switch (normalizedPath) {
     case publicApiEndpointPaths.fixtures:
       return { status: 200, body: handlers.fixtures() };
+    case publicApiEndpointPaths.tasks:
+      return { status: 200, body: handlers.tasks() };
+    case publicApiEndpointPaths.rawBatches:
+      return { status: 200, body: handlers.rawBatches() };
+    case publicApiEndpointPaths.oddsSnapshots:
+      return { status: 200, body: handlers.oddsSnapshots() };
     case publicApiEndpointPaths.predictions:
       return { status: 200, body: handlers.predictions() };
     case publicApiEndpointPaths.parlays:
@@ -261,6 +337,25 @@ export function listFixtures(snapshot: OperationSnapshot): readonly FixtureEntit
   return snapshot.fixtures;
 }
 
+export function findFixtureById(
+  snapshot: OperationSnapshot,
+  fixtureId: string,
+): FixtureEntity | null {
+  return snapshot.fixtures.find((fixture) => fixture.id === fixtureId) ?? null;
+}
+
+export function listTasks(snapshot: OperationSnapshot): readonly TaskEntity[] {
+  return snapshot.tasks;
+}
+
+export function listRawBatches(snapshot: OperationSnapshot): readonly RawIngestionBatchReadModel[] {
+  return snapshot.rawBatches;
+}
+
+export function listOddsSnapshots(snapshot: OperationSnapshot): readonly OddsSnapshotReadModel[] {
+  return snapshot.oddsSnapshots;
+}
+
 export function listPredictions(
   snapshot: OperationSnapshot,
 ): readonly PredictionEntity[] {
@@ -302,6 +397,27 @@ export function createDemoFixtures(): readonly FixtureEntity[] {
       scheduledAt: "2026-04-16T18:45:00.000Z",
       status: "scheduled",
       metadata: { source: "seed", feed: "demo" },
+    }),
+  ];
+}
+
+export function createDemoTasks(): readonly TaskEntity[] {
+  return [
+    createTask({
+      id: "task-demo-fixtures",
+      kind: "fixture-ingestion",
+      status: "succeeded",
+      priority: 100,
+      payload: { source: "demo" },
+      attempts: [
+        {
+          startedAt: "2026-04-15T00:00:00.000Z",
+          finishedAt: "2026-04-15T00:01:00.000Z",
+        },
+      ],
+      scheduledFor: "2026-04-15T00:00:00.000Z",
+      createdAt: "2026-04-15T00:00:00.000Z",
+      updatedAt: "2026-04-15T00:01:00.000Z",
     }),
   ];
 }
@@ -403,6 +519,76 @@ export function createDemoValidations(
   ];
 }
 
+export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): Promise<OperationSnapshot> {
+  const client = createPrismaClient(databaseUrl);
+
+  try {
+    const unitOfWork = createPrismaUnitOfWork(client);
+    const [fixtures, tasks, predictions, parlays, validations, rawBatches, oddsSnapshots] = await Promise.all([
+      unitOfWork.fixtures.list(),
+      unitOfWork.tasks.list(),
+      unitOfWork.predictions.list(),
+      unitOfWork.parlays.list(),
+      unitOfWork.validations.list(),
+      client.rawIngestionBatch.findMany({
+        orderBy: { extractionTime: "desc" },
+        take: 100,
+      }),
+      client.$queryRawUnsafe<Array<{
+        id: string;
+        fixtureId: string | null;
+        providerFixtureId: string;
+        bookmakerKey: string;
+        marketKey: string;
+        capturedAt: Date;
+        selectionCount: bigint | number;
+      }>>(`
+        SELECT
+          os.id,
+          os.fixtureId,
+          os.providerFixtureId,
+          os.bookmakerKey,
+          os.marketKey,
+          os.capturedAt,
+          COUNT(oss.id) AS selectionCount
+        FROM OddsSnapshot os
+        LEFT JOIN OddsSelectionSnapshot oss ON oss.oddsSnapshotId = os.id
+        GROUP BY os.id, os.fixtureId, os.providerFixtureId, os.bookmakerKey, os.marketKey, os.capturedAt
+        ORDER BY os.capturedAt DESC
+        LIMIT 100
+      `),
+    ]);
+
+    return createOperationSnapshot({
+      fixtures,
+      generatedAt: new Date().toISOString(),
+      oddsSnapshots: oddsSnapshots.map((snapshot) => ({
+        bookmakerKey: snapshot.bookmakerKey,
+        capturedAt: snapshot.capturedAt.toISOString(),
+        ...(snapshot.fixtureId ? { fixtureId: snapshot.fixtureId } : {}),
+        id: snapshot.id,
+        marketKey: snapshot.marketKey,
+        providerFixtureId: snapshot.providerFixtureId,
+        selectionCount: Number(snapshot.selectionCount),
+      })),
+      parlays,
+      predictions,
+      rawBatches: rawBatches.map((batch) => ({
+        endpointFamily: batch.endpointFamily,
+        extractionStatus: batch.extractionStatus,
+        extractionTime: batch.extractionTime.toISOString(),
+        id: batch.id,
+        providerCode: batch.providerCode,
+        recordCount: batch.recordCount,
+      })),
+      tasks,
+      validations,
+    });
+  } finally {
+    await client.$disconnect();
+  }
+}
+
 function normalizeRequestPath(requestPath: string): string {
   const [pathname] = requestPath.split("?", 1);
   if (!pathname) {
@@ -414,6 +600,15 @@ function normalizeRequestPath(requestPath: string): string {
   }
 
   return pathname;
+}
+
+function matchFixtureDetailPath(requestPath: string): { fixtureId: string } | null {
+  const match = requestPath.match(/^\/fixtures\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { fixtureId: decodeURIComponent(match[1]) };
 }
 
 function writeJsonResponse(

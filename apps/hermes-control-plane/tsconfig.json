@@ -1,20 +1,18 @@
 {
-  "extends": "../../tsconfig.app.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "../..",
-    "outDir": "./dist",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo",
-    "types": ["node"]
+    "rootDir": ".",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "@gana-v8/config-runtime": ["../../packages/config-runtime/dist/index.d.ts"],
+      "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
+      "@gana-v8/orchestration-sdk": ["../../packages/orchestration-sdk/dist/src/index.d.ts"],
+      "@gana-v8/source-connectors": ["../../packages/source-connectors/dist/index.d.ts"],
+      "@gana-v8/storage-adapters": ["../../packages/storage-adapters/dist/src/index.d.ts"]
+    }
   },
-  "include": [
-    "src/**/*.ts",
-    "tests/**/*.test.ts",
-    "../../packages/config-runtime/src/**/*.ts",
-    "../../packages/orchestration-sdk/src/**/*.ts",
-    "../../packages/source-connectors/src/**/*.ts"
-  ],
-  "exclude": [
-    "dist",
-    "node_modules"
-  ]
+  "include": ["src/**/*.ts", "tests/**/*.test.ts"],
+  "exclude": ["dist", "node_modules"]
 }

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -133,10 +133,72 @@ model Fixture {
   metadata     Json
   predictions  Prediction[]
   parlayLegs   ParlayLeg[]
+  oddsSnapshots OddsSnapshot[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
   @@index([competition, scheduledAt])
+}
+
+model RawIngestionBatch {
+  id                  String         @id
+  providerCode        String
+  endpointFamily      String
+  sourceName          String
+  sourceEndpoint      String
+  runId               String
+  schemaVersion       String
+  fetchedAt           DateTime
+  extractionTime      DateTime
+  coverageWindowStart DateTime
+  coverageWindowEnd   DateTime
+  coverageGranularity String
+  checksum            String
+  extractionStatus    String
+  warnings            Json
+  sourceQualityScore  Float
+  recordCount         Int
+  rawObjectRefs       Json
+  oddsSnapshots       OddsSnapshot[]
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([providerCode, endpointFamily, extractionTime])
+}
+
+model OddsSnapshot {
+  id                String               @id
+  batchId           String
+  batch             RawIngestionBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  fixtureId         String?
+  fixture           Fixture?             @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
+  providerFixtureId String
+  providerCode      String
+  bookmakerKey      String
+  marketKey         String
+  capturedAt        DateTime
+  payload           Json
+  selections        OddsSelectionSnapshot[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([batchId, providerFixtureId, bookmakerKey, marketKey])
+  @@index([fixtureId, capturedAt])
+}
+
+model OddsSelectionSnapshot {
+  id             String       @id
+  oddsSnapshotId String
+  oddsSnapshot   OddsSnapshot @relation(fields: [oddsSnapshotId], references: [id], onDelete: Cascade)
+  index          Int
+  selectionKey   String
+  label          String
+  priceDecimal   Float
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([oddsSnapshotId, index])
+  @@index([selectionKey])
 }
 
 model Task {

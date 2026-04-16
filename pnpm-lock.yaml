@@ -38,6 +38,9 @@ importers:
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -50,6 +53,9 @@ importers:
       '@gana-v8/source-connectors':
         specifier: workspace:*
         version: link:../../packages/source-connectors
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../../packages/storage-adapters
 
   apps/ingestion-worker:
     dependencies:
@@ -59,12 +65,21 @@ importers:
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/orchestration-sdk':
+        specifier: workspace:*
+        version: link:../../packages/orchestration-sdk
       '@gana-v8/source-connectors':
         specifier: workspace:*
         version: link:../../packages/source-connectors
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../../packages/storage-adapters
 
   apps/operator-console:
     dependencies:
@@ -98,6 +113,9 @@ importers:
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../../packages/storage-adapters
 
   apps/publisher-worker:
     dependencies:
@@ -149,6 +167,9 @@ importers:
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
       '@gana-v8/feature-store':
         specifier: workspace:*
         version: link:../../packages/feature-store
@@ -158,6 +179,9 @@ importers:
       '@gana-v8/prediction-engine':
         specifier: workspace:*
         version: link:../../packages/prediction-engine
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../../packages/storage-adapters
 
   apps/validation-worker:
     dependencies:
