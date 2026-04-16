@@ -177,7 +177,10 @@ export function createHealthReport(input: {
     },
     {
       name: "validations",
-      status: input.validationSummary.failed === 0 ? "pass" : "warn",
+      status:
+        input.validationSummary.pending === 0 && input.validationSummary.partial === 0
+          ? "pass"
+          : "warn",
       detail:
         `${input.validationSummary.passed} passed / ` +
         `${input.validationSummary.failed} failed / ` +

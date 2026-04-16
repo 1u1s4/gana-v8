@@ -263,6 +263,12 @@ const toPersistedFixture = (
     awayTeam: record.awayTeam.name,
     scheduledAt: record.scheduledAt,
     status: toFixtureStatus(record.status),
+    ...(record.score?.home !== null &&
+    record.score?.home !== undefined &&
+    record.score?.away !== null &&
+    record.score?.away !== undefined
+      ? { score: { home: record.score.home, away: record.score.away } }
+      : {}),
     metadata: {
       batchId: batch.batchId,
       checksum: batch.checksum,

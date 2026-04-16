@@ -27,7 +27,7 @@ test("public api snapshot exposes fixtures, predictions, parlays, validation sum
   assert.equal(listParlays(snapshot).length, 1);
   assert.equal(getValidationSummary(snapshot).total, 2);
   assert.equal(getValidationSummary(snapshot).partial, 1);
-  assert.equal(getHealth(snapshot).status, "ok");
+  assert.equal(getHealth(snapshot).status, "degraded");
   assert.equal(publicApiEndpointPaths.health, "/health");
 });
 

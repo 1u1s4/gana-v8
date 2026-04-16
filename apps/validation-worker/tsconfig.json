@@ -1,12 +1,20 @@
 {
-  "extends": "../../tsconfig.app.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "./src",
+    "rootDir": ".",
     "outDir": "./dist",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "types": ["node"],
+    "paths": {
+      "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
+      "@gana-v8/parlay-engine": ["../../packages/parlay-engine/dist/index.d.ts"],
+      "@gana-v8/storage-adapters": ["../../packages/storage-adapters/dist/src/index.d.ts"],
+      "@gana-v8/validation-engine": ["../../packages/validation-engine/dist/index.d.ts"]
+    }
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "tests/**/*.test.ts"
   ],
   "exclude": [
     "dist",

@@ -282,6 +282,76 @@ test("runtime persists fixtures, tasks, task runs, and audit events when a unit 
   await runtime.close();
 });
 
+test("runtime persists fixture scores when provider fixtures include them", async () => {
+  const queue = new SimpleInMemoryQueue();
+  const unitOfWork = createInMemoryUnitOfWork();
+  const runtime = createIngestionWorkerRuntime({
+    fixtures: [
+      {
+        awayTeam: {
+          name: "Arsenal",
+          providerTeamId: "ars",
+        },
+        competition: {
+          name: "Premier League",
+          providerCompetitionId: "pl-2026",
+        },
+        homeTeam: {
+          name: "Chelsea",
+          providerTeamId: "che",
+        },
+        payload: {
+          fixtureId: "fix-score-1",
+        },
+        providerCode: "api-football",
+        providerFixtureId: "fix-score-1",
+        recordType: "fixture",
+        scheduledAt: "2026-04-15T19:00:00.000Z",
+        score: {
+          away: 1,
+          home: 2,
+        },
+        status: "finished",
+      },
+    ],
+    now: () => new Date("2026-04-15T12:00:00.000Z"),
+    queue,
+    unitOfWork,
+  });
+
+  queue.enqueue(
+    createTaskEnvelope({
+      createdAt: "2026-04-15T12:00:00.000Z",
+      intent: "ingest-fixtures",
+      metadata: {
+        labels: ["test", "fixtures", "score"],
+        source: "tests/runtime",
+      },
+      payload: {
+        league: "PL",
+        window: {
+          end: "2026-04-16T00:00:00.000Z",
+          granularity: "daily",
+          start: "2026-04-15T00:00:00.000Z",
+        },
+      },
+      scheduledFor: "2026-04-15T12:00:00.000Z",
+      taskKind: "fixture-ingestion",
+      traceId: "trace-fixtures-score",
+      workflowId: "wf-fixtures-score",
+    }),
+  );
+
+  await runtime.drainQueue(new Date("2026-04-15T12:00:00.000Z"));
+
+  const persistedFixtures = await unitOfWork.fixtures.list();
+
+  assert.equal(persistedFixtures.length, 1);
+  assert.deepEqual(persistedFixtures[0]?.score, { home: 2, away: 1 });
+
+  await runtime.close();
+});
+
 test("runtime persists raw batches and odds snapshots when a prisma client is wired", async () => {
   const queue = new SimpleInMemoryQueue();
   const unitOfWork = createInMemoryUnitOfWork();

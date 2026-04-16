@@ -100,6 +100,57 @@ test("ApiFootballHttpClient falls back to date-based fixture polling when league
   assert.match(requests[1]!.url, /fixtures\?date=2026-04-16/);
 });
 
+test("ApiFootballHttpClient maps finished fixture scores from provider goals", async () => {
+  const client = new ApiFootballHttpClient({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v3",
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: [
+          {
+            fixture: {
+              date: "2026-04-15T19:00:00.000Z",
+              id: 456,
+              status: {
+                short: "FT",
+              },
+            },
+            goals: {
+              away: 1,
+              home: 2,
+            },
+            league: {
+              id: 39,
+              name: "Premier League",
+            },
+            teams: {
+              away: {
+                id: 42,
+                name: "Arsenal",
+              },
+              home: {
+                id: 41,
+                name: "Chelsea",
+              },
+            },
+          },
+        ],
+      }),
+  });
+
+  const records = await client.fetchFixturesWindow({
+    league: "39",
+    window: {
+      end: "2026-04-16T00:00:00.000Z",
+      granularity: "daily",
+      start: "2026-04-15T00:00:00.000Z",
+    },
+  });
+
+  assert.equal(records[0]?.status, "finished");
+  assert.deepEqual(records[0]?.score, { home: 2, away: 1 });
+});
+
 test("ApiFootballHttpClient maps and filters odds window responses", async () => {
   const client = new ApiFootballHttpClient({
     apiKey: "test-key",

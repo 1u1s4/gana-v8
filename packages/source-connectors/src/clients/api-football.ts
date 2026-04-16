@@ -41,6 +41,10 @@ interface ApiFootballFixtureResponse {
     };
     readonly timestamp?: number;
   };
+  readonly goals?: {
+    readonly home?: number | null;
+    readonly away?: number | null;
+  };
   readonly league?: {
     readonly country?: string;
     readonly id?: number | string;
@@ -50,6 +54,12 @@ interface ApiFootballFixtureResponse {
   readonly teams?: {
     readonly away?: ApiFootballTeamResponse;
     readonly home?: ApiFootballTeamResponse;
+  };
+  readonly score?: {
+    readonly fulltime?: {
+      readonly home?: number | null;
+      readonly away?: number | null;
+    };
   };
   readonly update?: string;
 }
@@ -171,6 +181,13 @@ const toTeam = (team: ApiFootballTeamResponse | undefined, fallbackLabel: string
   ...(team?.country ? { country: team.country } : {}),
   ...(team?.code ? { shortName: team.code } : {}),
 });
+
+const toFixtureScore = (fixture: ApiFootballFixtureResponse): RawFixtureRecord["score"] => {
+  const home = fixture.goals?.home ?? fixture.score?.fulltime?.home;
+  const away = fixture.goals?.away ?? fixture.score?.fulltime?.away;
+
+  return home !== undefined || away !== undefined ? { home: home ?? null, away: away ?? null } : undefined;
+};
 const toMarketKey = (bet: ApiFootballBetResponse): string => {
   const name = bet.name?.trim();
   const id = bet.id === undefined ? undefined : String(bet.id);
@@ -298,22 +315,27 @@ export class ApiFootballHttpClient implements FootballApiClient {
           )
         ).flat();
 
-    return responses.map((fixture, index) => ({
-      awayTeam: toTeam(fixture.teams?.away, `away-team-${index}`),
-      competition: toCompetition(fixture),
-      homeTeam: toTeam(fixture.teams?.home, `home-team-${index}`),
-      payload: fixture as Record<string, unknown>,
-      providerCode: this.providerCode,
-      providerFixtureId: toProviderId(fixture.fixture?.id, `fixture-${index}`),
-      recordType: "fixture",
-      scheduledAt:
-        fixture.fixture?.date ??
-        (fixture.fixture?.timestamp !== undefined
-          ? new Date(fixture.fixture.timestamp * 1000).toISOString()
-          : input.window.start),
-      status: toStatus(fixture.fixture?.status?.short),
-      ...(fixture.update ? { sourceUpdatedAt: fixture.update } : {}),
-    }));
+    return responses.map((fixture, index) => {
+      const score = toFixtureScore(fixture);
+
+      return {
+        awayTeam: toTeam(fixture.teams?.away, `away-team-${index}`),
+        competition: toCompetition(fixture),
+        homeTeam: toTeam(fixture.teams?.home, `home-team-${index}`),
+        payload: fixture as Record<string, unknown>,
+        providerCode: this.providerCode,
+        providerFixtureId: toProviderId(fixture.fixture?.id, `fixture-${index}`),
+        recordType: "fixture",
+        scheduledAt:
+          fixture.fixture?.date ??
+          (fixture.fixture?.timestamp !== undefined
+            ? new Date(fixture.fixture.timestamp * 1000).toISOString()
+            : input.window.start),
+        ...(score ? { score } : {}),
+        status: toStatus(fixture.fixture?.status?.short),
+        ...(fixture.update ? { sourceUpdatedAt: fixture.update } : {}),
+      };
+    });
   }
 
   async fetchOddsWindow(input: FetchOddsWindowInput): Promise<readonly RawOddsMarketRecord[]> {

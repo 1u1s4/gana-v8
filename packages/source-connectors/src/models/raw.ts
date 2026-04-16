@@ -28,6 +28,11 @@ export interface RawTeam {
   readonly country?: string;
 }
 
+export interface RawFixtureScore {
+  readonly home: number | null;
+  readonly away: number | null;
+}
+
 export interface RawFixtureRecord {
   readonly recordType: "fixture";
   readonly providerFixtureId: string;
@@ -37,6 +42,7 @@ export interface RawFixtureRecord {
   readonly competition: RawCompetition;
   readonly homeTeam: RawTeam;
   readonly awayTeam: RawTeam;
+  readonly score?: RawFixtureScore;
   readonly sourceUpdatedAt?: string;
   readonly payload: Record<string, unknown>;
 }

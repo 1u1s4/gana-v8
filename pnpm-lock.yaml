@@ -122,15 +122,24 @@ importers:
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/parlay-engine':
+        specifier: workspace:*
+        version: link:../../packages/parlay-engine
       '@gana-v8/policy-engine':
         specifier: workspace:*
         version: link:../../packages/policy-engine
       '@gana-v8/publication-engine':
         specifier: workspace:*
         version: link:../../packages/publication-engine
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../../packages/storage-adapters
 
   apps/research-worker:
     dependencies:
@@ -191,9 +200,18 @@ importers:
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/parlay-engine':
+        specifier: workspace:*
+        version: link:../../packages/parlay-engine
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../../packages/storage-adapters
       '@gana-v8/validation-engine':
         specifier: workspace:*
         version: link:../../packages/validation-engine
