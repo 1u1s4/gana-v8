@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFixture } from "@gana-v8/domain-core";
+import { createFixture, createTaskRun } from "@gana-v8/domain-core";
 import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
@@ -12,6 +12,7 @@ import {
   enqueuePredictionForEligibleFixtures,
   loadPersistedTaskSummary,
   maybeClaimNextPersistedTask,
+  requeuePersistedTask,
   runAutomationCycle,
   runDemoControlPlane,
   runNextPersistedTask,
@@ -255,46 +256,264 @@ test("loadPersistedTaskSummary reads persisted task status buckets", async () =>
   assert.ok(summary.latestTasks.length >= 1);
 });
 
-test("enqueuePersistedTask persists queued research and prediction tasks in createdAt order", async () => {
+test("maybeClaimNextPersistedTask orders ready queued tasks by scheduledFor, priority, and createdAt", async () => {
   const databaseUrl = process.env.DATABASE_URL!;
   const prisma = createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-enqueue-${Date.now()}`;
 
   try {
-    const firstTask = await enqueuePersistedTask(databaseUrl, {
-      id: `${taskPrefix}-research`,
+    const immediateLowPriority = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-immediate-low`,
       kind: "research",
-      payload: { fixtureId: "fx-123", prompt: "research this match" },
+      payload: { fixtureId: "fx-123", prompt: "immediate low" },
       now: new Date("2026-04-16T10:00:00.000Z"),
     });
-    const secondTask = await enqueuePersistedTask(databaseUrl, {
-      id: `${taskPrefix}-prediction`,
+    const immediateHighPriority = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-immediate-high`,
       kind: "prediction",
       payload: { fixtureId: "fx-123", market: "moneyline" },
       now: new Date("2026-04-16T10:01:00.000Z"),
+      priority: 10,
+    });
+    const scheduledLowPriority = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-scheduled-low`,
+      kind: "validation",
+      payload: { target: "low-priority" },
+      now: new Date("2026-04-16T10:02:00.000Z"),
+      scheduledFor: new Date("2026-04-16T10:04:00.000Z"),
+      priority: 1,
+    });
+    const scheduledHighPriority = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-scheduled-high`,
+      kind: "prediction",
+      payload: { fixtureId: "fx-123", market: "moneyline" },
+      now: new Date("2026-04-16T10:03:00.000Z"),
+      scheduledFor: new Date("2026-04-16T10:04:00.000Z"),
       priority: 5,
     });
+    await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-future`,
+      kind: "research",
+      payload: { fixtureId: "fx-123", prompt: "future task" },
+      now: new Date("2026-04-16T10:04:00.000Z"),
+      scheduledFor: new Date("2026-04-16T10:10:00.000Z"),
+      priority: 100,
+    });
 
-    assert.equal(firstTask.status, "queued");
-    assert.equal(secondTask.status, "queued");
+    const claimNow = new Date("2026-04-16T10:05:00.000Z");
+    const firstClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
+    const secondClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
+    const thirdClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
+    const fourthClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
+    const exhausted = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
 
-    const summary = await loadPersistedTaskSummary(databaseUrl);
-    const createdTasks = summary.latestTasks.filter((task) => task.id.startsWith(taskPrefix));
-
-    assert.equal(createdTasks.length, 2);
+    assert.ok(firstClaim);
+    assert.ok(secondClaim);
+    assert.ok(thirdClaim);
+    assert.ok(fourthClaim);
+    assert.equal(exhausted, null);
     assert.deepEqual(
-      createdTasks.map((task) => task.id),
-      [secondTask.id, firstTask.id],
+      [firstClaim.task.id, secondClaim.task.id, thirdClaim.task.id, fourthClaim.task.id],
+      [
+        immediateHighPriority.id,
+        immediateLowPriority.id,
+        scheduledHighPriority.id,
+        scheduledLowPriority.id,
+      ],
+    );
+    assert.deepEqual(
+      [
+        firstClaim.taskRun.attemptNumber,
+        secondClaim.taskRun.attemptNumber,
+        thirdClaim.taskRun.attemptNumber,
+        fourthClaim.taskRun.attemptNumber,
+      ],
+      [1, 1, 1, 1],
+    );
+  } finally {
+    await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
+    await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
+    await prisma.$disconnect();
+  }
+});
+
+test("maybeClaimNextPersistedTask increments attempt number from existing task runs", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+  const taskPrefix = `hermes-test-attempt-${Date.now()}`;
+
+  try {
+    const queuedTask = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-prediction`,
+      kind: "prediction",
+      payload: { fixtureId: "fx-999", market: "totals" },
+      now: new Date("2026-04-16T12:00:00.000Z"),
+    });
+
+    await unitOfWork.taskRuns.save(
+      createTaskRun({
+        id: `${queuedTask.id}:attempt:3`,
+        taskId: queuedTask.id,
+        attemptNumber: 3,
+        status: "failed",
+        startedAt: "2026-04-16T12:01:00.000Z",
+        finishedAt: "2026-04-16T12:02:00.000Z",
+        error: "previous failure",
+        createdAt: "2026-04-16T12:01:00.000Z",
+        updatedAt: "2026-04-16T12:02:00.000Z",
+      }),
     );
 
-    const claimedTask = await maybeClaimNextPersistedTask(databaseUrl);
+    const claimedTask = await maybeClaimNextPersistedTask(
+      databaseUrl,
+      undefined,
+      new Date("2026-04-16T12:03:00.000Z"),
+    );
 
     assert.ok(claimedTask);
-    assert.equal(claimedTask.task.id, firstTask.id);
-    assert.equal(claimedTask.task.status, "running");
-    assert.equal(claimedTask.taskRun.taskId, firstTask.id);
-    assert.equal(claimedTask.taskRun.attemptNumber, 1);
-    assert.equal(claimedTask.taskRun.status, "running");
+    assert.equal(claimedTask.task.id, queuedTask.id);
+    assert.equal(claimedTask.taskRun.attemptNumber, 4);
+    assert.equal(claimedTask.taskRun.id, `${queuedTask.id}:attempt:4`);
+  } finally {
+    await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
+    await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
+    await prisma.$disconnect();
+  }
+});
+
+test("requeuePersistedTask requeues failed and cancelled tasks without deleting task run history", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+  const taskPrefix = `hermes-test-requeue-${Date.now()}`;
+
+  try {
+    const failedTask = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-failed`,
+      kind: "prediction",
+      payload: { fixtureId: "fx-rq-1", market: "moneyline" },
+      now: new Date("2026-04-16T13:00:00.000Z"),
+    });
+    await prisma.task.update({
+      where: { id: failedTask.id },
+      data: {
+        status: "failed",
+        updatedAt: new Date("2026-04-16T13:03:00.000Z"),
+      },
+    });
+    await unitOfWork.taskRuns.save(
+      createTaskRun({
+        id: `${failedTask.id}:attempt:1`,
+        taskId: failedTask.id,
+        attemptNumber: 1,
+        status: "failed",
+        startedAt: "2026-04-16T13:01:00.000Z",
+        finishedAt: "2026-04-16T13:02:00.000Z",
+        error: "first failure",
+        createdAt: "2026-04-16T13:01:00.000Z",
+        updatedAt: "2026-04-16T13:02:00.000Z",
+      }),
+    );
+    await unitOfWork.taskRuns.save(
+      createTaskRun({
+        id: `${failedTask.id}:attempt:2`,
+        taskId: failedTask.id,
+        attemptNumber: 2,
+        status: "failed",
+        startedAt: "2026-04-16T13:02:30.000Z",
+        finishedAt: "2026-04-16T13:03:00.000Z",
+        error: "second failure",
+        createdAt: "2026-04-16T13:02:30.000Z",
+        updatedAt: "2026-04-16T13:03:00.000Z",
+      }),
+    );
+
+    const cancelledTask = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-cancelled`,
+      kind: "research",
+      payload: { fixtureId: "fx-rq-2", prompt: "retry me" },
+      now: new Date("2026-04-16T14:00:00.000Z"),
+    });
+    await prisma.task.update({
+      where: { id: cancelledTask.id },
+      data: {
+        status: "cancelled",
+        updatedAt: new Date("2026-04-16T14:02:00.000Z"),
+      },
+    });
+    await unitOfWork.taskRuns.save(
+      createTaskRun({
+        id: `${cancelledTask.id}:attempt:1`,
+        taskId: cancelledTask.id,
+        attemptNumber: 1,
+        status: "cancelled",
+        startedAt: "2026-04-16T14:01:00.000Z",
+        finishedAt: "2026-04-16T14:02:00.000Z",
+        createdAt: "2026-04-16T14:01:00.000Z",
+        updatedAt: "2026-04-16T14:02:00.000Z",
+      }),
+    );
+
+    const failedRequeuedAt = new Date("2026-04-16T15:00:00.000Z");
+    const failedRequeued = await requeuePersistedTask(databaseUrl, failedTask.id, failedRequeuedAt);
+    const cancelledRequeued = await requeuePersistedTask(
+      databaseUrl,
+      cancelledTask.id,
+      new Date("2026-04-16T15:05:00.000Z"),
+    );
+
+    const failedRunsAfter = await unitOfWork.taskRuns.findByTaskId(failedTask.id);
+    const cancelledRunsAfter = await unitOfWork.taskRuns.findByTaskId(cancelledTask.id);
+
+    assert.equal(failedRequeued.id, failedTask.id);
+    assert.equal(failedRequeued.status, "queued");
+    assert.equal(failedRequeued.updatedAt, failedRequeuedAt.toISOString());
+    assert.equal(failedRunsAfter.length, 2);
+    assert.deepEqual(
+      failedRunsAfter.map((taskRun) => taskRun.id),
+      [`${failedTask.id}:attempt:1`, `${failedTask.id}:attempt:2`],
+    );
+    assert.equal(cancelledRequeued.id, cancelledTask.id);
+    assert.equal(cancelledRequeued.status, "queued");
+    assert.equal(cancelledRequeued.updatedAt, "2026-04-16T15:05:00.000Z");
+    assert.equal(cancelledRunsAfter.length, 1);
+    assert.equal(cancelledRunsAfter[0]?.id, `${cancelledTask.id}:attempt:1`);
+  } finally {
+    await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
+    await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
+    await prisma.$disconnect();
+  }
+});
+
+test("requeuePersistedTask rejects succeeded tasks and missing task ids with clear errors", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prisma = createPrismaClient(databaseUrl);
+  const taskPrefix = `hermes-test-requeue-errors-${Date.now()}`;
+
+  try {
+    const succeededTask = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-succeeded`,
+      kind: "validation",
+      payload: { target: "finished" },
+      now: new Date("2026-04-16T16:00:00.000Z"),
+    });
+    await prisma.task.update({
+      where: { id: succeededTask.id },
+      data: {
+        status: "succeeded",
+        updatedAt: new Date("2026-04-16T16:02:00.000Z"),
+      },
+    });
+
+    await assert.rejects(
+      requeuePersistedTask(databaseUrl, succeededTask.id),
+      /cannot be requeued from status succeeded/i,
+    );
+    await assert.rejects(
+      requeuePersistedTask(databaseUrl, `${taskPrefix}-missing`),
+      /persisted task .* was not found/i,
+    );
   } finally {
     await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
     await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });

@@ -1,16 +1,21 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import {
+  createAiRun,
   createFixture,
   createParlay,
   createPrediction,
   createTask,
+  createTaskRun,
   createValidation,
   type FixtureEntity,
   type ParlayEntity,
   type PredictionEntity,
+  type TaskStatus,
   type TaskEntity,
+  type TaskRunEntity,
   type ValidationEntity,
+  type AiRunEntity,
 } from "@gana-v8/domain-core";
 import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
@@ -54,10 +59,108 @@ export interface OddsSnapshotReadModel {
   readonly selectionCount: number;
 }
 
+export interface OperationalSummary {
+  readonly generatedAt: string;
+  readonly taskCounts: {
+    readonly total: number;
+    readonly queued: number;
+    readonly running: number;
+    readonly failed: number;
+    readonly succeeded: number;
+    readonly cancelled: number;
+  };
+  readonly taskRunCounts: {
+    readonly total: number;
+    readonly running: number;
+    readonly failed: number;
+    readonly succeeded: number;
+    readonly cancelled: number;
+  };
+  readonly etl: {
+    readonly rawBatchCount: number;
+    readonly oddsSnapshotCount: number;
+    readonly endpointCounts: Readonly<Record<string, number>>;
+    readonly latestBatch: RawIngestionBatchReadModel | null;
+    readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
+  };
+  readonly validation: ValidationSummary;
+}
+
+export interface OperationalLogEntry {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly level: "INFO" | "ERROR";
+  readonly taskId: string;
+  readonly taskRunId?: string;
+  readonly taskKind: string;
+  readonly taskStatus: string;
+  readonly message: string;
+}
+
+export interface AiRunReadModel {
+  readonly id: string;
+  readonly taskId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly promptVersion: string;
+  readonly status: AiRunEntity["status"];
+  readonly usage?: AiRunEntity["usage"];
+  readonly outputRef?: string;
+  readonly error?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ProviderStateReadModel {
+  readonly provider: string;
+  readonly latestModel?: string;
+  readonly latestPromptVersion?: string;
+  readonly aiRunCount: number;
+  readonly failedAiRunCount: number;
+  readonly latestAiRunAt?: string;
+  readonly latestError?: string;
+  readonly rawBatchCount: number;
+  readonly latestRawBatchAt?: string;
+  readonly latestRawBatchStatus?: string;
+  readonly quota?: {
+    readonly limit?: number;
+    readonly used?: number;
+    readonly remaining?: number;
+    readonly updatedAt?: string;
+  };
+}
+
+export interface AiRunDetailReadModel extends AiRunReadModel {
+  readonly task?: Pick<TaskEntity, "id" | "kind" | "status">;
+  readonly linkedPredictionIds: readonly string[];
+  readonly linkedParlayIds: readonly string[];
+}
+
+export interface PredictionDetailReadModel extends PredictionEntity {
+  readonly fixture?: FixtureEntity;
+  readonly aiRun?: AiRunReadModel;
+  readonly linkedParlayIds: readonly string[];
+  readonly validation?: ValidationEntity;
+}
+
+export type ParlayLegDetailReadModel = ParlayEntity["legs"][number] & {
+  readonly prediction?: PredictionEntity;
+  readonly fixture?: FixtureEntity;
+};
+
+export interface ParlayDetailReadModel extends Omit<ParlayEntity, "legs"> {
+  readonly aiRun?: AiRunReadModel;
+  readonly legs: readonly ParlayLegDetailReadModel[];
+  readonly validation?: ValidationEntity;
+}
+
 export interface OperationSnapshot {
   readonly generatedAt: string;
   readonly fixtures: readonly FixtureEntity[];
   readonly tasks: readonly TaskEntity[];
+  readonly taskRuns: readonly TaskRunEntity[];
+  readonly aiRuns: readonly AiRunReadModel[];
+  readonly providerStates: readonly ProviderStateReadModel[];
   readonly rawBatches: readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots: readonly OddsSnapshotReadModel[];
   readonly predictions: readonly PredictionEntity[];
@@ -71,12 +174,22 @@ export interface PublicApiHandlers {
   readonly fixtures: () => readonly FixtureEntity[];
   readonly fixtureById: (fixtureId: string) => FixtureEntity | null;
   readonly tasks: () => readonly TaskEntity[];
+  readonly taskById: (taskId: string) => TaskEntity | null;
+  readonly taskRuns: () => readonly TaskRunEntity[];
+  readonly taskRunById: (taskRunId: string) => TaskRunEntity | null;
+  readonly taskRunsByTaskId: (taskId: string) => readonly TaskRunEntity[];
+  readonly aiRuns: () => readonly AiRunReadModel[];
+  readonly aiRunById: (aiRunId: string) => AiRunDetailReadModel | null;
+  readonly providerStates: () => readonly ProviderStateReadModel[];
+  readonly providerStateByProvider: (provider: string) => ProviderStateReadModel | null;
   readonly rawBatches: () => readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots: () => readonly OddsSnapshotReadModel[];
+  readonly operationalSummary: () => OperationalSummary;
+  readonly operationalLogs: () => readonly OperationalLogEntry[];
   readonly predictions: () => readonly PredictionEntity[];
-  readonly predictionById: (predictionId: string) => PredictionEntity | null;
+  readonly predictionById: (predictionId: string) => PredictionDetailReadModel | null;
   readonly parlays: () => readonly ParlayEntity[];
-  readonly parlayById: (parlayId: string) => ParlayEntity | null;
+  readonly parlayById: (parlayId: string) => ParlayDetailReadModel | null;
   readonly validations: () => readonly ValidationEntity[];
   readonly validationById: (validationId: string) => ValidationEntity | null;
   readonly validationSummary: () => ValidationSummary;
@@ -93,11 +206,24 @@ export interface PublicApiResponse {
   readonly body: unknown;
 }
 
+const allowedTaskStatuses = [
+  "queued",
+  "running",
+  "failed",
+  "succeeded",
+  "cancelled",
+] as const satisfies readonly TaskStatus[];
+
 export const publicApiEndpointPaths = {
   fixtures: "/fixtures",
   tasks: "/tasks",
+  taskRuns: "/task-runs",
+  aiRuns: "/ai-runs",
+  providerStates: "/provider-states",
   rawBatches: "/raw-batches",
   oddsSnapshots: "/odds-snapshots",
+  operationalSummary: "/operational-summary",
+  operationalLogs: "/operational-logs",
   predictions: "/predictions",
   parlays: "/parlays",
   validations: "/validations",
@@ -205,6 +331,9 @@ export function createOperationSnapshot(input: {
   readonly generatedAt?: string;
   readonly fixtures?: readonly FixtureEntity[];
   readonly tasks?: readonly TaskEntity[];
+  readonly taskRuns?: readonly TaskRunEntity[];
+  readonly aiRuns?: readonly AiRunReadModel[];
+  readonly providerStates?: readonly ProviderStateReadModel[];
   readonly rawBatches?: readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
   readonly predictions?: readonly PredictionEntity[];
@@ -214,9 +343,12 @@ export function createOperationSnapshot(input: {
   const generatedAt = input.generatedAt ?? "2026-04-15T01:00:00.000Z";
   const fixtures = [...(input.fixtures ?? createDemoFixtures())];
   const tasks = [...(input.tasks ?? createDemoTasks())];
+  const taskRuns = [...(input.taskRuns ?? createDemoTaskRuns(tasks))];
   const rawBatches = [...(input.rawBatches ?? [])];
   const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
-  const predictions = [...(input.predictions ?? createDemoPredictions(fixtures))];
+  const aiRuns = [...(input.aiRuns ?? createDemoAiRuns(tasks))];
+  const providerStates = [...(input.providerStates ?? createDemoProviderStates(aiRuns, rawBatches))];
+  const predictions = [...(input.predictions ?? createDemoPredictions(fixtures, aiRuns))];
   const parlays = [...(input.parlays ?? createDemoParlays(predictions))];
   const validations = [...(input.validations ?? createDemoValidations(parlays, predictions))];
   const validationSummary = summarizeValidations(validations);
@@ -225,6 +357,9 @@ export function createOperationSnapshot(input: {
     generatedAt,
     fixtures,
     tasks,
+    taskRuns,
+    aiRuns,
+    providerStates,
     rawBatches,
     oddsSnapshots,
     predictions,
@@ -249,8 +384,18 @@ export function createPublicApiHandlers(
     fixtures: () => listFixtures(snapshot),
     fixtureById: (fixtureId: string) => findFixtureById(snapshot, fixtureId),
     tasks: () => listTasks(snapshot),
+    taskById: (taskId: string) => findTaskById(snapshot, taskId),
+    taskRuns: () => listTaskRuns(snapshot),
+    taskRunById: (taskRunId: string) => findTaskRunById(snapshot, taskRunId),
+    taskRunsByTaskId: (taskId: string) => listTaskRunsByTaskId(snapshot, taskId),
+    aiRuns: () => listAiRuns(snapshot),
+    aiRunById: (aiRunId: string) => findAiRunById(snapshot, aiRunId),
+    providerStates: () => listProviderStates(snapshot),
+    providerStateByProvider: (provider: string) => findProviderStateByProvider(snapshot, provider),
     rawBatches: () => listRawBatches(snapshot),
     oddsSnapshots: () => listOddsSnapshots(snapshot),
+    operationalSummary: () => createOperationalSummary(snapshot),
+    operationalLogs: () => listOperationalLogs(snapshot),
     predictions: () => listPredictions(snapshot),
     predictionById: (predictionId: string) => findPredictionById(snapshot, predictionId),
     parlays: () => listParlays(snapshot),
@@ -268,6 +413,7 @@ export function routePublicApiRequest(
   requestPath: string,
 ): PublicApiResponse {
   const normalizedPath = normalizeRequestPath(requestPath);
+  const searchParams = getRequestSearchParams(requestPath);
   const fixtureDetail = matchFixtureDetailPath(normalizedPath);
   if (fixtureDetail) {
     const fixture = handlers.fixtureById(fixtureDetail.fixtureId);
@@ -276,6 +422,51 @@ export function routePublicApiRequest(
     }
 
     return { status: 200, body: fixture };
+  }
+
+  const taskDetail = matchTaskDetailPath(normalizedPath);
+  if (taskDetail) {
+    const task = handlers.taskById(taskDetail.taskId);
+    if (!task) {
+      return createResourceNotFoundResponse("task", taskDetail.taskId);
+    }
+
+    return { status: 200, body: task };
+  }
+
+  const taskRunDetail = matchTaskRunDetailPath(normalizedPath);
+  if (taskRunDetail) {
+    const taskRun = handlers.taskRunById(taskRunDetail.taskRunId);
+    if (!taskRun) {
+      return createResourceNotFoundResponse("task-run", taskRunDetail.taskRunId);
+    }
+
+    return { status: 200, body: taskRun };
+  }
+
+  const aiRunDetail = matchAiRunDetailPath(normalizedPath);
+  if (aiRunDetail) {
+    const aiRun = handlers.aiRunById(aiRunDetail.aiRunId);
+    if (!aiRun) {
+      return createResourceNotFoundResponse("ai-run", aiRunDetail.aiRunId);
+    }
+
+    return { status: 200, body: aiRun };
+  }
+
+  const providerStateDetail = matchProviderStateDetailPath(normalizedPath);
+  if (providerStateDetail) {
+    const providerState = handlers.providerStateByProvider(providerStateDetail.provider);
+    if (!providerState) {
+      return createResourceNotFoundResponse("provider-state", providerStateDetail.provider);
+    }
+
+    return { status: 200, body: providerState };
+  }
+
+  const taskRunsByTask = matchTaskRunsByTaskPath(normalizedPath);
+  if (taskRunsByTask) {
+    return { status: 200, body: handlers.taskRunsByTaskId(taskRunsByTask.taskId) };
   }
 
   const predictionDetail = matchPredictionDetailPath(normalizedPath);
@@ -311,12 +502,42 @@ export function routePublicApiRequest(
   switch (normalizedPath) {
     case publicApiEndpointPaths.fixtures:
       return { status: 200, body: handlers.fixtures() };
-    case publicApiEndpointPaths.tasks:
-      return { status: 200, body: handlers.tasks() };
+    case publicApiEndpointPaths.tasks: {
+      const taskStatus = searchParams.get("status");
+      if (taskStatus === null) {
+        return { status: 200, body: handlers.tasks() };
+      }
+
+      if (!isTaskStatus(taskStatus)) {
+        return {
+          status: 400,
+          body: {
+            error: "invalid_query_parameter",
+            parameter: "status",
+            allowedValues: allowedTaskStatuses,
+          },
+        };
+      }
+
+      return {
+        status: 200,
+        body: handlers.tasks().filter((task) => task.status === taskStatus),
+      };
+    }
+    case publicApiEndpointPaths.taskRuns:
+      return { status: 200, body: handlers.taskRuns() };
+    case publicApiEndpointPaths.aiRuns:
+      return { status: 200, body: handlers.aiRuns() };
+    case publicApiEndpointPaths.providerStates:
+      return { status: 200, body: handlers.providerStates() };
     case publicApiEndpointPaths.rawBatches:
       return { status: 200, body: handlers.rawBatches() };
     case publicApiEndpointPaths.oddsSnapshots:
       return { status: 200, body: handlers.oddsSnapshots() };
+    case publicApiEndpointPaths.operationalSummary:
+      return { status: 200, body: handlers.operationalSummary() };
+    case publicApiEndpointPaths.operationalLogs:
+      return { status: 200, body: handlers.operationalLogs() };
     case publicApiEndpointPaths.predictions:
       return { status: 200, body: handlers.predictions() };
     case publicApiEndpointPaths.parlays:
@@ -386,12 +607,185 @@ export function listTasks(snapshot: OperationSnapshot): readonly TaskEntity[] {
   return snapshot.tasks;
 }
 
+export function findTaskById(
+  snapshot: OperationSnapshot,
+  taskId: string,
+): TaskEntity | null {
+  return snapshot.tasks.find((task) => task.id === taskId) ?? null;
+}
+
+export function listTaskRuns(snapshot: OperationSnapshot): readonly TaskRunEntity[] {
+  return snapshot.taskRuns;
+}
+
+export function listAiRuns(snapshot: OperationSnapshot): readonly AiRunReadModel[] {
+  return snapshot.aiRuns;
+}
+
+const findTaskSummaryForAiRun = (
+  snapshot: OperationSnapshot,
+  aiRun: AiRunReadModel,
+): Pick<TaskEntity, "id" | "kind" | "status"> | undefined => {
+  const task = snapshot.tasks.find((candidate) => candidate.id === aiRun.taskId);
+  return task
+    ? {
+        id: task.id,
+        kind: task.kind,
+        status: task.status,
+      }
+    : undefined;
+};
+
+export function findAiRunById(
+  snapshot: OperationSnapshot,
+  aiRunId: string,
+): AiRunDetailReadModel | null {
+  const aiRun = snapshot.aiRuns.find((candidate) => candidate.id === aiRunId);
+  if (!aiRun) {
+    return null;
+  }
+
+  const linkedPredictionIds = snapshot.predictions
+    .filter((prediction) => prediction.aiRunId === aiRun.id)
+    .map((prediction) => prediction.id);
+  const linkedPredictionIdSet = new Set(linkedPredictionIds);
+  const linkedParlayIds = snapshot.parlays
+    .filter((parlay) => parlay.legs.some((leg) => linkedPredictionIdSet.has(leg.predictionId)))
+    .map((parlay) => parlay.id);
+  const task = findTaskSummaryForAiRun(snapshot, aiRun);
+
+  return {
+    ...aiRun,
+    ...(task ? { task } : {}),
+    linkedPredictionIds,
+    linkedParlayIds,
+  };
+}
+
+export function listProviderStates(snapshot: OperationSnapshot): readonly ProviderStateReadModel[] {
+  return snapshot.providerStates;
+}
+
+export function findProviderStateByProvider(
+  snapshot: OperationSnapshot,
+  provider: string,
+): ProviderStateReadModel | null {
+  return snapshot.providerStates.find((providerState) => providerState.provider === provider) ?? null;
+}
+
+export function findTaskRunById(
+  snapshot: OperationSnapshot,
+  taskRunId: string,
+): TaskRunEntity | null {
+  return snapshot.taskRuns.find((taskRun) => taskRun.id === taskRunId) ?? null;
+}
+
+export function listTaskRunsByTaskId(
+  snapshot: OperationSnapshot,
+  taskId: string,
+): readonly TaskRunEntity[] {
+  return snapshot.taskRuns.filter((taskRun) => taskRun.taskId === taskId);
+}
+
 export function listRawBatches(snapshot: OperationSnapshot): readonly RawIngestionBatchReadModel[] {
   return snapshot.rawBatches;
 }
 
 export function listOddsSnapshots(snapshot: OperationSnapshot): readonly OddsSnapshotReadModel[] {
   return snapshot.oddsSnapshots;
+}
+
+const countTasksByStatus = (tasks: readonly TaskEntity[]): OperationalSummary["taskCounts"] => ({
+  total: tasks.length,
+  queued: tasks.filter((task) => task.status === "queued").length,
+  running: tasks.filter((task) => task.status === "running").length,
+  failed: tasks.filter((task) => task.status === "failed").length,
+  succeeded: tasks.filter((task) => task.status === "succeeded").length,
+  cancelled: tasks.filter((task) => task.status === "cancelled").length,
+});
+
+const countTaskRunsByStatus = (taskRuns: readonly TaskRunEntity[]): OperationalSummary["taskRunCounts"] => ({
+  total: taskRuns.length,
+  running: taskRuns.filter((taskRun) => taskRun.status === "running").length,
+  failed: taskRuns.filter((taskRun) => taskRun.status === "failed").length,
+  succeeded: taskRuns.filter((taskRun) => taskRun.status === "succeeded").length,
+  cancelled: taskRuns.filter((taskRun) => taskRun.status === "cancelled").length,
+});
+
+const countEndpointFamilies = (
+  rawBatches: readonly RawIngestionBatchReadModel[],
+): Readonly<Record<string, number>> => {
+  return rawBatches.reduce<Record<string, number>>((counts, batch) => {
+    counts[batch.endpointFamily] = (counts[batch.endpointFamily] ?? 0) + 1;
+    return counts;
+  }, {});
+};
+
+const sortByIsoDescending = <T>(items: readonly T[], selector: (item: T) => string): T[] => {
+  return [...items].sort((left, right) => selector(right).localeCompare(selector(left)));
+};
+
+export function createOperationalSummary(snapshot: OperationSnapshot): OperationalSummary {
+  return {
+    generatedAt: snapshot.generatedAt,
+    taskCounts: countTasksByStatus(snapshot.tasks),
+    taskRunCounts: countTaskRunsByStatus(snapshot.taskRuns),
+    etl: {
+      rawBatchCount: snapshot.rawBatches.length,
+      oddsSnapshotCount: snapshot.oddsSnapshots.length,
+      endpointCounts: countEndpointFamilies(snapshot.rawBatches),
+      latestBatch: sortByIsoDescending(snapshot.rawBatches, (batch) => batch.extractionTime)[0] ?? null,
+      latestOddsSnapshot:
+        sortByIsoDescending(snapshot.oddsSnapshots, (oddsSnapshot) => oddsSnapshot.capturedAt)[0] ?? null,
+    },
+    validation: snapshot.validationSummary,
+  };
+}
+
+export function createTaskLogEntries(snapshot: OperationSnapshot): readonly OperationalLogEntry[] {
+  const tasksById = new Map(snapshot.tasks.map((task) => [task.id, task]));
+
+  const taskEntries: OperationalLogEntry[] = snapshot.tasks.map((task) => ({
+    id: `${task.id}:task`,
+    timestamp: task.updatedAt,
+    level: task.status === "failed" ? "ERROR" : "INFO",
+    taskId: task.id,
+    taskKind: task.kind,
+    taskStatus: task.status,
+    message: `${task.kind} ${task.status}`,
+  }));
+
+  const taskRunEntries: OperationalLogEntry[] = snapshot.taskRuns.map((taskRun) => {
+    const task = tasksById.get(taskRun.taskId);
+    const timestamp = taskRun.finishedAt ?? taskRun.updatedAt;
+    return {
+      id: `${taskRun.id}:task-run`,
+      timestamp,
+      level: taskRun.status === "failed" ? "ERROR" : "INFO",
+      taskId: taskRun.taskId,
+      taskRunId: taskRun.id,
+      taskKind: task?.kind ?? "unknown",
+      taskStatus: taskRun.status,
+      message:
+        taskRun.error ??
+        `${task?.kind ?? "task"} attempt ${taskRun.attemptNumber} ${taskRun.status}`,
+    };
+  });
+
+  return [...taskEntries, ...taskRunEntries].sort((left, right) => {
+    if (left.level !== right.level) {
+      return left.level === "ERROR" ? -1 : 1;
+    }
+    if (left.taskRunId !== right.taskRunId) {
+      return left.taskRunId ? -1 : 1;
+    }
+
+    return right.timestamp.localeCompare(left.timestamp);
+  });
+}
+
+export function listOperationalLogs(snapshot: OperationSnapshot): readonly OperationalLogEntry[] {
+  return createTaskLogEntries(snapshot);
 }
 
 export function listPredictions(
@@ -403,8 +797,30 @@ export function listPredictions(
 export function findPredictionById(
   snapshot: OperationSnapshot,
   predictionId: string,
-): PredictionEntity | null {
-  return snapshot.predictions.find((prediction) => prediction.id === predictionId) ?? null;
+): PredictionDetailReadModel | null {
+  const prediction = snapshot.predictions.find((candidate) => candidate.id === predictionId);
+  if (!prediction) {
+    return null;
+  }
+
+  const fixture = snapshot.fixtures.find((candidate) => candidate.id === prediction.fixtureId);
+  const aiRun = prediction.aiRunId
+    ? snapshot.aiRuns.find((candidate) => candidate.id === prediction.aiRunId)
+    : undefined;
+  const linkedParlayIds = snapshot.parlays
+    .filter((parlay) => parlay.legs.some((leg) => leg.predictionId === prediction.id))
+    .map((parlay) => parlay.id);
+  const validation = snapshot.validations.find(
+    (candidate) => candidate.targetType === "prediction" && candidate.targetId === prediction.id,
+  );
+
+  return {
+    ...prediction,
+    ...(fixture ? { fixture } : {}),
+    ...(aiRun ? { aiRun } : {}),
+    linkedParlayIds,
+    ...(validation ? { validation } : {}),
+  };
 }
 
 export function listParlays(snapshot: OperationSnapshot): readonly ParlayEntity[] {
@@ -414,8 +830,41 @@ export function listParlays(snapshot: OperationSnapshot): readonly ParlayEntity[
 export function findParlayById(
   snapshot: OperationSnapshot,
   parlayId: string,
-): ParlayEntity | null {
-  return snapshot.parlays.find((parlay) => parlay.id === parlayId) ?? null;
+): ParlayDetailReadModel | null {
+  const parlay = snapshot.parlays.find((candidate) => candidate.id === parlayId);
+  if (!parlay) {
+    return null;
+  }
+
+  const predictionsById = new Map(snapshot.predictions.map((prediction) => [prediction.id, prediction]));
+  const fixturesById = new Map(snapshot.fixtures.map((fixture) => [fixture.id, fixture]));
+  const linkedAiRunIds = new Set(
+    parlay.legs
+      .map((leg) => predictionsById.get(leg.predictionId)?.aiRunId)
+      .filter((value): value is string => typeof value === "string" && value.length > 0),
+  );
+  const aiRun =
+    linkedAiRunIds.size === 1
+      ? snapshot.aiRuns.find((candidate) => candidate.id === [...linkedAiRunIds][0])
+      : undefined;
+  const validation = snapshot.validations.find(
+    (candidate) => candidate.targetType === "parlay" && candidate.targetId === parlay.id,
+  );
+
+  return {
+    ...parlay,
+    ...(aiRun ? { aiRun } : {}),
+    legs: parlay.legs.map((leg) => {
+      const prediction = predictionsById.get(leg.predictionId);
+      const fixture = fixturesById.get(leg.fixtureId);
+      return {
+        ...leg,
+        ...(prediction ? { prediction } : {}),
+        ...(fixture ? { fixture } : {}),
+      };
+    }),
+    ...(validation ? { validation } : {}),
+  };
 }
 
 export function listValidations(snapshot: OperationSnapshot): readonly ValidationEntity[] {
@@ -485,13 +934,103 @@ export function createDemoTasks(): readonly TaskEntity[] {
   ];
 }
 
+export function createDemoTaskRuns(
+  tasks: readonly TaskEntity[] = createDemoTasks(),
+): readonly TaskRunEntity[] {
+  return [
+    createTaskRun({
+      id: "task-demo-fixtures:attempt:1",
+      taskId: tasks[0]?.id ?? "task-demo-fixtures",
+      attemptNumber: 1,
+      status: "succeeded",
+      startedAt: "2026-04-15T00:00:00.000Z",
+      finishedAt: "2026-04-15T00:01:00.000Z",
+      createdAt: "2026-04-15T00:00:00.000Z",
+      updatedAt: "2026-04-15T00:01:00.000Z",
+    }),
+  ];
+}
+
+export function createDemoAiRuns(
+  tasks: readonly TaskEntity[] = createDemoTasks(),
+): readonly AiRunReadModel[] {
+  return [
+    createAiRun({
+      id: "airun-demo-scoring",
+      taskId: tasks[0]?.id ?? "task-demo-fixtures",
+      provider: "internal",
+      model: "deterministic-moneyline-v1",
+      promptVersion: "scoring-worker-mvp-v1",
+      status: "completed",
+      usage: {
+        promptTokens: 120,
+        completionTokens: 48,
+        totalTokens: 168,
+      },
+      outputRef: "memory://demo/airuns/airun-demo-scoring.json",
+      createdAt: "2026-04-15T00:10:00.000Z",
+      updatedAt: "2026-04-15T00:10:05.000Z",
+    }),
+  ].map((aiRun) => ({
+    id: aiRun.id,
+    taskId: aiRun.taskId,
+    provider: aiRun.provider,
+    model: aiRun.model,
+    promptVersion: aiRun.promptVersion,
+    status: aiRun.status,
+    ...(aiRun.usage ? { usage: aiRun.usage } : {}),
+    ...(aiRun.outputRef ? { outputRef: aiRun.outputRef } : {}),
+    ...(aiRun.error ? { error: aiRun.error } : {}),
+    createdAt: aiRun.createdAt,
+    updatedAt: aiRun.updatedAt,
+  }));
+}
+
+export function createDemoProviderStates(
+  aiRuns: readonly AiRunReadModel[] = createDemoAiRuns(),
+  rawBatches: readonly RawIngestionBatchReadModel[] = [],
+): readonly ProviderStateReadModel[] {
+  const latestAiRun = aiRuns[0];
+  const latestRawBatch = rawBatches[0];
+
+  const latestQuotaUpdatedAt = latestRawBatch?.extractionTime ?? latestAiRun?.updatedAt;
+  const latestError = aiRuns.find((aiRun) => aiRun.error)?.error;
+
+  return [
+    {
+      provider: latestAiRun?.provider ?? "internal",
+      ...(latestAiRun?.model ? { latestModel: latestAiRun.model } : {}),
+      ...(latestAiRun?.promptVersion ? { latestPromptVersion: latestAiRun.promptVersion } : {}),
+      aiRunCount: aiRuns.length,
+      failedAiRunCount: aiRuns.filter((aiRun) => aiRun.status === "failed").length,
+      ...(latestAiRun?.updatedAt ? { latestAiRunAt: latestAiRun.updatedAt } : {}),
+      ...(latestError ? { latestError } : {}),
+      rawBatchCount: rawBatches.length,
+      ...(latestRawBatch?.extractionTime ? { latestRawBatchAt: latestRawBatch.extractionTime } : {}),
+      ...(latestRawBatch?.extractionStatus
+        ? { latestRawBatchStatus: latestRawBatch.extractionStatus }
+        : {}),
+      quota: {
+        limit: 1000,
+        used: 320,
+        remaining: 680,
+        ...(latestQuotaUpdatedAt ? { updatedAt: latestQuotaUpdatedAt } : {}),
+      },
+    },
+  ];
+}
+
 export function createDemoPredictions(
   fixtures: readonly FixtureEntity[] = createDemoFixtures(),
+  aiRuns: readonly AiRunReadModel[] = createDemoAiRuns(),
 ): readonly PredictionEntity[] {
+  const linkedAiRunId = aiRuns[0]?.id;
+
   return [
     createPrediction({
       id: "pred-boca-home",
       fixtureId: fixtures[0]?.id ?? "fx-boca-river",
+      ...(linkedAiRunId ? { aiRunId: linkedAiRunId } : {}),
       market: "moneyline",
       outcome: "home",
       status: "published",
@@ -587,9 +1126,11 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
-    const [fixtures, tasks, predictions, parlays, validations, rawBatches, oddsSnapshots] = await Promise.all([
+    const [fixtures, tasks, taskRuns, aiRuns, predictions, parlays, validations, rawBatches, oddsSnapshots] = await Promise.all([
       unitOfWork.fixtures.list(),
       unitOfWork.tasks.list(),
+      unitOfWork.taskRuns.list(),
+      unitOfWork.aiRuns.list(),
       unitOfWork.predictions.list(),
       unitOfWork.parlays.list(),
       unitOfWork.validations.list(),
@@ -622,9 +1163,33 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
       `),
     ]);
 
+    const mappedRawBatches = rawBatches.map((batch) => ({
+      endpointFamily: batch.endpointFamily,
+      extractionStatus: batch.extractionStatus,
+      extractionTime: batch.extractionTime.toISOString(),
+      id: batch.id,
+      providerCode: batch.providerCode,
+      recordCount: batch.recordCount,
+    }));
+    const mappedAiRuns = aiRuns.map((aiRun) => ({
+      id: aiRun.id,
+      taskId: aiRun.taskId,
+      provider: aiRun.provider,
+      model: aiRun.model,
+      promptVersion: aiRun.promptVersion,
+      status: aiRun.status,
+      ...(aiRun.usage ? { usage: aiRun.usage } : {}),
+      ...(aiRun.outputRef ? { outputRef: aiRun.outputRef } : {}),
+      ...(aiRun.error ? { error: aiRun.error } : {}),
+      createdAt: aiRun.createdAt,
+      updatedAt: aiRun.updatedAt,
+    }));
+
     return createOperationSnapshot({
       fixtures,
       generatedAt: new Date().toISOString(),
+      aiRuns: mappedAiRuns,
+      providerStates: createDemoProviderStates(mappedAiRuns, mappedRawBatches),
       oddsSnapshots: oddsSnapshots.map((snapshot) => ({
         bookmakerKey: snapshot.bookmakerKey,
         capturedAt: snapshot.capturedAt.toISOString(),
@@ -636,15 +1201,9 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
       })),
       parlays,
       predictions,
-      rawBatches: rawBatches.map((batch) => ({
-        endpointFamily: batch.endpointFamily,
-        extractionStatus: batch.extractionStatus,
-        extractionTime: batch.extractionTime.toISOString(),
-        id: batch.id,
-        providerCode: batch.providerCode,
-        recordCount: batch.recordCount,
-      })),
+      rawBatches: mappedRawBatches,
       tasks,
+      taskRuns,
       validations,
     });
   } finally {
@@ -665,6 +1224,15 @@ function normalizeRequestPath(requestPath: string): string {
   return pathname;
 }
 
+function getRequestSearchParams(requestPath: string): URLSearchParams {
+  const [, search = ""] = requestPath.split("?", 2);
+  return new URLSearchParams(search);
+}
+
+function isTaskStatus(value: string): value is TaskStatus {
+  return allowedTaskStatuses.includes(value as TaskStatus);
+}
+
 function matchFixtureDetailPath(requestPath: string): { fixtureId: string } | null {
   const match = requestPath.match(/^\/fixtures\/([^/]+)$/);
   if (!match?.[1]) {
@@ -672,6 +1240,51 @@ function matchFixtureDetailPath(requestPath: string): { fixtureId: string } | nu
   }
 
   return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchTaskRunsByTaskPath(requestPath: string): { taskId: string } | null {
+  const match = requestPath.match(/^\/tasks\/([^/]+)\/runs$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { taskId: decodeURIComponent(match[1]) };
+}
+
+function matchTaskRunDetailPath(requestPath: string): { taskRunId: string } | null {
+  const match = requestPath.match(/^\/task-runs\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { taskRunId: decodeURIComponent(match[1]) };
+}
+
+function matchAiRunDetailPath(requestPath: string): { aiRunId: string } | null {
+  const match = requestPath.match(/^\/ai-runs\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { aiRunId: decodeURIComponent(match[1]) };
+}
+
+function matchProviderStateDetailPath(requestPath: string): { provider: string } | null {
+  const match = requestPath.match(/^\/provider-states\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { provider: decodeURIComponent(match[1]) };
+}
+
+function matchTaskDetailPath(requestPath: string): { taskId: string } | null {
+  const match = requestPath.match(/^\/tasks\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { taskId: decodeURIComponent(match[1]) };
 }
 
 function matchPredictionDetailPath(requestPath: string): { predictionId: string } | null {

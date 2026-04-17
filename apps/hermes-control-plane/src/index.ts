@@ -398,6 +398,55 @@ export const enqueuePersistedTask = async (
   }
 };
 
+export const requeuePersistedTask = async (
+  databaseUrl: string,
+  taskId: string,
+  now: Date = new Date(),
+): Promise<TaskEntity> => {
+  const client = createPrismaClient(databaseUrl);
+
+  try {
+    const unitOfWork = createPrismaUnitOfWork(client);
+    const task = await unitOfWork.tasks.getById(taskId);
+
+    if (!task) {
+      throw new Error(`Persisted task ${taskId} was not found`);
+    }
+
+    if (task.status !== "failed" && task.status !== "cancelled") {
+      throw new Error(
+        `Persisted task ${taskId} cannot be requeued from status ${task.status}; only failed or cancelled tasks can be requeued`,
+      );
+    }
+
+    await client.task.update({
+      where: { id: taskId },
+      data: {
+        status: "queued",
+        updatedAt: now,
+      },
+    });
+
+    return ensurePersistedTask(await unitOfWork.tasks.getById(taskId), taskId);
+  } finally {
+    await client.$disconnect();
+  }
+};
+
+const compareQueuedReadyTasks = (left: TaskEntity, right: TaskEntity): number => {
+  const leftScheduledFor = left.scheduledFor ?? "";
+  const rightScheduledFor = right.scheduledFor ?? "";
+  if (leftScheduledFor !== rightScheduledFor) {
+    return leftScheduledFor.localeCompare(rightScheduledFor);
+  }
+
+  if (left.priority !== right.priority) {
+    return right.priority - left.priority;
+  }
+
+  return left.createdAt.localeCompare(right.createdAt);
+};
+
 export const maybeClaimNextPersistedTask = async (
   databaseUrl: string,
   kind?: PersistedTaskIntent,
@@ -407,17 +456,16 @@ export const maybeClaimNextPersistedTask = async (
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
-    const nextTask = (await unitOfWork.tasks.findByStatus("queued")).find((candidate) => {
-      if (kind && candidate.kind !== kind) {
-        return false;
-      }
+    const nowIso = now.toISOString();
+    const nextTask = (await unitOfWork.tasks.findByStatus("queued"))
+      .filter((candidate) => {
+        if (kind && candidate.kind !== kind) {
+          return false;
+        }
 
-      if (candidate.scheduledFor) {
-        return candidate.scheduledFor <= now.toISOString();
-      }
-
-      return true;
-    });
+        return !candidate.scheduledFor || candidate.scheduledFor <= nowIso;
+      })
+      .sort(compareQueuedReadyTasks)[0];
 
     if (!nextTask) {
       return null;
@@ -433,11 +481,16 @@ export const maybeClaimNextPersistedTask = async (
       return null;
     }
 
+    const existingRuns = await unitOfWork.taskRuns.findByTaskId(nextTask.id);
+    const attemptNumber =
+      existingRuns.reduce((maxAttemptNumber, taskRun) => {
+        return Math.max(maxAttemptNumber, taskRun.attemptNumber);
+      }, 0) + 1;
     const taskRun = await unitOfWork.taskRuns.save(
       createTaskRun({
-        id: `${nextTask.id}:attempt:1`,
+        id: `${nextTask.id}:attempt:${attemptNumber}`,
         taskId: nextTask.id,
-        attemptNumber: 1,
+        attemptNumber,
         status: "running",
         startedAt: claimedAt,
         createdAt: claimedAt,

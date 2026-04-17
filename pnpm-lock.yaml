@@ -155,6 +155,12 @@ importers:
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
+      '@gana-v8/feature-store':
+        specifier: workspace:*
+        version: link:../../packages/feature-store
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -286,6 +292,9 @@ importers:
       '@gana-v8/domain-core':
         specifier: workspace:*
         version: link:../domain-core
+      '@gana-v8/research-engine':
+        specifier: workspace:*
+        version: link:../research-engine
 
   packages/model-registry:
     dependencies:

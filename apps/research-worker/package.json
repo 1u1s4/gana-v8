@@ -3,29 +3,31 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Executes research swarms and evidence synthesis tasks.",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "description": "Executes deterministic research tasks and freezes feature snapshots for scoring.",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist/src"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/research-engine build && pnpm --filter @gana-v8/feature-store build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs research-worker",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/research-engine build && pnpm --filter @gana-v8/feature-store build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
     "@gana-v8/research-contracts": "workspace:*",
     "@gana-v8/research-engine": "workspace:*",
+    "@gana-v8/feature-store": "workspace:*",
+    "@gana-v8/domain-core": "workspace:*",
     "@gana-v8/config-runtime": "workspace:*",
     "@gana-v8/observability": "workspace:*"
   }
