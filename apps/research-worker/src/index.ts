@@ -1,5 +1,6 @@
 import type { FixtureEntity } from "@gana-v8/domain-core";
 import {
+  applyFeatureSnapshotToFixture,
   buildFeatureVectorSnapshot,
   type FeatureVectorSnapshot,
 } from "../../../packages/feature-store/dist/src/index.js";
@@ -73,10 +74,11 @@ export const runResearchTask = (
     dossier,
     generatedAt,
   });
+  const enrichedFixture = applyFeatureSnapshotToFixture(input.fixture, featureSnapshot);
 
   return {
     status: "processed",
-    fixture: input.fixture,
+    fixture: enrichedFixture,
     dossier,
     featureSnapshot,
   };

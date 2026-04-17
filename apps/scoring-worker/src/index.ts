@@ -7,6 +7,9 @@ import {
   type TaskEntity,
 } from "@gana-v8/domain-core";
 import {
+  summarizePersistedFeatureMetadata,
+} from "@gana-v8/feature-store";
+import {
   buildAtomicPrediction,
   type CandidateEligibilityPolicy,
   type ResearchDossierLike,
@@ -245,6 +248,53 @@ const buildOutcomeScores = (impliedProbabilities: ImpliedProbabilities): Implied
   return scores;
 };
 
+const blendResearchLean = (
+  baseLean: ResearchDossierLike["recommendedLean"],
+  fixture: FixtureEntity,
+  directionalScore: ImpliedProbabilities,
+): {
+  readonly recommendedLean: ResearchDossierLike["recommendedLean"];
+  readonly directionalScore: ImpliedProbabilities;
+  readonly researchMetadataUsed: boolean;
+  readonly summarySuffix: string;
+  readonly researchEvidence: Array<{ readonly id: string }>;
+} => {
+  const persistedResearch = summarizePersistedFeatureMetadata(fixture);
+  if (
+    persistedResearch.featureReadinessStatus !== "ready" ||
+    !persistedResearch.researchRecommendedLean ||
+    persistedResearch.researchGeneratedAt === undefined
+  ) {
+    return {
+      recommendedLean: baseLean,
+      directionalScore,
+      researchMetadataUsed: false,
+      summarySuffix: "",
+      researchEvidence: [],
+    };
+  }
+
+  const boostedScores: ImpliedProbabilities = { ...directionalScore };
+  const researchLean = persistedResearch.researchRecommendedLean;
+  boostedScores[researchLean] = round(Math.max(boostedScores[researchLean], 0) + 0.7);
+  const reranked = (["home", "draw", "away"] as const).sort(
+    (left, right) => boostedScores[right] - boostedScores[left],
+  );
+  const recommendedLean = reranked[0] ?? baseLean;
+
+  return {
+    recommendedLean,
+    directionalScore: boostedScores,
+    researchMetadataUsed: true,
+    summarySuffix:
+      ` Research snapshot leans ${researchLean} from ${persistedResearch.researchGeneratedAt}` +
+      (persistedResearch.researchTopEvidenceTitles[0]
+        ? ` with top signal ${persistedResearch.researchTopEvidenceTitles[0]}.`
+        : "."),
+    researchEvidence: [{ id: `research:${fixture.id}` }],
+  };
+};
+
 export const buildResearchDossierFromFixture = (
   fixture: FixtureEntity,
   snapshot: OddsSnapshotLike,
@@ -262,22 +312,24 @@ export const buildResearchDossierFromFixture = (
   ];
   ranked.sort((left, right) => right[1] - left[1]);
 
-  const recommendedLean = (ranked[0]?.[0] ?? "draw") as ResearchDossierLike["recommendedLean"];
-  const directionalScore = buildOutcomeScores(impliedProbabilities);
+  const baseLean = (ranked[0]?.[0] ?? "draw") as ResearchDossierLike["recommendedLean"];
+  const blended = blendResearchLean(baseLean, fixture, buildOutcomeScores(impliedProbabilities));
 
   return {
     fixtureId: fixture.id,
     generatedAt: options.generatedAt ?? snapshot.capturedAt.toISOString(),
     summary:
       `${fixture.homeTeam} vs ${fixture.awayTeam} in ${fixture.competition}. ` +
-      `Latest ${snapshot.bookmakerKey} h2h market captured ${snapshot.capturedAt.toISOString()} leans ${recommendedLean}.`,
-    recommendedLean,
+      `Latest ${snapshot.bookmakerKey} h2h market captured ${snapshot.capturedAt.toISOString()} leans ${blended.recommendedLean}.` +
+      blended.summarySuffix,
+    recommendedLean: blended.recommendedLean,
     evidence: [
       { id: `fixture:${fixture.id}` },
       { id: `odds:${snapshot.id}` },
       { id: `market:${snapshot.bookmakerKey}:${snapshot.marketKey}` },
+      ...blended.researchEvidence,
     ],
-    directionalScore,
+    directionalScore: blended.directionalScore,
   };
 };
 

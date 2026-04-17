@@ -130,16 +130,27 @@ export interface ProviderStateReadModel {
   };
 }
 
+export interface AiRunLinkedPredictionReadModel
+  extends Pick<PredictionEntity, "id" | "fixtureId" | "market" | "outcome" | "status" | "confidence"> {}
+
+export interface AiRunLinkedParlayReadModel
+  extends Pick<ParlayEntity, "id" | "status" | "expectedPayout"> {
+  readonly legCount: number;
+}
+
 export interface AiRunDetailReadModel extends AiRunReadModel {
   readonly task?: Pick<TaskEntity, "id" | "kind" | "status">;
   readonly linkedPredictionIds: readonly string[];
   readonly linkedParlayIds: readonly string[];
+  readonly linkedPredictions: readonly AiRunLinkedPredictionReadModel[];
+  readonly linkedParlays: readonly AiRunLinkedParlayReadModel[];
 }
 
 export interface PredictionDetailReadModel extends PredictionEntity {
   readonly fixture?: FixtureEntity;
   readonly aiRun?: AiRunReadModel;
   readonly linkedParlayIds: readonly string[];
+  readonly linkedParlays: readonly AiRunLinkedParlayReadModel[];
   readonly validation?: ValidationEntity;
 }
 
@@ -150,6 +161,7 @@ export type ParlayLegDetailReadModel = ParlayEntity["legs"][number] & {
 
 export interface ParlayDetailReadModel extends Omit<ParlayEntity, "legs"> {
   readonly aiRun?: AiRunReadModel;
+  readonly linkedAiRunIds: readonly string[];
   readonly legs: readonly ParlayLegDetailReadModel[];
   readonly validation?: ValidationEntity;
 }
@@ -636,6 +648,24 @@ const findTaskSummaryForAiRun = (
     : undefined;
 };
 
+const toAiRunLinkedPrediction = (
+  prediction: PredictionEntity,
+): AiRunLinkedPredictionReadModel => ({
+  id: prediction.id,
+  fixtureId: prediction.fixtureId,
+  market: prediction.market,
+  outcome: prediction.outcome,
+  status: prediction.status,
+  confidence: prediction.confidence,
+});
+
+const toAiRunLinkedParlay = (parlay: ParlayEntity): AiRunLinkedParlayReadModel => ({
+  id: parlay.id,
+  status: parlay.status,
+  expectedPayout: parlay.expectedPayout,
+  legCount: parlay.legs.length,
+});
+
 export function findAiRunById(
   snapshot: OperationSnapshot,
   aiRunId: string,
@@ -645,13 +675,15 @@ export function findAiRunById(
     return null;
   }
 
-  const linkedPredictionIds = snapshot.predictions
+  const linkedPredictions = snapshot.predictions
     .filter((prediction) => prediction.aiRunId === aiRun.id)
-    .map((prediction) => prediction.id);
+    .map(toAiRunLinkedPrediction);
+  const linkedPredictionIds = linkedPredictions.map((prediction) => prediction.id);
   const linkedPredictionIdSet = new Set(linkedPredictionIds);
-  const linkedParlayIds = snapshot.parlays
+  const linkedParlays = snapshot.parlays
     .filter((parlay) => parlay.legs.some((leg) => linkedPredictionIdSet.has(leg.predictionId)))
-    .map((parlay) => parlay.id);
+    .map(toAiRunLinkedParlay);
+  const linkedParlayIds = linkedParlays.map((parlay) => parlay.id);
   const task = findTaskSummaryForAiRun(snapshot, aiRun);
 
   return {
@@ -659,6 +691,8 @@ export function findAiRunById(
     ...(task ? { task } : {}),
     linkedPredictionIds,
     linkedParlayIds,
+    linkedPredictions,
+    linkedParlays,
   };
 }
 
@@ -810,6 +844,9 @@ export function findPredictionById(
   const linkedParlayIds = snapshot.parlays
     .filter((parlay) => parlay.legs.some((leg) => leg.predictionId === prediction.id))
     .map((parlay) => parlay.id);
+  const linkedParlays = snapshot.parlays
+    .filter((parlay) => linkedParlayIds.includes(parlay.id))
+    .map(toAiRunLinkedParlay);
   const validation = snapshot.validations.find(
     (candidate) => candidate.targetType === "prediction" && candidate.targetId === prediction.id,
   );
@@ -819,6 +856,7 @@ export function findPredictionById(
     ...(fixture ? { fixture } : {}),
     ...(aiRun ? { aiRun } : {}),
     linkedParlayIds,
+    linkedParlays,
     ...(validation ? { validation } : {}),
   };
 }
@@ -838,14 +876,15 @@ export function findParlayById(
 
   const predictionsById = new Map(snapshot.predictions.map((prediction) => [prediction.id, prediction]));
   const fixturesById = new Map(snapshot.fixtures.map((fixture) => [fixture.id, fixture]));
-  const linkedAiRunIds = new Set(
+  const linkedAiRunIdSet = new Set(
     parlay.legs
       .map((leg) => predictionsById.get(leg.predictionId)?.aiRunId)
       .filter((value): value is string => typeof value === "string" && value.length > 0),
   );
+  const linkedAiRunIds = [...linkedAiRunIdSet];
   const aiRun =
-    linkedAiRunIds.size === 1
-      ? snapshot.aiRuns.find((candidate) => candidate.id === [...linkedAiRunIds][0])
+    linkedAiRunIdSet.size === 1
+      ? snapshot.aiRuns.find((candidate) => candidate.id === linkedAiRunIds[0])
       : undefined;
   const validation = snapshot.validations.find(
     (candidate) => candidate.targetType === "parlay" && candidate.targetId === parlay.id,
@@ -854,6 +893,7 @@ export function findParlayById(
   return {
     ...parlay,
     ...(aiRun ? { aiRun } : {}),
+    linkedAiRunIds,
     legs: parlay.legs.map((leg) => {
       const prediction = predictionsById.get(leg.predictionId);
       const fixture = fixturesById.get(leg.fixtureId);

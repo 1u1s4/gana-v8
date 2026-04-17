@@ -56,6 +56,20 @@ export interface BuildFeatureVectorSnapshotInput {
   readonly generatedAt?: string;
 }
 
+export interface PersistedFeatureSnapshotMetadata {
+  readonly researchGeneratedAt?: string;
+  readonly researchRecommendedLean?: FeatureVectorSnapshot["recommendedLean"];
+  readonly researchEvidenceCount?: number;
+  readonly researchTopEvidenceIds: readonly string[];
+  readonly researchTopEvidenceTitles: readonly string[];
+  readonly researchRiskSummary: readonly string[];
+  readonly featureReadinessStatus?: FeatureReadiness["status"];
+  readonly featureReadinessReasons: readonly string[];
+  readonly featureScoreHome?: number;
+  readonly featureScoreDraw?: number;
+  readonly featureScoreAway?: number;
+}
+
 const toNumber = (value: string | undefined, fallback = 0): number => {
   if (value === undefined) {
     return fallback;
@@ -64,6 +78,12 @@ const toNumber = (value: string | undefined, fallback = 0): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+const splitMetadataList = (value: string | undefined): string[] =>
+  value
+    ?.split("|")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0) ?? [];
 
 const round = (value: number): number => Number(value.toFixed(4));
 
@@ -126,6 +146,64 @@ export const summarizeFeatureReadiness = (
     reasons,
   };
 };
+
+export const summarizePersistedFeatureMetadata = (
+  fixture: FixtureEntity,
+): PersistedFeatureSnapshotMetadata => ({
+  ...(fixture.metadata.researchGeneratedAt !== undefined
+    ? { researchGeneratedAt: fixture.metadata.researchGeneratedAt }
+    : {}),
+  ...(fixture.metadata.researchRecommendedLean !== undefined
+    ? {
+        researchRecommendedLean:
+          fixture.metadata.researchRecommendedLean as FeatureVectorSnapshot["recommendedLean"],
+      }
+    : {}),
+  ...(fixture.metadata.researchEvidenceCount !== undefined
+    ? { researchEvidenceCount: toNumber(fixture.metadata.researchEvidenceCount, 0) }
+    : {}),
+  researchTopEvidenceIds: splitMetadataList(fixture.metadata.researchTopEvidenceIds),
+  researchTopEvidenceTitles: splitMetadataList(fixture.metadata.researchTopEvidenceTitles),
+  researchRiskSummary: splitMetadataList(fixture.metadata.researchRiskSummary),
+  ...(fixture.metadata.featureReadinessStatus !== undefined
+    ? {
+        featureReadinessStatus:
+          fixture.metadata.featureReadinessStatus as FeatureReadiness["status"],
+      }
+    : {}),
+  featureReadinessReasons: splitMetadataList(fixture.metadata.featureReadinessReasons),
+  ...(fixture.metadata.featureScoreHome !== undefined
+    ? { featureScoreHome: toNumber(fixture.metadata.featureScoreHome, 0) }
+    : {}),
+  ...(fixture.metadata.featureScoreDraw !== undefined
+    ? { featureScoreDraw: toNumber(fixture.metadata.featureScoreDraw, 0) }
+    : {}),
+  ...(fixture.metadata.featureScoreAway !== undefined
+    ? { featureScoreAway: toNumber(fixture.metadata.featureScoreAway, 0) }
+    : {}),
+});
+
+export const applyFeatureSnapshotToFixture = (
+  fixture: FixtureEntity,
+  snapshot: FeatureVectorSnapshot,
+): FixtureEntity => ({
+  ...fixture,
+  metadata: {
+    ...fixture.metadata,
+    researchGeneratedAt: snapshot.generatedAt,
+    researchRecommendedLean: snapshot.recommendedLean,
+    researchEvidenceCount: String(snapshot.evidenceCount),
+    researchTopEvidenceIds: snapshot.topEvidence.map((item) => item.id).join(" | "),
+    researchTopEvidenceTitles: snapshot.topEvidence.map((item) => item.title).join(" | "),
+    researchRiskSummary: snapshot.risks.join(" | "),
+    featureReadinessStatus: snapshot.readiness.status,
+    featureReadinessReasons: snapshot.readiness.reasons.join(" | "),
+    featureScoreHome: String(snapshot.features.researchScoreHome),
+    featureScoreDraw: String(snapshot.features.researchScoreDraw),
+    featureScoreAway: String(snapshot.features.researchScoreAway),
+  },
+  updatedAt: snapshot.generatedAt,
+});
 
 export const buildFeatureVectorSnapshot = (
   input: BuildFeatureVectorSnapshotInput,

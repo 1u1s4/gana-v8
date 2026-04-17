@@ -38,6 +38,9 @@ test("runResearchTask produces a dossier and frozen feature snapshot for one fix
   assert.equal(result.featureSnapshot.fixtureId, scheduledFixture.id);
   assert.equal(result.featureSnapshot.recommendedLean, result.dossier.recommendedLean);
   assert.equal(result.featureSnapshot.readiness.status, "ready");
+  assert.equal(result.fixture.metadata.researchGeneratedAt, "2026-04-16T12:00:00.000Z");
+  assert.equal(result.fixture.metadata.researchRecommendedLean, result.featureSnapshot.recommendedLean);
+  assert.equal(result.fixture.metadata.featureReadinessStatus, "ready");
 });
 
 test("runResearchWorker skips non-scheduled fixtures and reports counts", () => {

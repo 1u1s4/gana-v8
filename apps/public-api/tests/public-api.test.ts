@@ -3,6 +3,17 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 
 import {
+  createAiRun,
+  createFixture,
+  createParlay,
+  createPrediction,
+  createTask,
+  createTaskRun,
+  createValidation,
+} from "@gana-v8/domain-core";
+import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
+
+import {
   createOperationSnapshot,
   createPublicApiHandlers,
   createPublicApiServer,
@@ -41,6 +52,8 @@ test("public api exposes ai runs and provider states", () => {
   assert.equal(findAiRunById(snapshot, snapshot.aiRuns[0]!.id)?.id, snapshot.aiRuns[0]!.id);
   assert.equal(findAiRunById(snapshot, snapshot.aiRuns[0]!.id)?.linkedPredictionIds.length, 1);
   assert.equal(findAiRunById(snapshot, snapshot.aiRuns[0]!.id)?.linkedParlayIds.length, 1);
+  assert.equal(findAiRunById(snapshot, snapshot.aiRuns[0]!.id)?.linkedPredictions[0]?.id, snapshot.predictions[0]!.id);
+  assert.equal(findAiRunById(snapshot, snapshot.aiRuns[0]!.id)?.linkedParlays[0]?.id, snapshot.parlays[0]!.id);
   assert.equal(
     findProviderStateByProvider(snapshot, snapshot.providerStates[0]!.provider)?.provider,
     snapshot.providerStates[0]!.provider,
@@ -189,9 +202,11 @@ test("public api exposes detail lookups for tasks, task runs, predictions, parla
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.aiRun?.id, snapshot.aiRuns[0]!.id);
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.fixture?.id, snapshot.fixtures[0]!.id);
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.linkedParlayIds[0], snapshot.parlays[0]!.id);
+  assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.linkedParlays[0]?.id, snapshot.parlays[0]!.id);
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.validation?.id, snapshot.validations[1]!.id);
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.id, snapshot.parlays[0]!.id);
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.aiRun?.id, snapshot.aiRuns[0]!.id);
+  assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.linkedAiRunIds[0], snapshot.aiRuns[0]!.id);
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.legs[0]?.prediction?.id, snapshot.predictions[0]!.id);
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.validation?.id, snapshot.validations[0]!.id);
   assert.equal(findValidationById(snapshot, snapshot.validations[0]!.id)?.id, snapshot.validations[0]!.id);
@@ -454,12 +469,140 @@ test("public api server exposes http endpoints for fixtures, predictions, parlay
   }
 });
 
-test("loadOperationSnapshotFromDatabase reads persisted fixtures and tasks", async () => {
-  const snapshot = await loadOperationSnapshotFromDatabase(process.env.DATABASE_URL);
+test("loadOperationSnapshotFromDatabase preserves research metadata and ai-run linkage in persisted read models", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+  const prefix = `public-api-linking-${Date.now()}`;
 
-  assert.ok(snapshot.fixtures.length >= 1);
-  assert.ok(snapshot.tasks.length >= 1);
-  assert.ok(snapshot.taskRuns.length >= 1);
-  assert.ok(snapshot.rawBatches.length >= 1);
-  assert.ok(snapshot.oddsSnapshots.length >= 1);
+  try {
+    const fixture = createFixture({
+      id: `${prefix}-fixture`,
+      sport: "football",
+      competition: "Serie A",
+      homeTeam: "Inter",
+      awayTeam: "Milan",
+      scheduledAt: "2026-04-20T18:45:00.000Z",
+      status: "scheduled",
+      metadata: {
+        providerFixtureId: `${prefix}-provider-fixture`,
+        researchGeneratedAt: "2026-04-20T10:00:00.000Z",
+        researchRecommendedLean: "away",
+        researchEvidenceCount: "5",
+        featureReadinessStatus: "ready",
+      },
+      createdAt: "2026-04-20T10:00:00.000Z",
+      updatedAt: "2026-04-20T10:00:00.000Z",
+    });
+    const task = createTask({
+      id: `${prefix}-task`,
+      kind: "prediction",
+      status: "succeeded",
+      priority: 50,
+      payload: { fixtureId: fixture.id, source: "scoring-worker" },
+      attempts: [{ startedAt: "2026-04-20T10:05:00.000Z", finishedAt: "2026-04-20T10:06:00.000Z" }],
+      scheduledFor: "2026-04-20T10:05:00.000Z",
+      createdAt: "2026-04-20T10:05:00.000Z",
+      updatedAt: "2026-04-20T10:06:00.000Z",
+    });
+    const taskRun = createTaskRun({
+      id: `${prefix}-task-run`,
+      taskId: task.id,
+      attemptNumber: 7,
+      status: "succeeded",
+      startedAt: "2026-04-20T10:05:00.000Z",
+      finishedAt: "2026-04-20T10:06:00.000Z",
+      createdAt: "2026-04-20T10:05:00.000Z",
+      updatedAt: "2026-04-20T10:06:00.000Z",
+    });
+    const aiRun = createAiRun({
+      id: `${prefix}-ai-run`,
+      taskId: task.id,
+      provider: "internal",
+      model: "deterministic-moneyline-v1",
+      promptVersion: "scoring-worker-v2",
+      status: "completed",
+      outputRef: `scoring-worker://${fixture.id}/2026-04-20T10:06:00.000Z`,
+      createdAt: "2026-04-20T10:06:00.000Z",
+      updatedAt: "2026-04-20T10:06:00.000Z",
+    });
+    const prediction = createPrediction({
+      id: `${prefix}-prediction`,
+      fixtureId: fixture.id,
+      aiRunId: aiRun.id,
+      market: "moneyline",
+      outcome: "away",
+      confidence: 0.71,
+      probabilities: { implied: 0.51, model: 0.57, edge: 0.06 },
+      rationale: ["Research lean away", "Odds snapshot agrees"],
+      status: "published",
+      createdAt: "2026-04-20T10:06:00.000Z",
+      updatedAt: "2026-04-20T10:06:00.000Z",
+      publishedAt: "2026-04-20T10:06:30.000Z",
+    });
+    const parlay = createParlay({
+      id: `${prefix}-parlay`,
+      status: "draft",
+      stake: 1,
+      source: "automatic",
+      correlationScore: 0.11,
+      expectedPayout: 2.4,
+      legs: [
+        {
+          predictionId: prediction.id,
+          fixtureId: fixture.id,
+          market: prediction.market,
+          outcome: prediction.outcome,
+          price: 2.4,
+          status: "pending",
+        },
+      ],
+      createdAt: "2026-04-20T10:07:00.000Z",
+      updatedAt: "2026-04-20T10:07:00.000Z",
+    });
+    const validation = createValidation({
+      id: `${prefix}-validation`,
+      targetType: "parlay",
+      targetId: parlay.id,
+      kind: "parlay-settlement",
+      status: "passed",
+      checks: [{ code: "trace", message: "trace ok", passed: true }],
+      summary: "Validation passed",
+      executedAt: "2026-04-20T10:08:00.000Z",
+      createdAt: "2026-04-20T10:08:00.000Z",
+      updatedAt: "2026-04-20T10:08:00.000Z",
+    });
+
+    await unitOfWork.fixtures.save(fixture);
+    await unitOfWork.tasks.save(task);
+    await unitOfWork.taskRuns.save(taskRun);
+    await unitOfWork.aiRuns.save(aiRun);
+    await unitOfWork.predictions.save(prediction);
+    await unitOfWork.parlays.save(parlay);
+    await unitOfWork.validations.save(validation);
+
+    const snapshot = await loadOperationSnapshotFromDatabase(databaseUrl);
+    const loadedFixture = snapshot.fixtures.find((candidate) => candidate.id === fixture.id);
+    const aiRunDetail = findAiRunById(snapshot, aiRun.id);
+    const predictionDetail = findPredictionById(snapshot, prediction.id);
+    const parlayDetail = findParlayById(snapshot, parlay.id);
+
+    assert.equal(loadedFixture?.metadata.researchRecommendedLean, "away");
+    assert.equal(loadedFixture?.metadata.featureReadinessStatus, "ready");
+    assert.equal(aiRunDetail?.linkedPredictions[0]?.id, prediction.id);
+    assert.equal(aiRunDetail?.linkedParlays[0]?.id, parlay.id);
+    assert.equal(predictionDetail?.linkedParlays[0]?.id, parlay.id);
+    assert.equal(parlayDetail?.linkedAiRunIds[0], aiRun.id);
+  } finally {
+    await prisma.validation.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.parlayLeg.deleteMany({ where: { parlayId: { startsWith: prefix } } });
+    await prisma.parlay.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.prediction.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.aiRun.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.taskRun.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.task.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.fixture.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.$disconnect();
+  }
 });
+

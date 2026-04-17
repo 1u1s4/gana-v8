@@ -5,6 +5,10 @@ import { createFixture, createTask, type FixtureEntity } from "@gana-v8/domain-c
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
+  applyFeatureSnapshotToFixture,
+} from "@gana-v8/feature-store";
+
+import {
   buildResearchDossierFromFixture,
   describeWorkspace,
   loadEligibleFixturesForScoring,
@@ -105,6 +109,52 @@ test("buildResearchDossierFromFixture derives deterministic implied probabilitie
   assert.equal(dossier.evidence.length, 3);
   assert.match(dossier.summary, /Chelsea vs Arsenal/);
   assert.equal(dossier.directionalScore.home > dossier.directionalScore.away, true);
+});
+
+test("buildResearchDossierFromFixture incorporates ready research metadata into the dossier", () => {
+  const enrichedFixture = applyFeatureSnapshotToFixture(
+    fixture(),
+    {
+      fixtureId: "fx-1",
+      generatedAt: "2026-04-15T11:55:00.000Z",
+      recommendedLean: "away",
+      evidenceCount: 4,
+      topEvidence: [
+        {
+          id: "injuries-away",
+          title: "Away side returns two starters",
+          direction: "away",
+          weightedScore: 0.91,
+        },
+      ],
+      risks: ["late lineup variance"],
+      features: {
+        researchScoreHome: 0.18,
+        researchScoreDraw: 0.22,
+        researchScoreAway: 0.81,
+        formHome: 0.44,
+        formAway: 0.71,
+        restHomeDays: 4,
+        restAwayDays: 6,
+        injuriesHome: 2,
+        injuriesAway: 0,
+        derby: 0,
+        hoursUntilKickoff: 7,
+      },
+      readiness: {
+        status: "ready",
+        reasons: [],
+      },
+    },
+  );
+
+  const dossier = buildResearchDossierFromFixture(enrichedFixture, snapshot(), {
+    generatedAt: "2026-04-15T12:05:00.000Z",
+  });
+
+  assert.equal(dossier.recommendedLean, "away");
+  assert.match(dossier.summary, /Research snapshot leans away/);
+  assert.equal(dossier.evidence.some((item) => item.id === "research:fx-1"), true);
 });
 
 test("loadEligibleFixturesForScoring returns latest h2h context and skip reasons", async () => {
