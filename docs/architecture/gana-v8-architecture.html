@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>gana-v8 Architecture</title>
+  <title>gana-v8 infrastructure architecture</title>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -28,7 +28,7 @@
       font-family: 'JetBrains Mono', monospace;
       padding: 28px;
     }
-    .wrap { max-width: 1500px; margin: 0 auto; }
+    .wrap { max-width: 1660px; margin: 0 auto; }
     .header {
       display: flex;
       justify-content: space-between;
@@ -41,7 +41,7 @@
       box-shadow: 0 0 18px rgba(52,211,153,.8); animation: pulse 2s infinite;
     }
     @keyframes pulse { 0%,100%{opacity:.9;transform:scale(1)} 50%{opacity:.55;transform:scale(.88)} }
-    .subtitle { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .subtitle { color: var(--muted); font-size: 12px; margin-top: 8px; max-width: 1100px; line-height: 1.6; }
     .card {
       border: 1px solid var(--border);
       background: rgba(15,23,42,.82);
@@ -58,9 +58,8 @@
       margin-top: 18px;
     }
     .card h3 { margin: 0 0 12px; font-size: 14px; }
-    .mini { color: var(--muted); font-size: 11px; line-height: 1.55; }
     ul { margin: 0; padding-left: 18px; }
-    li { margin: 6px 0; color: var(--muted); font-size: 11px; }
+    li { margin: 6px 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
     .footer { color: var(--muted); font-size: 11px; margin-top: 16px; text-align: right; }
   </style>
 </head>
@@ -68,13 +67,13 @@
   <div class="wrap">
     <div class="header">
       <div>
-        <div class="title"><span class="dot"></span>gana-v8 — Hermes-native sports prediction ops platform</div>
-        <div class="subtitle">Control plane multiagente + ETL diario + predicción estructurada + parlays + validación + sandbox aislado</div>
+        <div class="title"><span class="dot"></span>gana-v8 — infraestructura real del monorepo</div>
+        <div class="subtitle">Estado actualizado desde el código: control plane + workers especializados + Prisma/MySQL como task queue y operational store + API-Football como integración upstream + public-api/operator-console como capa de observabilidad, no como web app tradicional</div>
       </div>
     </div>
 
     <div class="card diagram-card">
-      <svg viewBox="0 0 1480 980" xmlns="http://www.w3.org/2000/svg">
+      <svg viewBox="0 0 1640 1120" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
@@ -82,205 +81,275 @@
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
             <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
           </marker>
+          <marker id="arrowhead-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
         </defs>
 
-        <rect x="0" y="0" width="1480" height="980" fill="#020617"/>
-        <rect x="0" y="0" width="1480" height="980" fill="url(#grid)"/>
+        <rect x="0" y="0" width="1640" height="1120" fill="#020617"/>
+        <rect x="0" y="0" width="1640" height="1120" fill="url(#grid)"/>
 
-        <!-- arrows behind -->
-        <line x1="215" y1="182" x2="515" y2="182" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="215" y1="300" x2="515" y2="300" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="215" y1="418" x2="515" y2="418" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="665" y1="180" x2="980" y2="180" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="665" y1="300" x2="980" y2="300" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="665" y1="420" x2="980" y2="420" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="1125" y1="180" x2="1320" y2="180" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="1125" y1="300" x2="1320" y2="300" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="1125" y1="420" x2="1320" y2="420" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="740" y1="640" x2="740" y2="540" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="1240" y1="640" x2="1240" y2="540" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="740" y1="490" x2="740" y2="640" stroke="#fb923c" stroke-width="2" stroke-dasharray="6,4"/>
-        <line x1="1240" y1="490" x2="1240" y2="640" stroke="#fb923c" stroke-width="2" stroke-dasharray="6,4"/>
-        <line x1="420" y1="760" x2="980" y2="760" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="1110" y1="760" x2="1320" y2="760" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="515" y1="540" x2="515" y2="760" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="215" y1="760" x2="350" y2="760" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <line x1="875" y1="860" x2="875" y2="800" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <!-- connections behind boxes -->
+        <line x1="210" y1="205" x2="410" y2="205" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="210" y1="325" x2="410" y2="325" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="210" y1="445" x2="410" y2="445" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <line x1="590" y1="145" x2="790" y2="145" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="590" y1="265" x2="790" y2="265" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="590" y1="385" x2="790" y2="385" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="590" y1="505" x2="790" y2="505" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="590" y1="625" x2="790" y2="625" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <line x1="970" y1="145" x2="1210" y2="145" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="970" y1="265" x2="1210" y2="265" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="970" y1="385" x2="1210" y2="385" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="970" y1="505" x2="1210" y2="505" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="970" y1="625" x2="1210" y2="625" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <line x1="1410" y1="145" x2="1520" y2="145" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="1410" y1="265" x2="1520" y2="265" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="1410" y1="385" x2="1520" y2="385" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="1410" y1="505" x2="1520" y2="505" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="1410" y1="625" x2="1520" y2="625" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <line x1="870" y1="730" x2="870" y2="845" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="270" y1="910" x2="730" y2="910" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="1000" y1="910" x2="1360" y2="910" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <line x1="1260" y1="730" x2="1260" y2="845" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="1060" y1="950" x2="1060" y2="1015" stroke="#fb7185" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrowhead-rose)"/>
 
         <!-- boundaries -->
-        <rect x="25" y="25" width="1430" height="510" rx="18" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="8,4"/>
-        <text x="45" y="48" fill="#fbbf24" font-size="10">runtime / control plane / execution</text>
+        <rect x="25" y="25" width="1590" height="720" rx="18" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <text x="45" y="48" fill="#fbbf24" font-size="10">runtime activo del monorepo</text>
 
-        <rect x="25" y="560" width="1430" height="250" rx="18" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="8,4"/>
-        <text x="45" y="583" fill="#a78bfa" font-size="10">data, artifacts, audit, replay, scorecards</text>
+        <rect x="25" y="770" width="1590" height="260" rx="18" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <text x="45" y="793" fill="#a78bfa" font-size="10">persistencia, sandbox y promoción operativa</text>
 
         <!-- column labels -->
-        <text x="120" y="90" fill="#94a3b8" font-size="10">experience layer</text>
-        <text x="520" y="90" fill="#94a3b8" font-size="10">Hermes control plane</text>
-        <text x="980" y="90" fill="#94a3b8" font-size="10">execution workers</text>
-        <text x="1325" y="90" fill="#94a3b8" font-size="10">outputs / consumers</text>
+        <text x="90" y="90" fill="#94a3b8" font-size="10">surface / operators</text>
+        <text x="410" y="90" fill="#94a3b8" font-size="10">control / adapters</text>
+        <text x="790" y="90" fill="#94a3b8" font-size="10">workers + execution</text>
+        <text x="1210" y="90" fill="#94a3b8" font-size="10">storage / providers</text>
+        <text x="1520" y="90" fill="#94a3b8" font-size="10">artifacts</text>
 
-        <!-- experience -->
-        <rect x="60" y="130" width="155" height="72" rx="8" fill="#0f172a"/>
-        <rect x="60" y="130" width="155" height="72" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="137" y="154" fill="white" font-size="12" text-anchor="middle" font-weight="600">Operator Console</text>
-        <text x="137" y="174" fill="#94a3b8" font-size="9" text-anchor="middle">snapshot + panels + traces</text>
+        <!-- left column -->
+        <rect x="60" y="160" width="150" height="90" rx="8" fill="#0f172a"/>
+        <rect x="60" y="160" width="150" height="90" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="135" y="188" fill="white" font-size="12" text-anchor="middle" font-weight="600">Operator Console</text>
+        <text x="135" y="210" fill="#94a3b8" font-size="9" text-anchor="middle">renderer textual</text>
+        <text x="135" y="226" fill="#94a3b8" font-size="9" text-anchor="middle">paneles + logs + traceability</text>
 
-        <rect x="60" y="248" width="155" height="72" rx="8" fill="#0f172a"/>
-        <rect x="60" y="248" width="155" height="72" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="137" y="272" fill="white" font-size="12" text-anchor="middle" font-weight="600">CLI / Telegram</text>
-        <text x="137" y="292" fill="#94a3b8" font-size="9" text-anchor="middle">ops, overrides, cron status</text>
+        <rect x="60" y="280" width="150" height="90" rx="8" fill="#0f172a"/>
+        <rect x="60" y="280" width="150" height="90" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="135" y="308" fill="white" font-size="12" text-anchor="middle" font-weight="600">Public API</text>
+        <text x="135" y="330" fill="#94a3b8" font-size="9" text-anchor="middle">HTTP JSON GET-only</text>
+        <text x="135" y="346" fill="#94a3b8" font-size="9" text-anchor="middle">snapshot operacional + health</text>
 
-        <rect x="60" y="366" width="155" height="72" rx="8" fill="#0f172a"/>
-        <rect x="60" y="366" width="155" height="72" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="137" y="390" fill="white" font-size="12" text-anchor="middle" font-weight="600">Public API</text>
-        <text x="137" y="410" fill="#94a3b8" font-size="9" text-anchor="middle">health + fixtures + picks + summary</text>
+        <rect x="60" y="400" width="150" height="90" rx="8" fill="#0f172a"/>
+        <rect x="60" y="400" width="150" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="135" y="428" fill="white" font-size="12" text-anchor="middle" font-weight="600">Operador interno</text>
+        <text x="135" y="450" fill="#94a3b8" font-size="9" text-anchor="middle">QA / ops / analista</text>
+        <text x="135" y="466" fill="#94a3b8" font-size="9" text-anchor="middle">lee estado, no ejecuta UI web</text>
 
-        <!-- control plane -->
-        <rect x="515" y="110" width="150" height="90" rx="8" fill="#0f172a"/>
-        <rect x="515" y="110" width="150" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
-        <text x="590" y="138" fill="white" font-size="12" text-anchor="middle" font-weight="600">Hermes Control Plane</text>
-        <text x="590" y="160" fill="#94a3b8" font-size="9" text-anchor="middle">scheduler + routing + policy</text>
-        <text x="590" y="176" fill="#94a3b8" font-size="9" text-anchor="middle">budgets + approvals + subagents</text>
+        <!-- control plane / adapter layer -->
+        <rect x="410" y="100" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="410" y="100" width="180" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="500" y="128" fill="white" font-size="12" text-anchor="middle" font-weight="600">Hermes Control Plane</text>
+        <text x="500" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">cron specs + task routing</text>
+        <text x="500" y="166" fill="#94a3b8" font-size="9" text-anchor="middle">claim / requeue / automation cycle</text>
 
-        <rect x="515" y="230" width="150" height="90" rx="8" fill="#0f172a"/>
-        <rect x="515" y="230" width="150" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
-        <text x="590" y="258" fill="white" font-size="12" text-anchor="middle" font-weight="600">Orchestration SDK</text>
-        <text x="590" y="280" fill="#94a3b8" font-size="9" text-anchor="middle">task envelopes + queue + cron specs</text>
-        <text x="590" y="296" fill="#94a3b8" font-size="9" text-anchor="middle">workflow intents + retry model</text>
+        <rect x="410" y="220" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="410" y="220" width="180" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="500" y="248" fill="white" font-size="12" text-anchor="middle" font-weight="600">Orchestration SDK</text>
+        <text x="500" y="270" fill="#94a3b8" font-size="9" text-anchor="middle">workflow intents + task envelopes</text>
+        <text x="500" y="286" fill="#94a3b8" font-size="9" text-anchor="middle">runtime contracts del control plane</text>
 
-        <rect x="515" y="350" width="150" height="90" rx="8" fill="#0f172a"/>
-        <rect x="515" y="350" width="150" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
-        <text x="590" y="378" fill="white" font-size="12" text-anchor="middle" font-weight="600">Policy / Skills</text>
-        <text x="590" y="400" fill="#94a3b8" font-size="9" text-anchor="middle">research gates + publication rules</text>
-        <text x="590" y="416" fill="#94a3b8" font-size="9" text-anchor="middle">role-based subagents + sandbox profiles</text>
+        <rect x="410" y="340" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="410" y="340" width="180" height="90" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="500" y="368" fill="white" font-size="12" text-anchor="middle" font-weight="600">Read Models</text>
+        <text x="500" y="390" fill="#94a3b8" font-size="9" text-anchor="middle">operational summary + logs</text>
+        <text x="500" y="406" fill="#94a3b8" font-size="9" text-anchor="middle">ai-runs + provider-state + snapshot</text>
+
+        <rect x="410" y="460" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="410" y="460" width="180" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="500" y="488" fill="white" font-size="12" text-anchor="middle" font-weight="600">Config Runtime</text>
+        <text x="500" y="510" fill="#94a3b8" font-size="9" text-anchor="middle">local-dev / replay / live-readonly</text>
+        <text x="500" y="526" fill="#94a3b8" font-size="9" text-anchor="middle">dry-run + demo-mode + provider source</text>
+
+        <rect x="410" y="580" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="410" y="580" width="180" height="90" rx="8" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="500" y="608" fill="white" font-size="12" text-anchor="middle" font-weight="600">Sandbox Runner</text>
+        <text x="500" y="630" fill="#94a3b8" font-size="9" text-anchor="middle">smoke / replay / cron-validation</text>
+        <text x="500" y="646" fill="#94a3b8" font-size="9" text-anchor="middle">CLI segura para perfiles aislados</text>
 
         <!-- workers -->
-        <rect x="980" y="110" width="145" height="90" rx="8" fill="#0f172a"/>
-        <rect x="980" y="110" width="145" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
-        <text x="1052" y="138" fill="white" font-size="12" text-anchor="middle" font-weight="600">Ingestion Worker</text>
-        <text x="1052" y="160" fill="#94a3b8" font-size="9" text-anchor="middle">fixtures + odds windows</text>
-        <text x="1052" y="176" fill="#94a3b8" font-size="9" text-anchor="middle">raw batches + canonical snapshots</text>
+        <rect x="790" y="100" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="790" y="100" width="180" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="880" y="128" fill="white" font-size="12" text-anchor="middle" font-weight="600">Ingestion Worker</text>
+        <text x="880" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">fixtures + odds ingestion</text>
+        <text x="880" y="166" fill="#94a3b8" font-size="9" text-anchor="middle">raw batches + snapshots + audit</text>
 
-        <rect x="980" y="230" width="145" height="90" rx="8" fill="#0f172a"/>
-        <rect x="980" y="230" width="145" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
-        <text x="1052" y="258" fill="white" font-size="12" text-anchor="middle" font-weight="600">Research / Scoring</text>
-        <text x="1052" y="280" fill="#94a3b8" font-size="9" text-anchor="middle">evidence dossier + forecast</text>
-        <text x="1052" y="296" fill="#94a3b8" font-size="9" text-anchor="middle">atomic candidates + publishable pick</text>
+        <rect x="790" y="220" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="790" y="220" width="180" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="880" y="248" fill="white" font-size="12" text-anchor="middle" font-weight="600">Research Worker</text>
+        <text x="880" y="270" fill="#94a3b8" font-size="9" text-anchor="middle">dossier determinístico + features</text>
+        <text x="880" y="286" fill="#94a3b8" font-size="9" text-anchor="middle">enriquece metadata del fixture</text>
 
-        <rect x="980" y="350" width="145" height="90" rx="8" fill="#0f172a"/>
-        <rect x="980" y="350" width="145" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
-        <text x="1052" y="378" fill="white" font-size="12" text-anchor="middle" font-weight="600">Parlay / Validation</text>
-        <text x="1052" y="400" fill="#94a3b8" font-size="9" text-anchor="middle">risk + correlation + settlement</text>
-        <text x="1052" y="416" fill="#94a3b8" font-size="9" text-anchor="middle">replay + scorecards</text>
+        <rect x="790" y="340" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="790" y="340" width="180" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="880" y="368" fill="white" font-size="12" text-anchor="middle" font-weight="600">Scoring Worker</text>
+        <text x="880" y="390" fill="#94a3b8" font-size="9" text-anchor="middle">AiRun interno + Prediction</text>
+        <text x="880" y="406" fill="#94a3b8" font-size="9" text-anchor="middle">usa odds h2h + research persistido</text>
 
-        <!-- outputs -->
-        <rect x="1320" y="110" width="110" height="90" rx="8" fill="#0f172a"/>
-        <rect x="1320" y="110" width="110" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
-        <text x="1375" y="142" fill="white" font-size="12" text-anchor="middle" font-weight="600">Predictions</text>
-        <text x="1375" y="162" fill="#94a3b8" font-size="9" text-anchor="middle">atomics</text>
-        <text x="1375" y="178" fill="#94a3b8" font-size="9" text-anchor="middle">published picks</text>
+        <rect x="790" y="460" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="790" y="460" width="180" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="880" y="488" fill="white" font-size="12" text-anchor="middle" font-weight="600">Publisher Worker</text>
+        <text x="880" y="510" fill="#94a3b8" font-size="9" text-anchor="middle">arma Parlay MVP</text>
+        <text x="880" y="526" fill="#94a3b8" font-size="9" text-anchor="middle">persiste tickets, no publica afuera</text>
 
-        <rect x="1320" y="230" width="110" height="90" rx="8" fill="#0f172a"/>
-        <rect x="1320" y="230" width="110" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
-        <text x="1375" y="262" fill="white" font-size="12" text-anchor="middle" font-weight="600">Parlays</text>
-        <text x="1375" y="282" fill="#94a3b8" font-size="9" text-anchor="middle">tickets + scorecards</text>
+        <rect x="790" y="580" width="180" height="90" rx="8" fill="#0f172a"/>
+        <rect x="790" y="580" width="180" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="880" y="608" fill="white" font-size="12" text-anchor="middle" font-weight="600">Validation Worker</text>
+        <text x="880" y="630" fill="#94a3b8" font-size="9" text-anchor="middle">settlement de prediction/parlay</text>
+        <text x="880" y="646" fill="#94a3b8" font-size="9" text-anchor="middle">validation artifacts + replay loop</text>
 
-        <rect x="1320" y="350" width="110" height="90" rx="8" fill="#0f172a"/>
-        <rect x="1320" y="350" width="110" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
-        <text x="1375" y="382" fill="white" font-size="12" text-anchor="middle" font-weight="600">Validation</text>
-        <text x="1375" y="402" fill="#94a3b8" font-size="9" text-anchor="middle">settlement + replay</text>
+        <!-- storage / providers -->
+        <rect x="1210" y="100" width="200" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1210" y="100" width="200" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1310" y="128" fill="white" font-size="12" text-anchor="middle" font-weight="600">API-Football</text>
+        <text x="1310" y="150" fill="#94a3b8" font-size="9" text-anchor="middle">RapidAPI upstream</text>
+        <text x="1310" y="166" fill="#94a3b8" font-size="9" text-anchor="middle">fixtures + odds provider real</text>
 
-        <!-- data layer -->
-        <rect x="70" y="620" width="290" height="140" rx="10" fill="#0f172a"/>
-        <rect x="70" y="620" width="290" height="140" rx="10" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
-        <text x="215" y="648" fill="white" font-size="12" text-anchor="middle" font-weight="600">Data Contracts + Domain Core</text>
-        <text x="215" y="670" fill="#94a3b8" font-size="9" text-anchor="middle">fixtures • tasks • AI runs • atomics • parlays • validations</text>
-        <text x="215" y="686" fill="#94a3b8" font-size="9" text-anchor="middle">storage adapters • in-memory repos • sandbox namespaces</text>
+        <rect x="1210" y="220" width="200" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1210" y="220" width="200" height="90" rx="8" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="1310" y="248" fill="white" font-size="12" text-anchor="middle" font-weight="600">MySQL + Prisma</text>
+        <text x="1310" y="270" fill="#94a3b8" font-size="9" text-anchor="middle">operational store + task queue lógica</text>
+        <text x="1310" y="286" fill="#94a3b8" font-size="9" text-anchor="middle">sin Redis/Kafka/SQS reales</text>
 
-        <rect x="390" y="620" width="250" height="140" rx="10" fill="#0f172a"/>
-        <rect x="390" y="620" width="250" height="140" rx="10" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
-        <text x="515" y="648" fill="white" font-size="12" text-anchor="middle" font-weight="600">Raw + Canonical</text>
-        <text x="515" y="670" fill="#94a3b8" font-size="9" text-anchor="middle">provider payloads • batch ids • checksums</text>
-        <text x="515" y="686" fill="#94a3b8" font-size="9" text-anchor="middle">canonical matches • odds snapshots • idempotency</text>
+        <rect x="1210" y="340" width="200" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1210" y="340" width="200" height="90" rx="8" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="1310" y="368" fill="white" font-size="12" text-anchor="middle" font-weight="600">Raw + Odds Tables</text>
+        <text x="1310" y="390" fill="#94a3b8" font-size="9" text-anchor="middle">RawIngestionBatch</text>
+        <text x="1310" y="406" fill="#94a3b8" font-size="9" text-anchor="middle">OddsSnapshot + selections</text>
 
-        <rect x="690" y="620" width="370" height="140" rx="10" fill="#0f172a"/>
-        <rect x="690" y="620" width="370" height="140" rx="10" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
-        <text x="875" y="648" fill="white" font-size="12" text-anchor="middle" font-weight="600">Operational + Audit Artifacts</text>
-        <text x="875" y="670" fill="#94a3b8" font-size="9" text-anchor="middle">workflow intents • task runs • evidence items • dossiers • forecasts</text>
-        <text x="875" y="686" fill="#94a3b8" font-size="9" text-anchor="middle">candidate sets • parlay tickets • settlement records • scorecards</text>
+        <rect x="1210" y="460" width="200" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1210" y="460" width="200" height="90" rx="8" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="1310" y="488" fill="white" font-size="12" text-anchor="middle" font-weight="600">Operational Entities</text>
+        <text x="1310" y="510" fill="#94a3b8" font-size="9" text-anchor="middle">Fixture + Task + TaskRun + AiRun</text>
+        <text x="1310" y="526" fill="#94a3b8" font-size="9" text-anchor="middle">Prediction + Parlay + Validation</text>
 
-        <rect x="1110" y="620" width="265" height="140" rx="10" fill="#0f172a"/>
-        <rect x="1110" y="620" width="265" height="140" rx="10" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
-        <text x="1242" y="648" fill="white" font-size="12" text-anchor="middle" font-weight="600">Observability + Lineage</text>
-        <text x="1242" y="670" fill="#94a3b8" font-size="9" text-anchor="middle">structured logs • spans • metrics snapshots</text>
-        <text x="1242" y="686" fill="#94a3b8" font-size="9" text-anchor="middle">audit trail • trace links • replay provenance</text>
+        <rect x="1210" y="580" width="200" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1210" y="580" width="200" height="90" rx="8" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="1310" y="608" fill="white" font-size="12" text-anchor="middle" font-weight="600">Audit + Lineage</text>
+        <text x="1310" y="630" fill="#94a3b8" font-size="9" text-anchor="middle">AuditEvent + trace links</text>
+        <text x="1310" y="646" fill="#94a3b8" font-size="9" text-anchor="middle">operational logs + provenance</text>
 
-        <!-- sandbox row -->
-        <rect x="350" y="820" width="520" height="90" rx="10" fill="#0f172a"/>
-        <rect x="350" y="820" width="520" height="90" rx="10" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" stroke-width="1.5"/>
-        <text x="610" y="850" fill="white" font-size="12" text-anchor="middle" font-weight="600">Sandbox Runner + Testing Fixtures</text>
-        <text x="610" y="872" fill="#94a3b8" font-size="9" text-anchor="middle">synthetic packs • profile namespaces • smoke/replay/cron-validation • safe dry-runs</text>
+        <!-- artifacts / outputs -->
+        <rect x="1520" y="100" width="80" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1520" y="100" width="80" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1560" y="132" fill="white" font-size="11" text-anchor="middle" font-weight="600">Tasks</text>
+        <text x="1560" y="152" fill="#94a3b8" font-size="8" text-anchor="middle">queue state</text>
+        <text x="1560" y="168" fill="#94a3b8" font-size="8" text-anchor="middle">attempts</text>
 
-        <rect x="980" y="820" width="395" height="90" rx="10" fill="#0f172a"/>
-        <rect x="980" y="820" width="395" height="90" rx="10" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
-        <text x="1178" y="850" fill="white" font-size="12" text-anchor="middle" font-weight="600">Promotion Gates</text>
-        <text x="1178" y="872" fill="#94a3b8" font-size="9" text-anchor="middle">lint • typecheck • tests • replay sanity • cron dry-run • operator QA before prod</text>
+        <rect x="1520" y="220" width="80" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1520" y="220" width="80" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1560" y="252" fill="white" font-size="11" text-anchor="middle" font-weight="600">AiRuns</text>
+        <text x="1560" y="272" fill="#94a3b8" font-size="8" text-anchor="middle">internal model</text>
+        <text x="1560" y="288" fill="#94a3b8" font-size="8" text-anchor="middle">deterministic</text>
 
-        <!-- small buses -->
-        <rect x="695" y="462" width="90" height="24" rx="4" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" stroke-width="1"/>
-        <text x="740" y="478" fill="#fb923c" font-size="7" text-anchor="middle">artifacts bus</text>
+        <rect x="1520" y="340" width="80" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1520" y="340" width="80" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1560" y="372" fill="white" font-size="11" text-anchor="middle" font-weight="600">Picks</text>
+        <text x="1560" y="392" fill="#94a3b8" font-size="8" text-anchor="middle">predictions</text>
+        <text x="1560" y="408" fill="#94a3b8" font-size="8" text-anchor="middle">linked trace</text>
 
-        <rect x="1190" y="462" width="100" height="24" rx="4" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" stroke-width="1"/>
-        <text x="1240" y="478" fill="#fb923c" font-size="7" text-anchor="middle">audit bus</text>
+        <rect x="1520" y="460" width="80" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1520" y="460" width="80" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1560" y="492" fill="white" font-size="11" text-anchor="middle" font-weight="600">Parlays</text>
+        <text x="1560" y="512" fill="#94a3b8" font-size="8" text-anchor="middle">tickets</text>
+        <text x="1560" y="528" fill="#94a3b8" font-size="8" text-anchor="middle">validation loop</text>
+
+        <rect x="1520" y="580" width="80" height="90" rx="8" fill="#0f172a"/>
+        <rect x="1520" y="580" width="80" height="90" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1560" y="612" fill="white" font-size="11" text-anchor="middle" font-weight="600">Health</text>
+        <text x="1560" y="632" fill="#94a3b8" font-size="8" text-anchor="middle">summary</text>
+        <text x="1560" y="648" fill="#94a3b8" font-size="8" text-anchor="middle">ops API</text>
+
+        <!-- lower layer -->
+        <rect x="70" y="845" width="200" height="130" rx="10" fill="#0f172a"/>
+        <rect x="70" y="845" width="200" height="130" rx="10" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="170" y="875" fill="white" font-size="12" text-anchor="middle" font-weight="600">Domain Core</text>
+        <text x="170" y="897" fill="#94a3b8" font-size="9" text-anchor="middle">entities + repos</text>
+        <text x="170" y="913" fill="#94a3b8" font-size="9" text-anchor="middle">fixture / task / aiRun / prediction</text>
+        <text x="170" y="929" fill="#94a3b8" font-size="9" text-anchor="middle">parlay / validation / sandbox</text>
+
+        <rect x="730" y="845" width="270" height="130" rx="10" fill="#0f172a"/>
+        <rect x="730" y="845" width="270" height="130" rx="10" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="865" y="875" fill="white" font-size="12" text-anchor="middle" font-weight="600">Storage Adapters</text>
+        <text x="865" y="897" fill="#94a3b8" font-size="9" text-anchor="middle">Prisma repos + in-memory repos</text>
+        <text x="865" y="913" fill="#94a3b8" font-size="9" text-anchor="middle">unit-of-work + mappers + canonical writes</text>
+        <text x="865" y="929" fill="#94a3b8" font-size="9" text-anchor="middle">base real del estado operacional</text>
+
+        <rect x="1000" y="845" width="360" height="130" rx="10" fill="#0f172a"/>
+        <rect x="1000" y="845" width="360" height="130" rx="10" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="1180" y="875" fill="white" font-size="12" text-anchor="middle" font-weight="600">Testing Fixtures + Sandbox Profiles</text>
+        <text x="1180" y="897" fill="#94a3b8" font-size="9" text-anchor="middle">packs sintéticos + namespaces aislados + dry-run guards</text>
+        <text x="1180" y="913" fill="#94a3b8" font-size="9" text-anchor="middle">sirve para smoke/replay/cron-validation, no para serving productivo</text>
+        <text x="1180" y="929" fill="#94a3b8" font-size="9" text-anchor="middle">promotion gate antes de seguir expandiendo el runtime</text>
+
+        <rect x="920" y="1015" width="280" height="70" rx="10" fill="#0f172a"/>
+        <rect x="920" y="1015" width="280" height="70" rx="10" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="1060" y="1042" fill="white" font-size="12" text-anchor="middle" font-weight="600">Promotion Gates</text>
+        <text x="1060" y="1062" fill="#94a3b8" font-size="9" text-anchor="middle">lint + typecheck + tests + replay sanity + operator QA</text>
 
         <!-- legend -->
-        <g transform="translate(40,930)">
+        <g transform="translate(40,1090)">
           <rect x="0" y="0" width="12" height="12" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" />
-          <text x="20" y="9" fill="#94a3b8" font-size="8">experience</text>
-          <rect x="110" y="0" width="12" height="12" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" />
-          <text x="130" y="9" fill="#94a3b8" font-size="8">backend / workers</text>
-          <rect x="275" y="0" width="12" height="12" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" />
-          <text x="295" y="9" fill="#94a3b8" font-size="8">data / contracts</text>
-          <rect x="430" y="0" width="12" height="12" rx="2" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" />
-          <text x="450" y="9" fill="#94a3b8" font-size="8">audit / security</text>
-          <rect x="575" y="0" width="12" height="12" rx="2" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" />
-          <text x="595" y="9" fill="#94a3b8" font-size="8">artifact bus</text>
+          <text x="20" y="9" fill="#94a3b8" font-size="8">surface / read adapters</text>
+          <rect x="170" y="0" width="12" height="12" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" />
+          <text x="190" y="9" fill="#94a3b8" font-size="8">control plane / workers</text>
+          <rect x="360" y="0" width="12" height="12" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" />
+          <text x="380" y="9" fill="#94a3b8" font-size="8">db / persistence</text>
+          <rect x="500" y="0" width="12" height="12" rx="2" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" />
+          <text x="520" y="9" fill="#94a3b8" font-size="8">sandbox / testing</text>
+          <rect x="645" y="0" width="12" height="12" rx="2" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" />
+          <text x="665" y="9" fill="#94a3b8" font-size="8">audit / gates</text>
         </g>
       </svg>
     </div>
 
     <div class="grid">
       <div class="card">
-        <h3>Lo ya materializado</h3>
+        <h3>Topología real hoy</h3>
         <ul>
-          <li>Monorepo real con apps, packages y pipeline turbo</li>
-          <li>Domain core, contratos, storage adapters y ETL inicial</li>
-          <li>Orchestration SDK + Hermes control plane demo</li>
-          <li>Research, prediction, parlays, validation, audit y sandbox</li>
+          <li>Monorepo pnpm + Turbo + TypeScript + Prisma/MySQL</li>
+          <li>La arquitectura está dominada por control plane y workers, no por una web app tradicional</li>
+          <li>public-api y operator-console existen como capa de lectura/observabilidad</li>
+          <li>operator-console hoy es un renderer textual, no una consola React/Next productiva</li>
         </ul>
       </div>
       <div class="card">
-        <h3>Loop de negocio</h3>
+        <h3>Loop operativo implementado</h3>
         <ul>
-          <li>Cron → intent → ETL → dossier → forecast → atomic</li>
-          <li>Atomic candidates → parlay optimizer → publication</li>
-          <li>Resultados finales → settlement → replay → scorecards</li>
-          <li>Operator console y API consumen snapshots consolidados</li>
+          <li>API-Football → ingestion-worker → raw batches / odds snapshots / fixtures</li>
+          <li>control plane usa Task + TaskRun en MySQL como task queue lógica</li>
+          <li>research-worker enriquece fixture metadata y scoring-worker persiste AiRun + Prediction</li>
+          <li>publisher-worker arma Parlay y validation-worker liquida artifacts para replay/health</li>
         </ul>
       </div>
       <div class="card">
-        <h3>Qué deja listo para la siguiente fase</h3>
+        <h3>Qué corregí respecto al diagrama viejo</h3>
         <ul>
-          <li>Integrar conectores reales y DB operacional persistente</li>
-          <li>Agregar research con LLM/web search gobernado</li>
-          <li>Promover console web completa sobre los read models</li>
-          <li>Automatizar promoción dev → staging → prod</li>
+          <li>Separé research, scoring, publisher y validation como workers reales distintos</li>
+          <li>Reemplacé la idea vaga de CLI/Telegram por sandbox-runner y operator-console reales</li>
+          <li>Hice explícito que la DB es MySQL/Prisma y que no hay Redis/Kafka/SQS productivos hoy</li>
+          <li>El modelo de AI actual es interno/determinístico; no dibujé un proveedor LLM externo inexistente</li>
         </ul>
       </div>
     </div>
 
-    <div class="footer">gana-v8 architecture · generado para Luis por Jo/J0 · 2026</div>
+    <div class="footer">gana-v8 architecture · actualizado desde el código real del repo · Jo/J0 · 2026</div>
   </div>
 </body>
 </html>
