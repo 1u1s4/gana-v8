@@ -60,6 +60,36 @@ export interface SandboxRunSummary {
   };
 }
 
+export interface MaterializedSandboxRun {
+  readonly summary: SandboxRunSummary;
+  readonly persistedNamespaceCount: number;
+  readonly persistedNamespaceIds: readonly string[];
+}
+
+interface PersistedSandboxNamespace {
+  readonly id: string;
+  readonly environment: "sandbox";
+  readonly sandboxId?: string;
+  readonly scope: string;
+  readonly storagePrefix: string;
+  readonly queuePrefix: string;
+  readonly metadata: Record<string, string>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+interface SandboxNamespaceRepositoryLike {
+  save(namespace: PersistedSandboxNamespace): Promise<PersistedSandboxNamespace>;
+  list(): Promise<PersistedSandboxNamespace[]>;
+  delete(id: string): Promise<void>;
+}
+
+export interface SandboxStorageUnitOfWorkLike {
+  readonly sandboxNamespaces: SandboxNamespaceRepositoryLike;
+}
+
+const createPersistedSandboxNamespace = (input: PersistedSandboxNamespace): PersistedSandboxNamespace => input;
+
 const createSummary = (
   manifest: SandboxRunManifest,
   mode: RunnerMode,
@@ -116,6 +146,64 @@ export const prepareSandboxRun = (options: SandboxRunnerOptions): SandboxRunMani
 export const runSandboxScenario = (options: SandboxRunnerOptions): SandboxRunSummary => {
   const manifest = prepareSandboxRun(options);
   return createSummary(manifest, options.mode);
+};
+
+const materializeManifestNamespaces = async (
+  manifest: SandboxRunManifest,
+  unitOfWork: SandboxStorageUnitOfWorkLike,
+): Promise<readonly string[]> => {
+  const namespaces = Object.values(manifest.namespaces).map((namespace) =>
+    createPersistedSandboxNamespace({
+      id: namespace.id,
+      environment: namespace.environment,
+      sandboxId: namespace.sandboxId,
+      scope: namespace.scope,
+      storagePrefix: namespace.storagePrefix,
+      queuePrefix: namespace.queuePrefix,
+      metadata: {
+        ...namespace.metadata,
+        profileName: manifest.profile.name,
+        fixturePackId: manifest.fixturePack.id,
+      },
+      createdAt: namespace.createdAt,
+      updatedAt: namespace.updatedAt,
+    }),
+  );
+
+  const persistedNamespaces: PersistedSandboxNamespace[] = [];
+
+  try {
+    for (const namespace of namespaces) {
+      persistedNamespaces.push(await unitOfWork.sandboxNamespaces.save(namespace));
+    }
+
+    return persistedNamespaces.map((namespace) => namespace.id);
+  } catch (error) {
+    await Promise.all(
+      persistedNamespaces.map(async (namespace) => {
+        try {
+          await unitOfWork.sandboxNamespaces.delete(namespace.id);
+        } catch {
+          // best-effort rollback for non-transactional unit-of-work implementations
+        }
+      }),
+    );
+    throw error;
+  }
+};
+
+export const materializeSandboxRun = async (
+  options: SandboxRunnerOptions,
+  unitOfWork: SandboxStorageUnitOfWorkLike,
+): Promise<MaterializedSandboxRun> => {
+  const manifest = prepareSandboxRun(options);
+  const persistedNamespaceIds = await materializeManifestNamespaces(manifest, unitOfWork);
+
+  return {
+    summary: createSummary(manifest, options.mode),
+    persistedNamespaceCount: persistedNamespaceIds.length,
+    persistedNamespaceIds,
+  };
 };
 
 const parseArgValue = (argv: readonly string[], name: string): string | undefined => {

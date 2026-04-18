@@ -187,7 +187,7 @@ test("operator console builds panels and alerts from the snapshot", () => {
   const snapshot = createOperatorConsoleSnapshot();
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 11);
+  assert.equal(model.panels.length, 12);
   assert.equal(model.health.status, "ok");
   assert.equal(model.validationSummary.partial, 1);
   assert.equal(model.alerts.length, 0);
@@ -217,6 +217,38 @@ test("operator console derives an ops-focused snapshot from public-api operation
   assert.match(model.panels[5]?.lines.join("\n") ?? "", /airun-demo-scoring/);
   assert.match(model.panels[5]?.lines.join("\n") ?? "", /prediction:fixture:api-football:123:moneyline:home/);
   assert.match(model.panels[5]?.lines.join("\n") ?? "", /parlay:demo/);
+});
+
+test("operator console surfaces fixture pipeline readiness from fixture metadata", () => {
+  const operationSnapshot = createOperationLikeSnapshot({
+    fixtures: [
+      {
+        id: "fixture:api-football:123",
+        sport: "football",
+        competition: "Liga Profesional",
+        homeTeam: "Boca Juniors",
+        awayTeam: "River Plate",
+        scheduledAt: "2026-04-15T03:00:00.000Z",
+        status: "scheduled",
+        metadata: {
+          researchRecommendedLean: "home",
+          featureReadinessStatus: "needs-review",
+          featureReadinessReasons: "research dossier has no evidence items | feature snapshot has no ranked evidence",
+          researchGeneratedAt: "2026-04-15T00:15:00.000Z",
+        },
+        createdAt: "2026-04-15T00:00:00.000Z",
+        updatedAt: "2026-04-15T00:15:00.000Z",
+      },
+    ],
+  });
+
+  const model = buildOperatorConsoleModel(createOperatorConsoleSnapshotFromOperation(operationSnapshot as never));
+  const pipelinePanel = model.panels.find((panel) => panel.title === "Fixture pipeline");
+
+  assert.ok(pipelinePanel);
+  assert.match(pipelinePanel.lines.join("\n"), /needs-review/);
+  assert.match(pipelinePanel.lines.join("\n"), /researchGeneratedAt/);
+  assert.match(pipelinePanel.lines.join("\n"), /Boca Juniors/);
 });
 
 test("operator console raises alerts from operational logs and degraded validation health", () => {
@@ -303,7 +335,7 @@ test("operator console raises alerts from operational logs and degraded validati
   assert.ok(model.alerts.some((alert) => alert.includes("provider timeout")));
   assert.match(model.panels[3]?.lines.join("\n") ?? "", /provider timeout/);
   assert.match(model.panels[4]?.lines.join("\n") ?? "", /remaining 20/i);
-  assert.match(model.panels[9]?.lines.join("\n") ?? "", /0 passed/);
+  assert.match(model.panels[10]?.lines.join("\n") ?? "", /0 passed/);
 });
 
 test("operator console renderer prints a useful CLI view", () => {

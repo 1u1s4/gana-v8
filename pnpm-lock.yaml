@@ -53,6 +53,9 @@ importers:
       '@gana-v8/publisher-worker':
         specifier: workspace:*
         version: link:../publisher-worker
+      '@gana-v8/queue-adapters':
+        specifier: workspace:*
+        version: link:../../packages/queue-adapters
       '@gana-v8/scoring-worker':
         specifier: workspace:*
         version: link:../scoring-worker
@@ -370,6 +373,9 @@ importers:
       '@gana-v8/domain-core':
         specifier: workspace:*
         version: link:../domain-core
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../storage-adapters
 
   packages/research-contracts:
     dependencies:

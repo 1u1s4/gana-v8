@@ -274,10 +274,10 @@ const blendResearchLean = (
     };
   }
 
-  const boostedScores: ImpliedProbabilities = { ...directionalScore };
+  const boostedScores: { home: number; draw: number; away: number } = { ...directionalScore };
   const researchLean = persistedResearch.researchRecommendedLean;
   boostedScores[researchLean] = round(Math.max(boostedScores[researchLean], 0) + 0.7);
-  const reranked = (["home", "draw", "away"] as const).sort(
+  const reranked = (["home", "draw", "away"] as Array<ResearchDossierLike["recommendedLean"]>).sort(
     (left, right) => boostedScores[right] - boostedScores[left],
   );
   const recommendedLean = reranked[0] ?? baseLean;

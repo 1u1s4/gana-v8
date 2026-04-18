@@ -22,8 +22,12 @@ import {
   scoreFixturePrediction,
   type FixtureScoreResult,
 } from "@gana-v8/scoring-worker";
+import {
+  createPrismaTaskQueueAdapter,
+  type TaskQueueAdapter,
+} from "@gana-v8/queue-adapters";
 import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
-import { createTask, createTaskRun, type TaskEntity, type TaskKind, type TaskRunEntity } from "@gana-v8/domain-core";
+import { type TaskEntity, type TaskKind, createTaskRun, type TaskRunEntity } from "@gana-v8/domain-core";
 import {
   FakeFootballApiClient,
   FootballApiFacade,
@@ -376,25 +380,19 @@ export const enqueuePersistedTask = async (
   databaseUrl: string,
   input: EnqueuePersistedTaskInput,
 ): Promise<TaskEntity> => {
-  const client = createPrismaClient(databaseUrl);
+  const queue = createPersistedTaskQueue(databaseUrl);
 
   try {
-    const unitOfWork = createPrismaUnitOfWork(client);
-    const now = input.now ?? new Date();
-    const task = createTask({
-      id: input.id ?? createPersistedTaskId(input.kind, input.payload, now),
+    return (await queue.enqueue({
+      id: input.id ?? createPersistedTaskId(input.kind, input.payload, input.now ?? new Date()),
       kind: input.kind,
-      status: "queued",
-      priority: input.priority ?? 0,
       payload: input.payload,
-      ...(input.scheduledFor ? { scheduledFor: input.scheduledFor.toISOString() } : {}),
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    });
-
-    return unitOfWork.tasks.save(task);
+      priority: input.priority ?? 0,
+      ...(input.scheduledFor ? { scheduledFor: input.scheduledFor } : {}),
+      ...(input.now ? { now: input.now } : {}),
+    })) as TaskEntity;
   } finally {
-    await client.$disconnect();
+    await queue.close();
   }
 };
 
@@ -403,48 +401,32 @@ export const requeuePersistedTask = async (
   taskId: string,
   now: Date = new Date(),
 ): Promise<TaskEntity> => {
-  const client = createPrismaClient(databaseUrl);
+  const queue = createPersistedTaskQueue(databaseUrl);
 
   try {
-    const unitOfWork = createPrismaUnitOfWork(client);
-    const task = await unitOfWork.tasks.getById(taskId);
-
-    if (!task) {
-      throw new Error(`Persisted task ${taskId} was not found`);
-    }
-
-    if (task.status !== "failed" && task.status !== "cancelled") {
-      throw new Error(
-        `Persisted task ${taskId} cannot be requeued from status ${task.status}; only failed or cancelled tasks can be requeued`,
-      );
-    }
-
-    await client.task.update({
-      where: { id: taskId },
-      data: {
-        status: "queued",
-        updatedAt: now,
-      },
-    });
-
-    return ensurePersistedTask(await unitOfWork.tasks.getById(taskId), taskId);
+    return (await queue.requeue(taskId, now)) as TaskEntity;
   } finally {
-    await client.$disconnect();
+    await queue.close();
   }
 };
 
-const compareQueuedReadyTasks = (left: TaskEntity, right: TaskEntity): number => {
-  const leftScheduledFor = left.scheduledFor ?? "";
-  const rightScheduledFor = right.scheduledFor ?? "";
-  if (leftScheduledFor !== rightScheduledFor) {
-    return leftScheduledFor.localeCompare(rightScheduledFor);
-  }
+export interface PersistedTaskQueue extends TaskQueueAdapter {
+  close(): Promise<void>;
+}
 
-  if (left.priority !== right.priority) {
-    return right.priority - left.priority;
-  }
+export const createPersistedTaskQueue = (databaseUrl: string): PersistedTaskQueue => {
+  const client = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(client);
+  const adapter = createPrismaTaskQueueAdapter(client, unitOfWork, {
+    createTransactionalUnitOfWork: (transactionClient) => createPrismaUnitOfWork(transactionClient as never),
+  });
 
-  return left.createdAt.localeCompare(right.createdAt);
+  return {
+    ...adapter,
+    async close() {
+      await client.$disconnect();
+    },
+  };
 };
 
 export const maybeClaimNextPersistedTask = async (
@@ -452,56 +434,12 @@ export const maybeClaimNextPersistedTask = async (
   kind?: PersistedTaskIntent,
   now: Date = new Date(),
 ): Promise<PersistedTaskClaim | null> => {
-  const client = createPrismaClient(databaseUrl);
+  const queue = createPersistedTaskQueue(databaseUrl);
 
   try {
-    const unitOfWork = createPrismaUnitOfWork(client);
-    const nowIso = now.toISOString();
-    const nextTask = (await unitOfWork.tasks.findByStatus("queued"))
-      .filter((candidate) => {
-        if (kind && candidate.kind !== kind) {
-          return false;
-        }
-
-        return !candidate.scheduledFor || candidate.scheduledFor <= nowIso;
-      })
-      .sort(compareQueuedReadyTasks)[0];
-
-    if (!nextTask) {
-      return null;
-    }
-
-    const claimedAt = now.toISOString();
-    const claimResult = await client.task.updateMany({
-      where: { id: nextTask.id, status: "queued" },
-      data: { status: "running", updatedAt: new Date(claimedAt) },
-    });
-
-    if (claimResult.count === 0) {
-      return null;
-    }
-
-    const existingRuns = await unitOfWork.taskRuns.findByTaskId(nextTask.id);
-    const attemptNumber =
-      existingRuns.reduce((maxAttemptNumber, taskRun) => {
-        return Math.max(maxAttemptNumber, taskRun.attemptNumber);
-      }, 0) + 1;
-    const taskRun = await unitOfWork.taskRuns.save(
-      createTaskRun({
-        id: `${nextTask.id}:attempt:${attemptNumber}`,
-        taskId: nextTask.id,
-        attemptNumber,
-        status: "running",
-        startedAt: claimedAt,
-        createdAt: claimedAt,
-        updatedAt: claimedAt,
-      }),
-    );
-    const task = ensurePersistedTask(await unitOfWork.tasks.getById(nextTask.id), nextTask.id);
-
-    return { task, taskRun };
+    return (await queue.claimNext(kind, now)) as PersistedTaskClaim | null;
   } finally {
-    await client.$disconnect();
+    await queue.close();
   }
 };
 
@@ -571,26 +509,12 @@ export const runNextPersistedTask = async (
 export const loadPersistedTaskSummary = async (
   databaseUrl: string,
 ): Promise<PersistedTaskSummary> => {
-  const client = createPrismaClient(databaseUrl);
+  const queue = createPersistedTaskQueue(databaseUrl);
 
   try {
-    const unitOfWork = createPrismaUnitOfWork(client);
-    const tasks = await unitOfWork.tasks.list();
-    const latestTasks = [...tasks]
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, 10);
-
-    return {
-      cancelled: tasks.filter((task) => task.status === "cancelled").length,
-      failed: tasks.filter((task) => task.status === "failed").length,
-      latestTasks,
-      queued: tasks.filter((task) => task.status === "queued").length,
-      running: tasks.filter((task) => task.status === "running").length,
-      succeeded: tasks.filter((task) => task.status === "succeeded").length,
-      total: tasks.length,
-    };
+    return await queue.summary();
   } finally {
-    await client.$disconnect();
+    await queue.close();
   }
 };
 

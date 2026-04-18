@@ -7,6 +7,7 @@ import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-ada
 import {
   buildHermesCronSpecs,
   createHermesJobRouter,
+  createPersistedTaskQueue,
   describeWorkspace,
   enqueuePersistedTask,
   enqueuePredictionForEligibleFixtures,
@@ -254,6 +255,46 @@ test("loadPersistedTaskSummary reads persisted task status buckets", async () =>
   assert.ok(summary.total >= 1);
   assert.ok(summary.succeeded >= 1);
   assert.ok(summary.latestTasks.length >= 1);
+});
+
+test("createPersistedTaskQueue runs a persisted task lifecycle through the shared queue adapter", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prisma = createPrismaClient(databaseUrl);
+  const taskPrefix = `hermes-test-queue-adapter-${Date.now()}`;
+  const queue = createPersistedTaskQueue(databaseUrl);
+
+  try {
+    await queue.enqueue({
+      id: `${taskPrefix}-validation`,
+      kind: "validation",
+      payload: { source: "test" },
+      now: new Date("2026-04-16T11:00:00.000Z"),
+    });
+
+    const claim = await queue.claimNext(undefined, new Date("2026-04-16T11:01:00.000Z"));
+    assert.ok(claim);
+    assert.equal(claim.task.kind, "validation");
+    assert.equal(claim.taskRun.attemptNumber, 1);
+
+    const completed = await queue.complete(
+      claim.task.id,
+      claim.taskRun.id,
+      new Date("2026-04-16T11:02:00.000Z"),
+    );
+    assert.equal(completed.task.status, "succeeded");
+    assert.equal(completed.taskRun.status, "succeeded");
+    assert.equal(completed.task.attempts.length, 1);
+    assert.equal(completed.task.attempts[0]?.startedAt, "2026-04-16T11:01:00.000Z");
+    assert.equal(completed.task.attempts[0]?.finishedAt, "2026-04-16T11:02:00.000Z");
+
+    const summary = await queue.summary();
+    assert.ok(summary.succeeded >= 1);
+  } finally {
+    await queue.close();
+    await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
+    await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
+    await prisma.$disconnect();
+  }
 });
 
 test("maybeClaimNextPersistedTask orders ready queued tasks by scheduledFor, priority, and createdAt", async () => {

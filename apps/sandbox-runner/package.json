@@ -16,17 +16,19 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs sandbox-runner",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "pnpm --filter @gana-v8/testing-fixtures build && tsx --test tests/**/*.test.ts",
-    "typecheck": "pnpm --filter @gana-v8/testing-fixtures build && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && tsx --test tests/**/*.test.ts",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
     "@gana-v8/dev-cli": "workspace:*",
     "@gana-v8/testing-fixtures": "workspace:*",
     "@gana-v8/config-runtime": "workspace:*",
-    "@gana-v8/observability": "workspace:*"
+    "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/observability": "workspace:*",
+    "@gana-v8/storage-adapters": "workspace:*"
   }
 }

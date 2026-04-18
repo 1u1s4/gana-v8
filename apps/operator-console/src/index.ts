@@ -16,6 +16,10 @@ export interface OperatorConsoleFixture {
   readonly homeTeam: string;
   readonly awayTeam: string;
   readonly status: string;
+  readonly researchRecommendedLean?: string | null;
+  readonly featureReadinessStatus?: string | null;
+  readonly featureReadinessReasons?: string | null;
+  readonly researchGeneratedAt?: string | null;
 }
 
 export interface OperatorConsolePrediction {
@@ -216,6 +220,10 @@ export function createOperatorConsoleSnapshotFromOperation(
       homeTeam: fixture.homeTeam,
       awayTeam: fixture.awayTeam,
       status: fixture.status,
+      researchRecommendedLean: fixture.metadata.researchRecommendedLean ?? null,
+      featureReadinessStatus: fixture.metadata.featureReadinessStatus ?? null,
+      featureReadinessReasons: fixture.metadata.featureReadinessReasons ?? null,
+      researchGeneratedAt: fixture.metadata.researchGeneratedAt ?? null,
     })),
     predictions: operationSnapshot.predictions.map((prediction) => ({
       id: prediction.id,
@@ -673,6 +681,16 @@ export function buildOperatorConsoleModel(
           ...linkedPredictions.map((prediction) => `prediction ${prediction.id} | ${prediction.market}:${prediction.outcome}`),
           ...linkedParlays.map((parlay) => `parlay ${parlay.id} | ${parlay.legs.length} leg(s)`),
         ];
+      }),
+    },
+    {
+      title: "Fixture pipeline",
+      lines: snapshot.fixtures.map((fixture) => {
+        const readiness = fixture.featureReadinessStatus ?? "unknown";
+        const lean = fixture.researchRecommendedLean ?? "n/a";
+        const generatedAt = fixture.researchGeneratedAt ?? "n/a";
+        const reasons = fixture.featureReadinessReasons ?? "none";
+        return `${fixture.homeTeam} vs ${fixture.awayTeam} | lean ${lean} | ${readiness} | researchGeneratedAt ${generatedAt} | reasons ${reasons}`;
       }),
     },
     {

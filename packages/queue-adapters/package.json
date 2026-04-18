@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Queue transport placeholders for background workflow dispatch.",
+  "description": "Queue adapters for persisted and in-memory background workflow dispatch.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,15 +16,16 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs queue-adapters",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node --input-type=module --eval \"import('./dist/index.js').then((module) => { if (module.workspaceInfo?.packageName !== '@gana-v8/queue-adapters') throw new Error('workspaceInfo.packageName mismatch'); if (!Array.isArray(module.workspaceInfo?.dependencies)) throw new Error('workspaceInfo.dependencies should be an array'); console.log('test ok: @gana-v8/queue-adapters'); })\"",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && tsc -p tsconfig.build.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
     "@gana-v8/domain-core": "workspace:*",
-    "@gana-v8/config-runtime": "workspace:*"
+    "@gana-v8/config-runtime": "workspace:*",
+    "@gana-v8/storage-adapters": "workspace:*"
   }
 }
