@@ -81,6 +81,8 @@ const createOperationLikeSnapshot = (overrides: Record<string, unknown> = {}) =>
       provider: "internal",
       model: "deterministic-moneyline-v1",
       promptVersion: "scoring-worker-mvp-v1",
+      latestPromptVersion: "scoring-worker-mvp-v1",
+      providerRequestId: "req-demo-scoring",
       status: "completed",
       usage: {
         promptTokens: 120,
@@ -187,7 +189,7 @@ test("operator console builds panels and alerts from the snapshot", () => {
   const snapshot = createOperatorConsoleSnapshot();
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 12);
+  assert.equal(model.panels.length, 13);
   assert.equal(model.health.status, "ok");
   assert.equal(model.validationSummary.partial, 1);
   assert.equal(model.alerts.length, 0);
@@ -214,13 +216,64 @@ test("operator console derives an ops-focused snapshot from public-api operation
   assert.match(model.panels[2]?.lines.join("\n") ?? "", /succeeded:1/);
   assert.match(model.panels[3]?.lines.join("\n") ?? "", /fixture-ingestion succeeded/i);
   assert.match(model.panels[4]?.lines.join("\n") ?? "", /deterministic-moneyline-v1/);
+  assert.match(model.panels[4]?.lines.join("\n") ?? "", /req-demo-scoring/);
+  assert.match(model.panels[4]?.lines.join("\n") ?? "", /latestPrompt/);
   assert.match(model.panels[5]?.lines.join("\n") ?? "", /airun-demo-scoring/);
+  assert.match(model.panels[5]?.lines.join("\n") ?? "", /memory:\/\/demo\/airuns\/airun-demo-scoring.json/);
   assert.match(model.panels[5]?.lines.join("\n") ?? "", /prediction:fixture:api-football:123:moneyline:home/);
   assert.match(model.panels[5]?.lines.join("\n") ?? "", /parlay:demo/);
+  assert.match(model.panels[6]?.lines.join("\n") ?? "", /fixture:api-football:123/);
+  assert.match(model.panels[6]?.lines.join("\n") ?? "", /workflow/);
+  assert.match(model.panels[6]?.lines.join("\n") ?? "", /predictions 1/);
 });
 
 test("operator console surfaces fixture pipeline readiness from fixture metadata", () => {
   const operationSnapshot = createOperationLikeSnapshot({
+    fixtureWorkflows: [
+      {
+        id: "fixture:api-football:123",
+        fixtureId: "fixture:api-football:123",
+        ingestionStatus: "succeeded",
+        oddsStatus: "succeeded",
+        enrichmentStatus: "succeeded",
+        candidateStatus: "succeeded",
+        predictionStatus: "pending",
+        parlayStatus: "pending",
+        validationStatus: "pending",
+        isCandidate: true,
+        manualSelectionStatus: "selected",
+        manualSelectionBy: "ops-user",
+        selectionOverride: "force-include",
+        diagnostics: { research: { lean: "home" } },
+        errorCount: 0,
+        createdAt: "2026-04-15T00:00:00.000Z",
+        updatedAt: "2026-04-15T00:15:00.000Z",
+      },
+    ],
+    auditEvents: [
+      {
+        id: "audit-fixture-2",
+        aggregateType: "fixture-workflow",
+        aggregateId: "fixture:api-football:123",
+        eventType: "fixture-workflow.selection-override.updated",
+        actor: "public-api",
+        payload: { mode: "force-include", reason: "high conviction" },
+        occurredAt: "2026-04-15T00:16:00.000Z",
+        createdAt: "2026-04-15T00:16:00.000Z",
+        updatedAt: "2026-04-15T00:16:00.000Z",
+      },
+      {
+        id: "audit-fixture-1",
+        aggregateType: "fixture-workflow",
+        aggregateId: "fixture:api-football:123",
+        eventType: "fixture-workflow.manual-selection.updated",
+        actor: "ops-user",
+        payload: { status: "selected", reason: "desk review" },
+        occurredAt: "2026-04-15T00:15:30.000Z",
+        createdAt: "2026-04-15T00:15:30.000Z",
+        updatedAt: "2026-04-15T00:15:30.000Z",
+      },
+    ],
     fixtures: [
       {
         id: "fixture:api-football:123",
@@ -244,11 +297,19 @@ test("operator console surfaces fixture pipeline readiness from fixture metadata
 
   const model = buildOperatorConsoleModel(createOperatorConsoleSnapshotFromOperation(operationSnapshot as never));
   const pipelinePanel = model.panels.find((panel) => panel.title === "Fixture pipeline");
+  const fixtureOpsPanel = model.panels.find((panel) => panel.title === "Fixture ops");
 
   assert.ok(pipelinePanel);
+  assert.ok(fixtureOpsPanel);
   assert.match(pipelinePanel.lines.join("\n"), /needs-review/);
   assert.match(pipelinePanel.lines.join("\n"), /researchGeneratedAt/);
   assert.match(pipelinePanel.lines.join("\n"), /Boca Juniors/);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /manual selected/);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /override force-include/);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /eligibility Fixture is force-included by workflow ops/i);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /recent ops/);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /selection-override.updated.*high conviction/i);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /manual-selection.updated.*desk review/i);
 });
 
 test("operator console raises alerts from operational logs and degraded validation health", () => {
@@ -286,8 +347,12 @@ test("operator console raises alerts from operational logs and degraded validati
         provider: "internal",
         model: "deterministic-moneyline-v1",
         promptVersion: "scoring-worker-mvp-v1",
+        latestPromptVersion: "scoring-worker-mvp-v1",
+        providerRequestId: "req-timeout-1",
         status: "failed",
         error: "provider timeout",
+        fallbackReason: "provider timeout",
+        degraded: true,
         createdAt: "2026-04-15T00:03:30.000Z",
         updatedAt: "2026-04-15T00:04:00.000Z",
       },
@@ -334,8 +399,11 @@ test("operator console raises alerts from operational logs and degraded validati
   assert.ok(model.alerts.some((alert) => alert.includes("task-failed")));
   assert.ok(model.alerts.some((alert) => alert.includes("provider timeout")));
   assert.match(model.panels[3]?.lines.join("\n") ?? "", /provider timeout/);
+  assert.match(model.panels[4]?.lines.join("\n") ?? "", /req-timeout-1/);
+  assert.match(model.panels[4]?.lines.join("\n") ?? "", /fallback provider timeout/);
   assert.match(model.panels[4]?.lines.join("\n") ?? "", /remaining 20/i);
-  assert.match(model.panels[10]?.lines.join("\n") ?? "", /0 passed/);
+  assert.match(model.panels[5]?.lines.join("\n") ?? "", /fallback provider timeout/);
+  assert.match(model.panels[11]?.lines.join("\n") ?? "", /0 passed/);
 });
 
 test("operator console renderer prints a useful CLI view", () => {

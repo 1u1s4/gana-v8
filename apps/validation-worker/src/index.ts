@@ -1,7 +1,10 @@
 import {
+  createFixtureWorkflow,
   createValidation,
   finalizeValidation,
+  transitionFixtureWorkflowStage,
   type FixtureEntity,
+  type FixtureWorkflowEntity,
   type ISODateString,
   type ParlayEntity,
   type PredictionEntity,
@@ -94,6 +97,33 @@ const createPredictionValidationId = (predictionId: string): string =>
 
 const createParlayValidationId = (parlayId: string): string =>
   `validation:parlay-settlement:${parlayId}`;
+
+const persistValidationWorkflow = async (
+  unitOfWork: StorageUnitOfWork,
+  fixtureId: string,
+  executedAt: ISODateString,
+): Promise<FixtureWorkflowEntity> => {
+  const current =
+    (await unitOfWork.fixtureWorkflows.findByFixtureId(fixtureId)) ??
+    createFixtureWorkflow({
+      fixtureId,
+      ingestionStatus: "pending",
+      oddsStatus: "pending",
+      enrichmentStatus: "pending",
+      candidateStatus: "pending",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: false,
+    });
+
+  return unitOfWork.fixtureWorkflows.save(
+    transitionFixtureWorkflowStage(current, "validation", {
+      status: "succeeded",
+      occurredAt: executedAt,
+    }),
+  );
+};
 
 const toSettlementPrice = (prediction: PredictionEntity): number => {
   const implied = prediction.probabilities.implied;
@@ -295,6 +325,7 @@ const settlePredictionValidation = async (
   });
 
   await unitOfWork.validations.save(validation);
+  await persistValidationWorkflow(unitOfWork, prediction.fixtureId, executedAt);
 
   return {
     predictionId: prediction.id,
@@ -369,6 +400,11 @@ const settleParlayValidation = async (
   });
 
   await unitOfWork.validations.save(validation);
+  await Promise.all(
+    [...new Set(parlay.legs.map((leg) => leg.fixtureId))].map((fixtureId) =>
+      persistValidationWorkflow(unitOfWork, fixtureId, executedAt),
+    ),
+  );
 
   return {
     parlayId: parlay.id,

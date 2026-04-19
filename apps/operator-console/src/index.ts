@@ -20,6 +20,11 @@ export interface OperatorConsoleFixture {
   readonly featureReadinessStatus?: string | null;
   readonly featureReadinessReasons?: string | null;
   readonly researchGeneratedAt?: string | null;
+  readonly manualSelectionStatus?: string | null;
+  readonly manualSelectionBy?: string | null;
+  readonly selectionOverride?: string | null;
+  readonly scoringEligibilityReason?: string | null;
+  readonly recentAuditEvents?: readonly string[];
 }
 
 export interface OperatorConsolePrediction {
@@ -211,20 +216,58 @@ export function createOperatorConsoleSnapshotFromOperation(
   const latestBatch = sortByNewest(operationSnapshot.rawBatches, (batch) => batch.extractionTime)[0] ?? null;
   const latestOddsSnapshot =
     sortByNewest(operationSnapshot.oddsSnapshots, (snapshot) => snapshot.capturedAt)[0] ?? null;
+  const fixtureWorkflows = operationSnapshot.fixtureWorkflows ?? [];
 
   return {
     generatedAt: operationSnapshot.generatedAt,
-    fixtures: operationSnapshot.fixtures.map((fixture) => ({
-      id: fixture.id,
-      competition: fixture.competition,
-      homeTeam: fixture.homeTeam,
-      awayTeam: fixture.awayTeam,
-      status: fixture.status,
-      researchRecommendedLean: fixture.metadata.researchRecommendedLean ?? null,
-      featureReadinessStatus: fixture.metadata.featureReadinessStatus ?? null,
-      featureReadinessReasons: fixture.metadata.featureReadinessReasons ?? null,
-      researchGeneratedAt: fixture.metadata.researchGeneratedAt ?? null,
-    })),
+    fixtures: operationSnapshot.fixtures.map((fixture) => {
+      const workflow = fixtureWorkflows.find((candidate) => candidate.fixtureId === fixture.id);
+      const latestFixtureOddsSnapshot =
+        sortByNewest(
+          operationSnapshot.oddsSnapshots.filter((snapshot) => snapshot.fixtureId === fixture.id),
+          (snapshot) => snapshot.capturedAt,
+        )[0] ?? null;
+      const scoringEligibilityReason =
+        workflow?.selectionOverride === "force-exclude" || workflow?.manualSelectionStatus === "rejected"
+          ? "Fixture is force-excluded by workflow ops."
+          : workflow?.selectionOverride === "force-include"
+            ? "Fixture is force-included by workflow ops."
+            : workflow?.manualSelectionStatus === "selected"
+              ? "Fixture is manually selected in workflow ops."
+              : fixture.status !== "scheduled"
+                ? `Fixture status ${fixture.status} is not eligible for scoring.`
+                : latestFixtureOddsSnapshot === null
+                  ? "No latest h2h odds snapshot found for fixture."
+                  : "Fixture is eligible for scoring.";
+      const recentAuditEvents = sortByNewest(
+        (operationSnapshot.auditEvents ?? []).filter(
+          (auditEvent) =>
+            auditEvent.aggregateType === "fixture-workflow" && auditEvent.aggregateId === fixture.id,
+        ),
+        (auditEvent) => auditEvent.occurredAt,
+      )
+        .slice(0, 5)
+        .map((auditEvent) => {
+          const payloadReason = typeof auditEvent.payload.reason === "string" ? auditEvent.payload.reason : null;
+          return `${auditEvent.eventType} @ ${auditEvent.occurredAt}${payloadReason ? ` | ${payloadReason}` : ""}`;
+        });
+      return {
+        id: fixture.id,
+        competition: fixture.competition,
+        homeTeam: fixture.homeTeam,
+        awayTeam: fixture.awayTeam,
+        status: fixture.status,
+        researchRecommendedLean: fixture.metadata.researchRecommendedLean ?? null,
+        featureReadinessStatus: fixture.metadata.featureReadinessStatus ?? null,
+        featureReadinessReasons: fixture.metadata.featureReadinessReasons ?? null,
+        researchGeneratedAt: fixture.metadata.researchGeneratedAt ?? null,
+        manualSelectionStatus: workflow?.manualSelectionStatus ?? null,
+        manualSelectionBy: workflow?.manualSelectionBy ?? null,
+        selectionOverride: workflow?.selectionOverride ?? null,
+        scoringEligibilityReason,
+        recentAuditEvents,
+      };
+    }),
     predictions: operationSnapshot.predictions.map((prediction) => ({
       id: prediction.id,
       fixtureId: prediction.fixtureId,
@@ -409,6 +452,8 @@ export function createOperatorConsoleSnapshot(
           provider: "internal",
           model: "deterministic-moneyline-v1",
           promptVersion: "scoring-worker-mvp-v1",
+          latestPromptVersion: "scoring-worker-mvp-v1",
+          providerRequestId: "req-demo-scoring",
           status: "completed",
           usage: {
             promptTokens: 120,
@@ -657,13 +702,15 @@ export function buildOperatorConsoleModel(
     {
       title: "AI & providers",
       lines: [
-        ...snapshot.aiRuns.slice(0, 3).map(
-          (aiRun) =>
-            `${aiRun.provider} | ${aiRun.model} | ${aiRun.status} | prompt ${aiRun.promptVersion}`,
-        ),
+        ...snapshot.aiRuns.slice(0, 3).map((aiRun) => {
+          const requestId = aiRun.providerRequestId ? ` | request ${aiRun.providerRequestId}` : "";
+          const usage = aiRun.usage?.totalTokens ? ` | tokens ${aiRun.usage.totalTokens}` : "";
+          const fallback = aiRun.fallbackReason ? ` | fallback ${aiRun.fallbackReason}` : "";
+          return `${aiRun.provider} | ${aiRun.model} | ${aiRun.status} | prompt ${aiRun.latestPromptVersion ?? aiRun.promptVersion}${requestId}${usage}${fallback}`;
+        }),
         ...snapshot.providerStates.map(
           (providerState) =>
-            `${providerState.provider} | aiRuns ${providerState.aiRunCount} | failed ${providerState.failedAiRunCount} | remaining ${providerState.quota?.remaining ?? "unknown"}`,
+            `${providerState.provider} | aiRuns ${providerState.aiRunCount} | failed ${providerState.failedAiRunCount} | latestPrompt ${providerState.latestPromptVersion ?? "unknown"} | remaining ${providerState.quota?.remaining ?? "unknown"}`,
         ),
       ],
     },
@@ -675,12 +722,43 @@ export function buildOperatorConsoleModel(
         const linkedParlays = snapshot.parlays.filter((parlay) =>
           parlay.legs.some((leg) => linkedPredictionIds.has(leg.predictionId)),
         );
+        const traceDetails = [
+          aiRun.providerRequestId ? `request ${aiRun.providerRequestId}` : null,
+          aiRun.outputRef ? `output ${aiRun.outputRef}` : null,
+          aiRun.usage?.totalTokens ? `tokens ${aiRun.usage.totalTokens}` : null,
+          aiRun.fallbackReason ? `fallback ${aiRun.fallbackReason}` : null,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(" | ");
 
         return [
-          `${aiRun.id} | predictions ${linkedPredictions.length} | parlays ${linkedParlays.length}`,
+          `${aiRun.id} | predictions ${linkedPredictions.length} | parlays ${linkedParlays.length}${traceDetails ? ` | ${traceDetails}` : ""}`,
           ...linkedPredictions.map((prediction) => `prediction ${prediction.id} | ${prediction.market}:${prediction.outcome}`),
           ...linkedParlays.map((parlay) => `parlay ${parlay.id} | ${parlay.legs.length} leg(s)`),
         ];
+      }),
+    },
+    {
+      title: "Fixture ops",
+      lines: snapshot.fixtures.map((fixture) => {
+        const predictions = snapshot.predictions.filter((prediction) => prediction.fixtureId === fixture.id);
+        const predictionIds = new Set(predictions.map((prediction) => prediction.id));
+        const parlays = snapshot.parlays.filter((parlay) =>
+          parlay.legs.some((leg) => leg.fixtureId === fixture.id || predictionIds.has(leg.predictionId)),
+        );
+        const manualSelection = fixture.manualSelectionStatus && fixture.manualSelectionStatus !== "none"
+          ? ` | manual ${fixture.manualSelectionStatus}${fixture.manualSelectionBy ? ` by ${fixture.manualSelectionBy}` : ""}`
+          : "";
+        const selectionOverride = fixture.selectionOverride && fixture.selectionOverride !== "none"
+          ? ` | override ${fixture.selectionOverride}`
+          : "";
+        const eligibility = fixture.scoringEligibilityReason
+          ? ` | eligibility ${fixture.scoringEligibilityReason}`
+          : "";
+        const recentOps = fixture.recentAuditEvents && fixture.recentAuditEvents.length > 0
+          ? ` | recent ops ${fixture.recentAuditEvents.join(" ; ")}`
+          : "";
+        return `${fixture.id} | workflow ${fixture.featureReadinessStatus ?? "unknown"}${manualSelection}${selectionOverride}${eligibility} | predictions ${predictions.length} | parlays ${parlays.length} | validations ${snapshot.validationSummary.total}${recentOps}`;
       }),
     },
     {

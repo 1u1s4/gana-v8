@@ -22,9 +22,12 @@ export const aiRunSchema = z.object({
   model: z.string().min(1),
   promptVersion: z.string().min(1),
   status: aiRunStatusSchema,
+  providerRequestId: z.string().min(1).optional(),
   usage: aiRunUsageSchema.optional(),
   outputRef: z.string().min(1).optional(),
   error: z.string().optional(),
+  fallbackReason: z.string().min(1).optional(),
+  degraded: z.boolean().optional(),
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema,
 });

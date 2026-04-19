@@ -16,6 +16,8 @@ export type TaskStatus =
   | "failed"
   | "cancelled";
 
+export type TaskTriggerKind = "cron" | "manual" | "retry" | "system";
+
 export interface TaskAttempt {
   readonly startedAt: ISODateString;
   readonly finishedAt?: ISODateString;
@@ -25,20 +27,26 @@ export interface TaskAttempt {
 export interface TaskEntity extends AuditableEntity {
   readonly kind: TaskKind;
   readonly status: TaskStatus;
+  readonly triggerKind: TaskTriggerKind;
   readonly priority: number;
+  readonly dedupeKey?: string;
   readonly payload: Record<string, unknown>;
   readonly attempts: readonly TaskAttempt[];
   readonly scheduledFor?: ISODateString;
+  readonly maxAttempts: number;
+  readonly lastErrorMessage?: string;
 }
 
 export const createTask = (
-  input: Omit<TaskEntity, "createdAt" | "updatedAt" | "attempts"> &
-    Partial<Pick<TaskEntity, "createdAt" | "updatedAt" | "attempts">>,
+  input: Omit<TaskEntity, "createdAt" | "updatedAt" | "attempts" | "triggerKind" | "maxAttempts"> &
+    Partial<Pick<TaskEntity, "createdAt" | "updatedAt" | "attempts" | "triggerKind" | "maxAttempts" | "dedupeKey" | "lastErrorMessage">>,
 ): TaskEntity => {
   const timestamp = input.createdAt ?? nowIso();
   return {
     ...input,
+    triggerKind: input.triggerKind ?? "system",
     attempts: input.attempts ?? [],
+    maxAttempts: input.maxAttempts ?? 3,
     createdAt: timestamp,
     updatedAt: input.updatedAt ?? timestamp,
   };
@@ -88,6 +96,7 @@ export const finishTask = (
     ...task,
     status: outcome,
     attempts: [...task.attempts.slice(0, -1), finishedAttempt],
+    ...(error !== undefined ? { lastErrorMessage: error } : {}),
     updatedAt: finishedAt,
   };
 };

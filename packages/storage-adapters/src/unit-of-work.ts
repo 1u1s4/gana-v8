@@ -2,6 +2,7 @@ import type {
   AiRunRepository,
   AuditEventRepository,
   FixtureRepository,
+  FixtureWorkflowRepository,
   ParlayRepository,
   PredictionRepository,
   SandboxNamespaceRepository,
@@ -14,6 +15,7 @@ import {
   InMemoryAiRunRepository,
   InMemoryAuditEventRepository,
   InMemoryFixtureRepository,
+  InMemoryFixtureWorkflowRepository,
   InMemoryParlayRepository,
   InMemoryPredictionRepository,
   InMemorySandboxNamespaceRepository,
@@ -25,6 +27,7 @@ import {
   PrismaAiRunRepository,
   PrismaAuditEventRepository,
   PrismaFixtureRepository,
+  PrismaFixtureWorkflowRepository,
   PrismaParlayRepository,
   PrismaPredictionRepository,
   PrismaSandboxNamespaceRepository,
@@ -36,6 +39,7 @@ import {
 
 export interface StorageUnitOfWork {
   fixtures: FixtureRepository;
+  fixtureWorkflows: FixtureWorkflowRepository;
   tasks: TaskRepository;
   taskRuns: TaskRunRepository;
   aiRuns: AiRunRepository;
@@ -54,6 +58,7 @@ export interface PrismaUnitOfWork extends StorageUnitOfWork {
 
 export const createInMemoryUnitOfWork = (): InMemoryUnitOfWork => ({
   fixtures: new InMemoryFixtureRepository(),
+  fixtureWorkflows: new InMemoryFixtureWorkflowRepository(),
   tasks: new InMemoryTaskRepository(),
   taskRuns: new InMemoryTaskRunRepository(),
   aiRuns: new InMemoryAiRunRepository(),
@@ -69,6 +74,7 @@ export const createPrismaUnitOfWork = (
 ): PrismaUnitOfWork => ({
   client,
   fixtures: new PrismaFixtureRepository(client),
+  fixtureWorkflows: new PrismaFixtureWorkflowRepository(client),
   tasks: new PrismaTaskRepository(client),
   taskRuns: new PrismaTaskRunRepository(client),
   aiRuns: new PrismaAiRunRepository(client),

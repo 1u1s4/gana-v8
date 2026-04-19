@@ -7,6 +7,8 @@ import type {
   EntityId,
   FixtureEntity,
   FixtureRepository,
+  FixtureWorkflowEntity,
+  FixtureWorkflowRepository,
   ParlayEntity,
   ParlayRepository,
   PredictionEntity,
@@ -60,6 +62,16 @@ export class InMemoryTaskRepository
   async findByStatus(status: TaskEntity["status"]): Promise<TaskEntity[]> {
     const items = await this.list();
     return items.filter((item) => item.status === status);
+  }
+}
+
+export class InMemoryFixtureWorkflowRepository
+  extends InMemoryRepository<FixtureWorkflowEntity>
+  implements FixtureWorkflowRepository
+{
+  async findByFixtureId(fixtureId: EntityId): Promise<FixtureWorkflowEntity | null> {
+    const items = await this.list();
+    return items.find((item) => item.fixtureId === fixtureId) ?? null;
   }
 }
 

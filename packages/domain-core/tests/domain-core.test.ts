@@ -2,13 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyFixtureWorkflowManualSelection,
+  applyFixtureWorkflowSelectionOverride,
   createAuditEvent,
   createFixture,
+  createFixtureWorkflow,
   createPrediction,
   createSandboxNamespace,
   createTaskRun,
   publishPrediction,
   transitionFixtureStatus,
+  transitionFixtureWorkflowStage,
 } from "../src/index.js";
 
 test("fixture transitions and prediction publishing keep domain invariants", () => {
@@ -77,4 +81,86 @@ test("task runs and audit events get default timestamps", () => {
   assert.equal(taskRun.taskId, "task-1");
   assert.equal(auditEvent.aggregateId, "task-1");
   assert.ok(auditEvent.occurredAt);
+});
+
+test("fixture workflow tracks stage state, timestamps, and errors", () => {
+  const workflow = createFixtureWorkflow({
+    fixtureId: "fx-1",
+    ingestionStatus: "pending",
+    oddsStatus: "pending",
+    enrichmentStatus: "pending",
+    candidateStatus: "pending",
+    predictionStatus: "pending",
+    parlayStatus: "pending",
+    validationStatus: "pending",
+    isCandidate: false,
+  });
+
+  const updated = transitionFixtureWorkflowStage(workflow, "prediction", {
+    status: "running",
+    occurredAt: "2026-04-15T10:00:00.000Z",
+    qualityScore: 0.72,
+    selectionScore: 0.63,
+    minDetectedOdd: 1.91,
+    isCandidate: true,
+  });
+
+  const failed = transitionFixtureWorkflowStage(updated, "prediction", {
+    status: "failed",
+    occurredAt: "2026-04-15T10:01:00.000Z",
+    errorMessage: "provider timeout",
+  });
+
+  assert.equal(updated.predictionStatus, "running");
+  assert.equal(updated.lastPredictedAt, "2026-04-15T10:00:00.000Z");
+  assert.equal(updated.isCandidate, true);
+  assert.equal(updated.qualityScore, 0.72);
+  assert.equal(updated.selectionScore, 0.63);
+  assert.equal(updated.minDetectedOdd, 1.91);
+  assert.equal(failed.predictionStatus, "failed");
+  assert.equal(failed.errorCount, 1);
+  assert.equal(failed.lastErrorMessage, "provider timeout");
+});
+
+test("fixture workflow preserves manual selection and override metadata", () => {
+  const workflow = createFixtureWorkflow({
+    fixtureId: "fx-2",
+    ingestionStatus: "succeeded",
+    oddsStatus: "succeeded",
+    enrichmentStatus: "succeeded",
+    candidateStatus: "succeeded",
+    predictionStatus: "pending",
+    parlayStatus: "pending",
+    validationStatus: "pending",
+    isCandidate: true,
+    diagnostics: {
+      research: { lean: "home" },
+      thresholds: { minOdd: 1.8 },
+    },
+  });
+
+  const manuallySelected = applyFixtureWorkflowManualSelection(workflow, {
+    status: "selected",
+    selectedBy: "luis",
+    reason: "High conviction derby edge",
+    occurredAt: "2026-04-15T10:05:00.000Z",
+  });
+
+  const overridden = applyFixtureWorkflowSelectionOverride(manuallySelected, {
+    mode: "force-include",
+    reason: "Operator override for premium slate",
+    occurredAt: "2026-04-15T10:06:00.000Z",
+  });
+
+  assert.equal(manuallySelected.manualSelectionStatus, "selected");
+  assert.equal(manuallySelected.manualSelectionBy, "luis");
+  assert.equal(manuallySelected.manualSelectionReason, "High conviction derby edge");
+  assert.equal(manuallySelected.manuallySelectedAt, "2026-04-15T10:05:00.000Z");
+  assert.equal(overridden.selectionOverride, "force-include");
+  assert.equal(overridden.overrideReason, "Operator override for premium slate");
+  assert.equal(overridden.overriddenAt, "2026-04-15T10:06:00.000Z");
+  assert.deepEqual(overridden.diagnostics, {
+    research: { lean: "home" },
+    thresholds: { minOdd: 1.8 },
+  });
 });

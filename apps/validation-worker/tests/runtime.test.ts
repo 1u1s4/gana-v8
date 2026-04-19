@@ -83,6 +83,7 @@ test("runValidationWorker settles published moneyline predictions and persists p
 
   const settledPrediction = await unitOfWork.predictions.getById(publishedPrediction.id);
   const validations = await unitOfWork.validations.findByTargetId(publishedPrediction.id);
+  const workflow = await unitOfWork.fixtureWorkflows.findByFixtureId(completedFixture.id);
 
   assert.match(describeWorkspace(), /validation-worker/);
   assert.equal(result.settledPredictionCount, 1);
@@ -94,6 +95,7 @@ test("runValidationWorker settles published moneyline predictions and persists p
   assert.equal(validations[0]?.targetType, "prediction");
   assert.equal(validations[0]?.kind, "prediction-settlement");
   assert.equal(validations[0]?.status, "passed");
+  assert.equal(workflow?.validationStatus, "succeeded");
 });
 
 test("runValidationWorker settles submitted parlays whose legs are all settled and persists parlay validations", async () => {

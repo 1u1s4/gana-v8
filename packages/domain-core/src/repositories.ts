@@ -2,6 +2,7 @@ import type { EntityId, Repository } from './common.js';
 import type { AuditEventEntity } from './entities/audit-event.js';
 import type { AiRunEntity } from './entities/ai-run.js';
 import type { FixtureEntity } from './entities/fixture.js';
+import type { FixtureWorkflowEntity } from './entities/fixture-workflow.js';
 import type { ParlayEntity } from './entities/parlay.js';
 import type { PredictionEntity } from './entities/prediction.js';
 import type { SandboxNamespace } from './entities/sandbox.js';
@@ -15,6 +16,10 @@ export interface FixtureRepository extends Repository<FixtureEntity> {
 
 export interface TaskRepository extends Repository<TaskEntity> {
   findByStatus(status: TaskEntity['status']): Promise<TaskEntity[]>;
+}
+
+export interface FixtureWorkflowRepository extends Repository<FixtureWorkflowEntity> {
+  findByFixtureId(fixtureId: EntityId): Promise<FixtureWorkflowEntity | null>;
 }
 
 export interface AiRunRepository extends Repository<AiRunEntity> {

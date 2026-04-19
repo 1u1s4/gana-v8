@@ -1,23 +1,36 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import {
+  applyFixtureWorkflowManualSelection as applyFixtureWorkflowManualSelectionTransition,
+  applyFixtureWorkflowSelectionOverride as applyFixtureWorkflowSelectionOverrideTransition,
   createAiRun,
+  createAuditEvent,
   createFixture,
+  createFixtureWorkflow,
   createParlay,
   createPrediction,
   createTask,
   createTaskRun,
   createValidation,
+  type AiRunEntity,
+  type AuditEventEntity,
   type FixtureEntity,
+  type FixtureSelectionOverride,
+  type FixtureWorkflowManualSelectionInput,
+  type FixtureWorkflowSelectionOverrideInput,
+  type FixtureWorkflowEntity,
   type ParlayEntity,
   type PredictionEntity,
-  type TaskStatus,
   type TaskEntity,
   type TaskRunEntity,
+  type TaskStatus,
   type ValidationEntity,
-  type AiRunEntity,
 } from "@gana-v8/domain-core";
-import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
+import {
+  createPrismaClient,
+  createPrismaUnitOfWork,
+  type StorageUnitOfWork,
+} from "@gana-v8/storage-adapters";
 
 export interface ValidationSummary {
   readonly total: number;
@@ -103,10 +116,14 @@ export interface AiRunReadModel {
   readonly provider: string;
   readonly model: string;
   readonly promptVersion: string;
+  readonly latestPromptVersion?: string;
   readonly status: AiRunEntity["status"];
+  readonly providerRequestId?: string;
   readonly usage?: AiRunEntity["usage"];
   readonly outputRef?: string;
   readonly error?: string;
+  readonly fallbackReason?: string;
+  readonly degraded?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -169,6 +186,8 @@ export interface ParlayDetailReadModel extends Omit<ParlayEntity, "legs"> {
 export interface OperationSnapshot {
   readonly generatedAt: string;
   readonly fixtures: readonly FixtureEntity[];
+  readonly fixtureWorkflows: readonly FixtureWorkflowEntity[];
+  readonly auditEvents: readonly AuditEventEntity[];
   readonly tasks: readonly TaskEntity[];
   readonly taskRuns: readonly TaskRunEntity[];
   readonly aiRuns: readonly AiRunReadModel[];
@@ -185,6 +204,8 @@ export interface OperationSnapshot {
 export interface PublicApiHandlers {
   readonly fixtures: () => readonly FixtureEntity[];
   readonly fixtureById: (fixtureId: string) => FixtureEntity | null;
+  readonly fixtureOpsById: (fixtureId: string) => FixtureOpsDetailReadModel | null;
+  readonly fixtureAuditEventsById: (fixtureId: string) => readonly AuditEventEntity[] | null;
   readonly tasks: () => readonly TaskEntity[];
   readonly taskById: (taskId: string) => TaskEntity | null;
   readonly taskRuns: () => readonly TaskRunEntity[];
@@ -211,11 +232,39 @@ export interface PublicApiHandlers {
 
 export interface PublicApiHttpOptions {
   readonly snapshot?: OperationSnapshot;
+  readonly unitOfWork?: StorageUnitOfWork;
+}
+
+export interface FixtureManualSelectionActionInput extends FixtureWorkflowManualSelectionInput {}
+
+export interface FixtureSelectionOverrideActionInput
+  extends Omit<FixtureWorkflowSelectionOverrideInput, "mode"> {
+  readonly mode: FixtureSelectionOverride;
+}
+
+export interface FixtureWorkflowResetActionInput {
+  readonly reason?: string;
+  readonly occurredAt?: string;
 }
 
 export interface PublicApiResponse {
   readonly status: number;
   readonly body: unknown;
+}
+
+export interface FixtureOpsDetailReadModel {
+  readonly fixture: FixtureEntity;
+  readonly workflow?: FixtureWorkflowEntity;
+  readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
+  readonly scoringEligibility: {
+    readonly eligible: boolean;
+    readonly reason?: string;
+  };
+  readonly recentAuditEvents: readonly AuditEventEntity[];
+  readonly predictions: readonly PredictionEntity[];
+  readonly parlays: readonly ParlayEntity[];
+  readonly validations: readonly ValidationEntity[];
+  readonly recentTaskRuns: readonly TaskRunEntity[];
 }
 
 const allowedTaskStatuses = [
@@ -342,6 +391,8 @@ export function createHealthReport(input: {
 export function createOperationSnapshot(input: {
   readonly generatedAt?: string;
   readonly fixtures?: readonly FixtureEntity[];
+  readonly fixtureWorkflows?: readonly FixtureWorkflowEntity[];
+  readonly auditEvents?: readonly AuditEventEntity[];
   readonly tasks?: readonly TaskEntity[];
   readonly taskRuns?: readonly TaskRunEntity[];
   readonly aiRuns?: readonly AiRunReadModel[];
@@ -354,6 +405,8 @@ export function createOperationSnapshot(input: {
 } = {}): OperationSnapshot {
   const generatedAt = input.generatedAt ?? "2026-04-15T01:00:00.000Z";
   const fixtures = [...(input.fixtures ?? createDemoFixtures())];
+  const fixtureWorkflows = [...(input.fixtureWorkflows ?? createDemoFixtureWorkflows(fixtures))];
+  const auditEvents = [...(input.auditEvents ?? [])];
   const tasks = [...(input.tasks ?? createDemoTasks())];
   const taskRuns = [...(input.taskRuns ?? createDemoTaskRuns(tasks))];
   const rawBatches = [...(input.rawBatches ?? [])];
@@ -368,6 +421,8 @@ export function createOperationSnapshot(input: {
   return {
     generatedAt,
     fixtures,
+    fixtureWorkflows,
+    auditEvents,
     tasks,
     taskRuns,
     aiRuns,
@@ -395,6 +450,8 @@ export function createPublicApiHandlers(
   return {
     fixtures: () => listFixtures(snapshot),
     fixtureById: (fixtureId: string) => findFixtureById(snapshot, fixtureId),
+    fixtureOpsById: (fixtureId: string) => findFixtureOpsById(snapshot, fixtureId),
+    fixtureAuditEventsById: (fixtureId: string) => findFixtureAuditEventsById(snapshot, fixtureId),
     tasks: () => listTasks(snapshot),
     taskById: (taskId: string) => findTaskById(snapshot, taskId),
     taskRuns: () => listTaskRuns(snapshot),
@@ -427,6 +484,25 @@ export function routePublicApiRequest(
   const normalizedPath = normalizeRequestPath(requestPath);
   const searchParams = getRequestSearchParams(requestPath);
   const fixtureDetail = matchFixtureDetailPath(normalizedPath);
+  const fixtureOpsDetail = matchFixtureOpsDetailPath(normalizedPath);
+  const fixtureAuditEventsDetail = matchFixtureAuditEventsPath(normalizedPath);
+  if (fixtureAuditEventsDetail) {
+    const fixtureAuditEvents = handlers.fixtureAuditEventsById(fixtureAuditEventsDetail.fixtureId);
+    if (!fixtureAuditEvents) {
+      return createResourceNotFoundResponse("fixture", fixtureAuditEventsDetail.fixtureId);
+    }
+
+    return { status: 200, body: fixtureAuditEvents };
+  }
+  if (fixtureOpsDetail) {
+    const fixtureOps = handlers.fixtureOpsById(fixtureOpsDetail.fixtureId);
+    if (!fixtureOps) {
+      return createResourceNotFoundResponse("fixture", fixtureOpsDetail.fixtureId);
+    }
+
+    return { status: 200, body: fixtureOps };
+  }
+
   if (fixtureDetail) {
     const fixture = handlers.fixtureById(fixtureDetail.fixtureId);
     if (!fixture) {
@@ -577,31 +653,98 @@ export function routePublicApiRequest(
 export function createPublicApiServer(
   options: PublicApiHttpOptions = {},
 ): Server {
-  const handlers = createPublicApiHandlers(options.snapshot ?? createOperationSnapshot());
+  const staticHandlers = options.unitOfWork
+    ? null
+    : createPublicApiHandlers(options.snapshot ?? createOperationSnapshot());
+
   return createServer((request, response) => {
-    handlePublicApiRequest(request, response, handlers);
+    void handlePublicApiRequest(request, response, {
+      ...(staticHandlers ? { handlers: staticHandlers } : {}),
+      ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
+    }).catch((error: unknown) => {
+      writeJsonResponse(response, 500, {
+        error: "internal_error",
+        message: error instanceof Error ? error.message : "Unexpected public API error",
+      });
+    });
   });
 }
 
-export function handlePublicApiRequest(
+export async function handlePublicApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  handlers: PublicApiHandlers = createPublicApiHandlers(),
-): void {
+  options: {
+    readonly handlers?: PublicApiHandlers;
+    readonly unitOfWork?: StorageUnitOfWork;
+  } = {},
+): Promise<void> {
   const method = request.method ?? "GET";
+  const requestPath = request.url ?? "/";
 
-  if (method !== "GET") {
-    writeJsonResponse(response, 405, {
-      error: "method_not_allowed",
-      message: `Unsupported method: ${method}`,
-      allowedMethods: ["GET"],
-    });
+  if (method === "GET") {
+    const handlers = options.unitOfWork
+      ? createPublicApiHandlers(await loadOperationSnapshotFromUnitOfWork(options.unitOfWork))
+      : (options.handlers ?? createPublicApiHandlers());
+    const routedResponse = routePublicApiRequest(handlers, requestPath);
+    writeJsonResponse(response, routedResponse.status, routedResponse.body);
     return;
   }
 
-  const requestPath = request.url ?? "/";
-  const routedResponse = routePublicApiRequest(handlers, requestPath);
-  writeJsonResponse(response, routedResponse.status, routedResponse.body);
+  if (method === "POST" && options.unitOfWork) {
+    const manualSelectionResetPath = matchFixtureManualSelectionResetPath(normalizeRequestPath(requestPath));
+    if (manualSelectionResetPath) {
+      const body = await readJsonRequestBody<FixtureWorkflowResetActionInput>(request);
+      const workflow = await applyFixtureManualSelection(options.unitOfWork, manualSelectionResetPath.fixtureId, {
+        status: "rejected",
+        selectedBy: "public-api",
+        ...(body.reason !== undefined ? { reason: body.reason } : {}),
+        ...(body.occurredAt !== undefined ? { occurredAt: body.occurredAt } : {}),
+      });
+      const clearedWorkflow = await options.unitOfWork.fixtureWorkflows.save({
+        ...workflow,
+        manualSelectionStatus: "none",
+        ...(body.reason !== undefined ? { manualSelectionReason: body.reason } : {}),
+        manuallySelectedAt: body.occurredAt ?? workflow.updatedAt,
+        updatedAt: body.occurredAt ?? workflow.updatedAt,
+      });
+      writeJsonResponse(response, 200, clearedWorkflow);
+      return;
+    }
+
+    const manualSelectionPath = matchFixtureManualSelectionPath(normalizeRequestPath(requestPath));
+    if (manualSelectionPath) {
+      const body = await readJsonRequestBody<FixtureManualSelectionActionInput>(request);
+      const workflow = await applyFixtureManualSelection(options.unitOfWork, manualSelectionPath.fixtureId, body);
+      writeJsonResponse(response, 200, workflow);
+      return;
+    }
+
+    const selectionOverrideResetPath = matchFixtureSelectionOverrideResetPath(normalizeRequestPath(requestPath));
+    if (selectionOverrideResetPath) {
+      const body = await readJsonRequestBody<FixtureWorkflowResetActionInput>(request);
+      const workflow = await applyFixtureSelectionOverride(options.unitOfWork, selectionOverrideResetPath.fixtureId, {
+        mode: "none",
+        ...(body.reason !== undefined ? { reason: body.reason } : {}),
+        ...(body.occurredAt !== undefined ? { occurredAt: body.occurredAt } : {}),
+      });
+      writeJsonResponse(response, 200, workflow);
+      return;
+    }
+
+    const selectionOverridePath = matchFixtureSelectionOverridePath(normalizeRequestPath(requestPath));
+    if (selectionOverridePath) {
+      const body = await readJsonRequestBody<FixtureSelectionOverrideActionInput>(request);
+      const workflow = await applyFixtureSelectionOverride(options.unitOfWork, selectionOverridePath.fixtureId, body);
+      writeJsonResponse(response, 200, workflow);
+      return;
+    }
+  }
+
+  writeJsonResponse(response, 405, {
+    error: "method_not_allowed",
+    message: `Unsupported method: ${method}`,
+    allowedMethods: options.unitOfWork ? ["GET", "POST"] : ["GET"],
+  });
 }
 
 export function listFixtures(snapshot: OperationSnapshot): readonly FixtureEntity[] {
@@ -613,6 +756,99 @@ export function findFixtureById(
   fixtureId: string,
 ): FixtureEntity | null {
   return snapshot.fixtures.find((fixture) => fixture.id === fixtureId) ?? null;
+}
+
+export function findFixtureOpsById(
+  snapshot: OperationSnapshot,
+  fixtureId: string,
+): FixtureOpsDetailReadModel | null {
+  const fixture = findFixtureById(snapshot, fixtureId);
+  if (!fixture) {
+    return null;
+  }
+
+  const workflow = snapshot.fixtureWorkflows.find((candidate) => candidate.fixtureId === fixtureId);
+  const latestOddsSnapshot =
+    sortByIsoDescending(
+      snapshot.oddsSnapshots.filter((oddsSnapshot) => oddsSnapshot.fixtureId === fixtureId),
+      (oddsSnapshot) => oddsSnapshot.capturedAt,
+    )[0] ?? null;
+  const predictions = snapshot.predictions.filter((prediction) => prediction.fixtureId === fixtureId);
+  const predictionIds = new Set(predictions.map((prediction) => prediction.id));
+  const parlays = snapshot.parlays.filter((parlay) =>
+    parlay.legs.some((leg) => leg.fixtureId === fixtureId || predictionIds.has(leg.predictionId)),
+  );
+  const validations = snapshot.validations.filter(
+    (validation) => validation.targetId === fixtureId || predictionIds.has(validation.targetId) || parlays.some((parlay) => parlay.id === validation.targetId),
+  );
+  const recentTaskRuns = sortByIsoDescending(
+    snapshot.taskRuns.filter((taskRun) => {
+      const task = snapshot.tasks.find((candidate) => candidate.id === taskRun.taskId);
+      return task ? task.payload.fixtureId === fixtureId : false;
+    }),
+    (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
+  ).slice(0, 5);
+  const recentAuditEvents = findFixtureAuditEventsById(snapshot, fixtureId) ?? [];
+
+  const scoringEligibility =
+    workflow?.selectionOverride === "force-exclude" || workflow?.manualSelectionStatus === "rejected"
+      ? {
+          eligible: false,
+          reason: "Fixture is force-excluded by workflow ops.",
+        }
+      : workflow?.selectionOverride === "force-include"
+        ? {
+            eligible: true,
+            reason: "Fixture is force-included by workflow ops.",
+          }
+        : workflow?.manualSelectionStatus === "selected"
+          ? {
+              eligible: true,
+              reason: "Fixture is manually selected in workflow ops.",
+            }
+          : fixture.status !== "scheduled"
+            ? {
+                eligible: false,
+                reason: `Fixture status ${fixture.status} is not eligible for scoring.`,
+              }
+            : latestOddsSnapshot === null
+              ? {
+                  eligible: false,
+                  reason: "No latest h2h odds snapshot found for fixture.",
+                }
+              : {
+                  eligible: true,
+                  reason: "Fixture is eligible for scoring.",
+                };
+
+  return {
+    fixture,
+    ...(workflow ? { workflow } : {}),
+    latestOddsSnapshot,
+    scoringEligibility,
+    recentAuditEvents,
+    predictions,
+    parlays,
+    validations,
+    recentTaskRuns,
+  };
+}
+
+export function findFixtureAuditEventsById(
+  snapshot: OperationSnapshot,
+  fixtureId: string,
+): readonly AuditEventEntity[] | null {
+  if (!findFixtureById(snapshot, fixtureId)) {
+    return null;
+  }
+
+  return sortByIsoDescending(
+    snapshot.auditEvents.filter(
+      (auditEvent) =>
+        auditEvent.aggregateType === "fixture-workflow" && auditEvent.aggregateId === fixtureId,
+    ),
+    (auditEvent) => auditEvent.occurredAt,
+  ).slice(0, 5);
 }
 
 export function listTasks(snapshot: OperationSnapshot): readonly TaskEntity[] {
@@ -1001,6 +1237,7 @@ export function createDemoAiRuns(
       provider: "internal",
       model: "deterministic-moneyline-v1",
       promptVersion: "scoring-worker-mvp-v1",
+      providerRequestId: "req-demo-scoring",
       status: "completed",
       usage: {
         promptTokens: 120,
@@ -1017,10 +1254,12 @@ export function createDemoAiRuns(
     provider: aiRun.provider,
     model: aiRun.model,
     promptVersion: aiRun.promptVersion,
+    latestPromptVersion: aiRun.promptVersion,
     status: aiRun.status,
+    ...(aiRun.providerRequestId ? { providerRequestId: aiRun.providerRequestId } : {}),
     ...(aiRun.usage ? { usage: aiRun.usage } : {}),
     ...(aiRun.outputRef ? { outputRef: aiRun.outputRef } : {}),
-    ...(aiRun.error ? { error: aiRun.error } : {}),
+    ...(aiRun.error ? { error: aiRun.error, fallbackReason: aiRun.error, degraded: true } : {}),
     createdAt: aiRun.createdAt,
     updatedAt: aiRun.updatedAt,
   }));
@@ -1116,6 +1355,37 @@ export function createDemoParlays(
   ];
 }
 
+export function createDemoFixtureWorkflows(
+  fixtures: readonly FixtureEntity[] = createDemoFixtures(),
+): readonly FixtureWorkflowEntity[] {
+  return [
+    createFixtureWorkflow({
+      fixtureId: fixtures[0]?.id ?? "fx-boca-river",
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "succeeded",
+      candidateStatus: "succeeded",
+      predictionStatus: "succeeded",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: true,
+      minDetectedOdd: 1.88,
+      qualityScore: 0.78,
+      selectionScore: 0.66,
+      lastIngestedAt: "2026-04-15T00:01:00.000Z",
+      lastEnrichedAt: "2026-04-15T00:10:00.000Z",
+      lastPredictedAt: "2026-04-15T00:20:00.000Z",
+      manualSelectionStatus: "selected",
+      manualSelectionBy: "ops-user",
+      manualSelectionReason: "Premium slate fixture",
+      manuallySelectedAt: "2026-04-15T00:11:00.000Z",
+      selectionOverride: "force-include",
+      overrideReason: "Pinned by operator",
+      overriddenAt: "2026-04-15T00:12:00.000Z",
+    }),
+  ];
+}
+
 export function createDemoValidations(
   parlays: readonly ParlayEntity[] = createDemoParlays(),
   predictions: readonly PredictionEntity[] = createDemoPredictions(),
@@ -1166,70 +1436,44 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
-    const [fixtures, tasks, taskRuns, aiRuns, predictions, parlays, validations, rawBatches, oddsSnapshots] = await Promise.all([
-      unitOfWork.fixtures.list(),
-      unitOfWork.tasks.list(),
-      unitOfWork.taskRuns.list(),
-      unitOfWork.aiRuns.list(),
-      unitOfWork.predictions.list(),
-      unitOfWork.parlays.list(),
-      unitOfWork.validations.list(),
-      client.rawIngestionBatch.findMany({
-        orderBy: { extractionTime: "desc" },
-        take: 100,
-      }),
-      client.$queryRawUnsafe<Array<{
-        id: string;
-        fixtureId: string | null;
-        providerFixtureId: string;
-        bookmakerKey: string;
-        marketKey: string;
-        capturedAt: Date;
-        selectionCount: bigint | number;
-      }>>(`
-        SELECT
-          os.id,
-          os.fixtureId,
-          os.providerFixtureId,
-          os.bookmakerKey,
-          os.marketKey,
-          os.capturedAt,
-          COUNT(oss.id) AS selectionCount
-        FROM OddsSnapshot os
-        LEFT JOIN OddsSelectionSnapshot oss ON oss.oddsSnapshotId = os.id
-        GROUP BY os.id, os.fixtureId, os.providerFixtureId, os.bookmakerKey, os.marketKey, os.capturedAt
-        ORDER BY os.capturedAt DESC
-        LIMIT 100
-      `),
-    ]);
+    const rawBatches = await client.rawIngestionBatch.findMany({
+      orderBy: { extractionTime: "desc" },
+      take: 100,
+    });
+    const oddsSnapshots = await client.$queryRawUnsafe<Array<{
+      id: string;
+      fixtureId: string | null;
+      providerFixtureId: string;
+      bookmakerKey: string;
+      marketKey: string;
+      capturedAt: Date;
+      selectionCount: bigint | number;
+    }>>(`
+      SELECT
+        os.id,
+        os.fixtureId,
+        os.providerFixtureId,
+        os.bookmakerKey,
+        os.marketKey,
+        os.capturedAt,
+        COUNT(oss.id) AS selectionCount
+      FROM OddsSnapshot os
+      LEFT JOIN OddsSelectionSnapshot oss ON oss.oddsSnapshotId = os.id
+      GROUP BY os.id, os.fixtureId, os.providerFixtureId, os.bookmakerKey, os.marketKey, os.capturedAt
+      ORDER BY os.capturedAt DESC
+      LIMIT 100
+    `);
 
-    const mappedRawBatches = rawBatches.map((batch) => ({
-      endpointFamily: batch.endpointFamily,
-      extractionStatus: batch.extractionStatus,
-      extractionTime: batch.extractionTime.toISOString(),
-      id: batch.id,
-      providerCode: batch.providerCode,
-      recordCount: batch.recordCount,
-    }));
-    const mappedAiRuns = aiRuns.map((aiRun) => ({
-      id: aiRun.id,
-      taskId: aiRun.taskId,
-      provider: aiRun.provider,
-      model: aiRun.model,
-      promptVersion: aiRun.promptVersion,
-      status: aiRun.status,
-      ...(aiRun.usage ? { usage: aiRun.usage } : {}),
-      ...(aiRun.outputRef ? { outputRef: aiRun.outputRef } : {}),
-      ...(aiRun.error ? { error: aiRun.error } : {}),
-      createdAt: aiRun.createdAt,
-      updatedAt: aiRun.updatedAt,
-    }));
-
-    return createOperationSnapshot({
-      fixtures,
+    const snapshot = await loadOperationSnapshotFromUnitOfWork(unitOfWork, {
       generatedAt: new Date().toISOString(),
-      aiRuns: mappedAiRuns,
-      providerStates: createDemoProviderStates(mappedAiRuns, mappedRawBatches),
+      rawBatches: rawBatches.map((batch) => ({
+        endpointFamily: batch.endpointFamily,
+        extractionStatus: batch.extractionStatus,
+        extractionTime: batch.extractionTime.toISOString(),
+        id: batch.id,
+        providerCode: batch.providerCode,
+        recordCount: batch.recordCount,
+      })),
       oddsSnapshots: oddsSnapshots.map((snapshot) => ({
         bookmakerKey: snapshot.bookmakerKey,
         capturedAt: snapshot.capturedAt.toISOString(),
@@ -1239,16 +1483,173 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
         providerFixtureId: snapshot.providerFixtureId,
         selectionCount: Number(snapshot.selectionCount),
       })),
-      parlays,
-      predictions,
-      rawBatches: mappedRawBatches,
-      tasks,
-      taskRuns,
-      validations,
     });
+
+    return snapshot;
   } finally {
     await client.$disconnect();
   }
+}
+
+export async function loadOperationSnapshotFromUnitOfWork(
+  unitOfWork: Pick<
+    StorageUnitOfWork,
+    | "fixtures"
+    | "fixtureWorkflows"
+    | "auditEvents"
+    | "tasks"
+    | "taskRuns"
+    | "aiRuns"
+    | "predictions"
+    | "parlays"
+    | "validations"
+  >,
+  input: {
+    readonly generatedAt?: string;
+    readonly rawBatches?: readonly RawIngestionBatchReadModel[];
+    readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
+  } = {},
+): Promise<OperationSnapshot> {
+  const [fixtures, fixtureWorkflows, auditEvents, tasks, taskRuns, aiRuns, predictions, parlays, validations] = await Promise.all([
+    unitOfWork.fixtures.list(),
+    unitOfWork.fixtureWorkflows.list(),
+    unitOfWork.auditEvents.list(),
+    unitOfWork.tasks.list(),
+    unitOfWork.taskRuns.list(),
+    unitOfWork.aiRuns.list(),
+    unitOfWork.predictions.list(),
+    unitOfWork.parlays.list(),
+    unitOfWork.validations.list(),
+  ]);
+
+  const rawBatches = [...(input.rawBatches ?? [])];
+  const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
+  const aiRunMap = new Map(aiRuns.map((aiRun) => [aiRun.id, aiRun]));
+  const mappedAiRuns = aiRuns.map((aiRun) => ({
+    id: aiRun.id,
+    taskId: aiRun.taskId,
+    provider: aiRun.provider,
+    model: aiRun.model,
+    promptVersion: aiRun.promptVersion,
+    latestPromptVersion: aiRun.promptVersion,
+    status: aiRun.status,
+    ...(aiRun.providerRequestId ? { providerRequestId: aiRun.providerRequestId } : {}),
+    ...(aiRun.usage ? { usage: aiRun.usage } : {}),
+    ...(aiRun.outputRef ? { outputRef: aiRun.outputRef } : {}),
+    ...(aiRun.error ? { error: aiRun.error, fallbackReason: aiRun.error, degraded: true } : {}),
+    createdAt: aiRun.createdAt,
+    updatedAt: aiRun.updatedAt,
+  }));
+
+  return createOperationSnapshot({
+    fixtures,
+    fixtureWorkflows,
+    auditEvents,
+    generatedAt: input.generatedAt ?? new Date().toISOString(),
+    aiRuns: mappedAiRuns,
+    providerStates: createDemoProviderStates(mappedAiRuns, rawBatches),
+    oddsSnapshots,
+    parlays,
+    predictions,
+    rawBatches,
+    tasks,
+    taskRuns,
+    validations,
+  });
+}
+
+const createDefaultFixtureWorkflowState = (fixtureId: string): FixtureWorkflowEntity =>
+  createFixtureWorkflow({
+    fixtureId,
+    ingestionStatus: "pending",
+    oddsStatus: "pending",
+    enrichmentStatus: "pending",
+    candidateStatus: "pending",
+    predictionStatus: "pending",
+    parlayStatus: "pending",
+    validationStatus: "pending",
+    isCandidate: false,
+  });
+
+const loadExistingFixtureWorkflow = async (
+  unitOfWork: Pick<StorageUnitOfWork, "fixtures" | "fixtureWorkflows">,
+  fixtureId: string,
+): Promise<FixtureWorkflowEntity> => {
+  const fixture = await unitOfWork.fixtures.getById(fixtureId);
+  if (!fixture) {
+    throw new Error(`Fixture not found: ${fixtureId}`);
+  }
+
+  return (
+    (await unitOfWork.fixtureWorkflows.findByFixtureId(fixtureId)) ??
+    createDefaultFixtureWorkflowState(fixtureId)
+  );
+};
+
+export async function applyFixtureManualSelection(
+  unitOfWork: Pick<StorageUnitOfWork, "fixtures" | "fixtureWorkflows" | "auditEvents">,
+  fixtureId: string,
+  input: FixtureManualSelectionActionInput,
+): Promise<FixtureWorkflowEntity> {
+  const workflow = await loadExistingFixtureWorkflow(unitOfWork, fixtureId);
+  const updatedWorkflow = await unitOfWork.fixtureWorkflows.save(
+    applyFixtureWorkflowManualSelectionTransition(workflow, input),
+  );
+  await unitOfWork.auditEvents.save(
+    createAuditEvent({
+      id: `audit:fixture-workflow:${fixtureId}:manual-selection:${updatedWorkflow.updatedAt}`,
+      aggregateType: "fixture-workflow",
+      aggregateId: fixtureId,
+      eventType: "fixture-workflow.manual-selection.updated",
+      actor: input.selectedBy,
+      payload: {
+        status: updatedWorkflow.manualSelectionStatus,
+        reason: updatedWorkflow.manualSelectionReason ?? null,
+      },
+      occurredAt: updatedWorkflow.updatedAt,
+    }),
+  );
+  return updatedWorkflow;
+}
+
+export async function applyFixtureSelectionOverride(
+  unitOfWork: Pick<StorageUnitOfWork, "fixtures" | "fixtureWorkflows" | "auditEvents">,
+  fixtureId: string,
+  input: FixtureSelectionOverrideActionInput,
+): Promise<FixtureWorkflowEntity> {
+  const workflow = await loadExistingFixtureWorkflow(unitOfWork, fixtureId);
+  const occurredAt = input.occurredAt ?? new Date().toISOString();
+  const updatedWorkflow: FixtureWorkflowEntity =
+    input.mode === "none"
+      ? {
+          ...workflow,
+          selectionOverride: "none",
+          ...(input.reason !== undefined ? { overrideReason: input.reason } : {}),
+          overriddenAt: occurredAt,
+          updatedAt: occurredAt,
+        }
+      : applyFixtureWorkflowSelectionOverrideTransition(workflow, {
+          mode: input.mode,
+          ...(input.reason !== undefined ? { reason: input.reason } : {}),
+          occurredAt,
+        });
+
+  const persistedWorkflow = await unitOfWork.fixtureWorkflows.save(updatedWorkflow);
+  await unitOfWork.auditEvents.save(
+    createAuditEvent({
+      id: `audit:fixture-workflow:${fixtureId}:selection-override:${persistedWorkflow.updatedAt}`,
+      aggregateType: "fixture-workflow",
+      aggregateId: fixtureId,
+      eventType: "fixture-workflow.selection-override.updated",
+      actor: "public-api",
+      payload: {
+        mode: persistedWorkflow.selectionOverride,
+        reason: persistedWorkflow.overrideReason ?? null,
+      },
+      occurredAt: persistedWorkflow.updatedAt,
+    }),
+  );
+  return persistedWorkflow;
 }
 
 function normalizeRequestPath(requestPath: string): string {
@@ -1271,6 +1672,60 @@ function getRequestSearchParams(requestPath: string): URLSearchParams {
 
 function isTaskStatus(value: string): value is TaskStatus {
   return allowedTaskStatuses.includes(value as TaskStatus);
+}
+
+function matchFixtureOpsDetailPath(requestPath: string): { fixtureId: string } | null {
+  const match = requestPath.match(/^\/fixtures\/([^/]+)\/ops$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchFixtureAuditEventsPath(requestPath: string): { fixtureId: string } | null {
+  const match = requestPath.match(/^\/fixtures\/([^/]+)\/audit-events$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchFixtureManualSelectionPath(requestPath: string): { fixtureId: string } | null {
+  const match = requestPath.match(/^\/fixtures\/([^/]+)\/manual-selection$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchFixtureManualSelectionResetPath(requestPath: string): { fixtureId: string } | null {
+  const match = requestPath.match(/^\/fixtures\/([^/]+)\/manual-selection\/reset$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchFixtureSelectionOverridePath(requestPath: string): { fixtureId: string } | null {
+  const match = requestPath.match(/^\/fixtures\/([^/]+)\/selection-override$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchFixtureSelectionOverrideResetPath(requestPath: string): { fixtureId: string } | null {
+  const match = requestPath.match(/^\/fixtures\/([^/]+)\/selection-override\/reset$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { fixtureId: decodeURIComponent(match[1]) };
 }
 
 function matchFixtureDetailPath(requestPath: string): { fixtureId: string } | null {
@@ -1363,6 +1818,20 @@ function createResourceNotFoundResponse(resource: string, resourceId: string): P
       resourceId,
     },
   };
+}
+
+async function readJsonRequestBody<T>(request: IncomingMessage): Promise<T> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  if (chunks.length === 0) {
+    return {} as T;
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
 }
 
 function writeJsonResponse(

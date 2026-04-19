@@ -15,9 +15,12 @@ export interface AiRunEntity extends AuditableEntity {
   readonly model: string;
   readonly promptVersion: string;
   readonly status: AiRunStatus;
+  readonly providerRequestId?: string;
   readonly usage?: AiRunUsage;
   readonly outputRef?: string;
   readonly error?: string;
+  readonly fallbackReason?: string;
+  readonly degraded?: boolean;
 }
 
 export const createAiRun = (
@@ -27,6 +30,7 @@ export const createAiRun = (
   const timestamp = input.createdAt ?? nowIso();
   return {
     ...input,
+    ...(input.degraded !== undefined ? { degraded: input.degraded } : {}),
     createdAt: timestamp,
     updatedAt: input.updatedAt ?? timestamp,
   };
@@ -35,7 +39,7 @@ export const createAiRun = (
 export const settleAiRun = (
   run: AiRunEntity,
   status: Extract<AiRunStatus, "completed" | "failed">,
-  details: Pick<AiRunEntity, "usage" | "outputRef" | "error">,
+  details: Pick<AiRunEntity, "providerRequestId" | "usage" | "outputRef" | "error" | "fallbackReason" | "degraded">,
   updatedAt: ISODateString = nowIso(),
 ): AiRunEntity => {
   if (run.status !== "pending" && run.status !== "running") {

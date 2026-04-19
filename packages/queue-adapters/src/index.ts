@@ -29,10 +29,14 @@ export interface QueueTaskEntity {
   readonly id: string;
   readonly kind: QueueTaskKind;
   readonly status: QueueTaskStatus;
+  readonly triggerKind: "cron" | "manual" | "retry" | "system";
   readonly priority: number;
+  readonly dedupeKey?: string;
   readonly payload: Record<string, unknown>;
   readonly attempts: readonly QueueTaskAttempt[];
   readonly scheduledFor?: string;
+  readonly maxAttempts: number;
+  readonly lastErrorMessage?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -42,9 +46,12 @@ export interface QueueTaskRunEntity {
   readonly taskId: string;
   readonly attemptNumber: number;
   readonly status: "running" | "succeeded" | "failed" | "cancelled";
+  readonly workerName?: string;
   readonly startedAt: string;
   readonly finishedAt?: string;
   readonly error?: string;
+  readonly result?: Record<string, unknown>;
+  readonly retryScheduledFor?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -163,15 +170,21 @@ const createTask = (input: {
   readonly id: string;
   readonly kind: QueueTaskKind;
   readonly status: QueueTaskStatus;
+  readonly triggerKind?: QueueTaskEntity["triggerKind"];
   readonly priority: number;
+  readonly dedupeKey?: string;
   readonly payload: Record<string, unknown>;
   readonly attempts?: readonly QueueTaskAttempt[];
   readonly scheduledFor?: string;
+  readonly maxAttempts?: number;
+  readonly lastErrorMessage?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }): QueueTaskEntity => ({
   ...input,
+  triggerKind: input.triggerKind ?? "system",
   attempts: input.attempts ?? [],
+  maxAttempts: input.maxAttempts ?? 3,
 });
 
 const createTaskRun = (input: QueueTaskRunEntity): QueueTaskRunEntity => input;
@@ -215,6 +228,7 @@ const finishTask = (
         ...(error ? { error } : {}),
       },
     ],
+    ...(error ? { lastErrorMessage: error } : {}),
     updatedAt: finishedAt,
   };
 };
@@ -307,6 +321,7 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
           taskId: claimedTask.id,
           attemptNumber,
           status: "running",
+          workerName: "queue-adapter",
           startedAt: now.toISOString(),
           createdAt: now.toISOString(),
           updatedAt: now.toISOString(),
@@ -327,6 +342,7 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
         createTaskRun({
           ...taskRun,
           status: "succeeded",
+          result: { status: "succeeded" },
           finishedAt: now.toISOString(),
           updatedAt: now.toISOString(),
         }),
@@ -347,6 +363,7 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
           ...taskRun,
           status: "failed",
           error,
+          result: { status: "failed", error },
           finishedAt: now.toISOString(),
           updatedAt: now.toISOString(),
         }),
@@ -428,13 +445,31 @@ export const createPrismaTaskQueueAdapter = (
           continue;
         }
 
-        const claimedTask = await transactionalUnitOfWork.tasks.save(startTask(task, nowIso));
-        const taskRunId = `${task.id}:attempt:${claimedTask.attempts.length}`;
-        const taskRun = ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId);
+        const existingTaskRuns = await transactionalUnitOfWork.taskRuns.findByTaskId(task.id);
+        const attemptNumber =
+          existingTaskRuns.reduce(
+            (maxAttemptNumber, existingTaskRun) =>
+              Math.max(maxAttemptNumber, existingTaskRun.attemptNumber),
+            0,
+          ) + 1;
+        await transactionalUnitOfWork.tasks.save(startTask(task, nowIso));
+        const taskRunId = `${task.id}:attempt:${attemptNumber}`;
+        await transactionalUnitOfWork.taskRuns.save(
+          createTaskRun({
+            id: taskRunId,
+            taskId: task.id,
+            attemptNumber,
+            status: "running",
+            workerName: "queue-adapter",
+            startedAt: nowIso,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          }),
+        );
 
         return {
-          task: claimedTask,
-          taskRun,
+          task: ensureTask(await transactionalUnitOfWork.tasks.getById(task.id), task.id),
+          taskRun: ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId),
         };
       }
 
@@ -458,11 +493,20 @@ export const createPrismaTaskQueueAdapter = (
         throw new Error(`Task ${taskId} could not be completed because its persisted status changed`);
       }
 
-      const savedTask = await transactionalUnitOfWork.tasks.save(finishedTask);
-      const savedTaskRun = ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId);
+      await transactionalUnitOfWork.tasks.save(finishedTask);
+      const savedTaskRun = await transactionalUnitOfWork.taskRuns.save(
+        createTaskRun({
+          ...ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId),
+          status: "succeeded",
+          workerName: "queue-adapter",
+          result: { status: "succeeded" },
+          finishedAt: nowIso,
+          updatedAt: nowIso,
+        }),
+      );
 
       return {
-        task: savedTask,
+        task: ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId),
         taskRun: savedTaskRun,
       };
     });
@@ -484,11 +528,21 @@ export const createPrismaTaskQueueAdapter = (
         throw new Error(`Task ${taskId} could not be failed because its persisted status changed`);
       }
 
-      const savedTask = await transactionalUnitOfWork.tasks.save(finishedTask);
-      const savedTaskRun = ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId);
+      await transactionalUnitOfWork.tasks.save(finishedTask);
+      const savedTaskRun = await transactionalUnitOfWork.taskRuns.save(
+        createTaskRun({
+          ...ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId),
+          status: "failed",
+          workerName: "queue-adapter",
+          error,
+          result: { status: "failed", error },
+          finishedAt: nowIso,
+          updatedAt: nowIso,
+        }),
+      );
 
       return {
-        task: savedTask,
+        task: ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId),
         taskRun: savedTaskRun,
       };
     });

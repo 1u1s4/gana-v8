@@ -7,9 +7,12 @@ export interface TaskRunEntity extends AuditableEntity {
   readonly taskId: string;
   readonly attemptNumber: number;
   readonly status: TaskRunStatus;
+  readonly workerName?: string;
   readonly startedAt: ISODateString;
   readonly finishedAt?: ISODateString;
   readonly error?: string;
+  readonly result?: Record<string, unknown>;
+  readonly retryScheduledFor?: ISODateString;
 }
 
 export const createTaskRun = (

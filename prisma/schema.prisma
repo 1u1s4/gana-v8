@@ -44,6 +44,13 @@ enum TaskRunStatus {
   cancelled
 }
 
+enum TaskTriggerKind {
+  cron
+  manual
+  retry
+  system
+}
+
 enum AiRunStatus {
   pending
   running
@@ -103,10 +110,10 @@ enum ValidationStatus {
 }
 
 enum ValidationKind {
-  fixture_result         @map("fixture-result")
-  prediction_settlement  @map("prediction-settlement")
-  parlay_settlement      @map("parlay-settlement")
-  sandbox_regression     @map("sandbox-regression")
+  fixture_result        @map("fixture-result")
+  prediction_settlement @map("prediction-settlement")
+  parlay_settlement     @map("parlay-settlement")
+  sandbox_regression    @map("sandbox-regression")
 }
 
 enum ValidationTargetType {
@@ -120,24 +127,84 @@ enum ValidationTargetType {
   sandbox_namespace @map("sandbox-namespace")
 }
 
+enum WorkflowStageStatus {
+  pending
+  running
+  succeeded
+  failed
+  skipped
+  blocked
+}
+
+enum FixtureManualSelectionStatus {
+  none
+  selected
+  rejected
+}
+
+enum FixtureSelectionOverride {
+  none
+  force_include @map("force-include")
+  force_exclude @map("force-exclude")
+}
+
 model Fixture {
-  id           String        @id
-  sport        String
-  competition  String
-  homeTeam     String
-  awayTeam     String
-  scheduledAt  DateTime
-  status       FixtureStatus
-  scoreHome    Int?
-  scoreAway    Int?
-  metadata     Json
-  predictions  Prediction[]
-  parlayLegs   ParlayLeg[]
+  id            String           @id
+  sport         String
+  competition   String
+  homeTeam      String
+  awayTeam      String
+  scheduledAt   DateTime
+  status        FixtureStatus
+  scoreHome     Int?
+  scoreAway     Int?
+  metadata      Json
+  predictions   Prediction[]
+  parlayLegs    ParlayLeg[]
   oddsSnapshots OddsSnapshot[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  workflow      FixtureWorkflow?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   @@index([competition, scheduledAt])
+}
+
+model FixtureWorkflow {
+  id               String              @id
+  fixtureId        String              @unique
+  fixture          Fixture             @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
+  ingestionStatus  WorkflowStageStatus
+  oddsStatus       WorkflowStageStatus
+  enrichmentStatus WorkflowStageStatus
+  candidateStatus  WorkflowStageStatus
+  predictionStatus WorkflowStageStatus
+  parlayStatus     WorkflowStageStatus
+  validationStatus WorkflowStageStatus
+  isCandidate      Boolean
+  minDetectedOdd   Float?
+  qualityScore     Float?
+  selectionScore   Float?
+  lastIngestedAt   DateTime?
+  lastEnrichedAt   DateTime?
+  lastPredictedAt  DateTime?
+  lastParlayAt     DateTime?
+  lastValidatedAt  DateTime?
+  manualSelectionStatus FixtureManualSelectionStatus @default(none)
+  manualSelectionBy String?
+  manualSelectionReason String?
+  manuallySelectedAt DateTime?
+  selectionOverride FixtureSelectionOverride @default(none)
+  overrideReason String?
+  overriddenAt DateTime?
+  errorCount       Int                 @default(0)
+  lastErrorMessage String?
+  diagnostics      Json?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([fixtureId, updatedAt])
+  @@index([predictionStatus])
+  @@index([validationStatus])
 }
 
 model RawIngestionBatch {
@@ -167,11 +234,11 @@ model RawIngestionBatch {
 }
 
 model OddsSnapshot {
-  id                String               @id
+  id                String                  @id
   batchId           String
-  batch             RawIngestionBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  batch             RawIngestionBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
   fixtureId         String?
-  fixture           Fixture?             @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
+  fixture           Fixture?                @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
   providerFixtureId String
   providerCode      String
   bookmakerKey      String
@@ -179,8 +246,8 @@ model OddsSnapshot {
   capturedAt        DateTime
   payload           Json
   selections        OddsSelectionSnapshot[]
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
 
   @@unique([batchId, providerFixtureId, bookmakerKey, marketKey])
   @@index([fixtureId, capturedAt])
@@ -202,52 +269,63 @@ model OddsSelectionSnapshot {
 }
 
 model Task {
-  id           String      @id
-  kind         TaskKind
-  status       TaskStatus
-  priority     Int
-  payload      Json
-  scheduledFor DateTime?
-  taskRuns     TaskRun[]
-  aiRuns       AiRun[]
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  id               String          @id
+  kind             TaskKind
+  status           TaskStatus
+  triggerKind      TaskTriggerKind @default(system)
+  priority         Int
+  dedupeKey        String?
+  payload          Json
+  scheduledFor     DateTime?
+  maxAttempts      Int             @default(3)
+  lastErrorMessage String?
+  taskRuns         TaskRun[]
+  aiRuns           AiRun[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@index([status, createdAt])
+  @@index([dedupeKey])
 }
 
 model TaskRun {
-  id            String        @id
-  taskId        String
-  task          Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attemptNumber Int
-  status        TaskRunStatus
-  startedAt     DateTime
-  finishedAt    DateTime?
-  error         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                String        @id
+  taskId            String
+  task              Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptNumber     Int
+  status            TaskRunStatus
+  workerName        String?
+  startedAt         DateTime
+  finishedAt        DateTime?
+  error             String?
+  result            Json?
+  retryScheduledFor DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   @@unique([taskId, attemptNumber])
   @@index([taskId, startedAt])
 }
 
 model AiRun {
-  id                    String      @id
+  id                    String       @id
   taskId                String
-  task                  Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task                  Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
   provider              String
   model                 String
   promptVersion         String
   status                AiRunStatus
+  providerRequestId     String?
   usagePromptTokens     Int?
   usageCompletionTokens Int?
   usageTotalTokens      Int?
   outputRef             String?
   error                 String?
+  fallbackReason        String?
+  degraded              Boolean?
   predictions           Prediction[]
-  createdAt             DateTime    @default(now())
-  updatedAt             DateTime    @updatedAt
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 
   @@index([taskId, createdAt])
 }

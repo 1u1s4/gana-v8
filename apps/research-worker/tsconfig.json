@@ -6,9 +6,11 @@
     "baseUrl": ".",
     "types": ["node"],
     "paths": {
-      "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
-      "@gana-v8/feature-store": ["../../packages/feature-store/dist/src/index.d.ts"],
-      "@gana-v8/research-engine": ["../../packages/research-engine/dist/index.d.ts"]
+      "@gana-v8/ai-runtime": ["../../packages/ai-runtime/src/index.ts"],
+      "@gana-v8/domain-core": ["../../packages/domain-core/src/index.ts"],
+      "@gana-v8/feature-store": ["../../packages/feature-store/src/index.ts"],
+      "@gana-v8/model-registry": ["../../packages/model-registry/src/index.ts"],
+      "@gana-v8/research-engine": ["../../packages/research-engine/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.test.ts"],

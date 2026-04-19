@@ -16,19 +16,22 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/model-registry build && pnpm --filter @gana-v8/ai-runtime build && pnpm --filter @gana-v8/prediction-engine build && pnpm --filter @gana-v8/feature-store build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs scoring-worker",
     "lint": "node ../../scripts/workspace-lint.mjs .",
     "test": "tsx --tsconfig ../../tsconfig.base.json --test tests/**/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/model-registry build && pnpm --filter @gana-v8/ai-runtime build && pnpm --filter @gana-v8/prediction-engine build && pnpm --filter @gana-v8/feature-store build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
+    "@gana-v8/ai-runtime": "workspace:*",
     "@gana-v8/config-runtime": "workspace:*",
     "@gana-v8/domain-core": "workspace:*",
     "@gana-v8/feature-store": "workspace:*",
+    "@gana-v8/model-registry": "workspace:*",
     "@gana-v8/observability": "workspace:*",
     "@gana-v8/prediction-engine": "workspace:*",
-    "@gana-v8/storage-adapters": "workspace:*"
+    "@gana-v8/storage-adapters": "workspace:*",
+    "zod": "^3.25.76"
   }
 }

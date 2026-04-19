@@ -18,6 +18,11 @@ import {
 } from "@gana-v8/config-runtime";
 import { runPublisherWorker, type PublishParlayMvpResult } from "@gana-v8/publisher-worker";
 import {
+  findFixtureOpsById,
+  loadOperationSnapshotFromDatabase,
+  type FixtureOpsDetailReadModel,
+} from "@gana-v8/public-api";
+import {
   loadEligibleFixturesForScoring,
   scoreFixturePrediction,
   type FixtureScoreResult,
@@ -51,6 +56,7 @@ export const workspaceInfo = {
     { name: "@gana-v8/observability", category: "workspace" },
     { name: "@gana-v8/orchestration-sdk", category: "workspace" },
     { name: "@gana-v8/policy-engine", category: "workspace" },
+    { name: "@gana-v8/public-api", category: "workspace" },
     { name: "@gana-v8/source-connectors", category: "workspace" },
   ],
 } as const;
@@ -162,6 +168,17 @@ export interface EnqueuePredictionForEligibleFixturesResult {
     readonly fixtureId: string;
     readonly reason: string;
   }[];
+}
+
+export interface AutomationOpsFixtureSummary {
+  readonly fixtureId: string;
+  readonly scoringEligibility: FixtureOpsDetailReadModel["scoringEligibility"];
+  readonly recentAuditEvents: FixtureOpsDetailReadModel["recentAuditEvents"];
+}
+
+export interface AutomationOpsSummary {
+  readonly generatedAt: string;
+  readonly fixtures: readonly AutomationOpsFixtureSummary[];
 }
 
 export interface RunAutomationCycleOptions {
@@ -577,6 +594,30 @@ export const enqueuePredictionForEligibleFixtures = async (
     skippedCount: skippedFixtures.length,
     tasks,
     skippedFixtures,
+  };
+};
+
+export const loadAutomationOpsSummary = async (
+  databaseUrl: string,
+  options: { readonly fixtureIds?: readonly string[] } = {},
+): Promise<AutomationOpsSummary> => {
+  const snapshot = await loadOperationSnapshotFromDatabase(databaseUrl);
+  const fixtureIds = options.fixtureIds ?? snapshot.fixtures.map((fixture) => fixture.id);
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    fixtures: fixtureIds.flatMap((fixtureId) => {
+      const fixtureOps = findFixtureOpsById(snapshot, fixtureId);
+      if (!fixtureOps) {
+        return [];
+      }
+
+      return [{
+        fixtureId,
+        scoringEligibility: fixtureOps.scoringEligibility,
+        recentAuditEvents: fixtureOps.recentAuditEvents,
+      }];
+    }),
   };
 };
 

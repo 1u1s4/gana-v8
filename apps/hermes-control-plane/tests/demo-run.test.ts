@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFixture, createTaskRun } from "@gana-v8/domain-core";
+import { createFixture, createFixtureWorkflow, createTaskRun } from "@gana-v8/domain-core";
 import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
@@ -11,6 +11,7 @@ import {
   describeWorkspace,
   enqueuePersistedTask,
   enqueuePredictionForEligibleFixtures,
+  loadAutomationOpsSummary,
   loadPersistedTaskSummary,
   maybeClaimNextPersistedTask,
   requeuePersistedTask,
@@ -118,6 +119,76 @@ const createAutomationFixtureWithOdds = async (
   }
 };
 
+const createAutomationFixtureWorkflowOps = async (
+  databaseUrl: string,
+  fixtureId: string,
+  input: {
+    readonly manualSelectionStatus?: "none" | "selected" | "rejected";
+    readonly selectionOverride?: "none" | "force-include" | "force-exclude";
+    readonly manualReason?: string;
+    readonly overrideReason?: string;
+  } = {},
+): Promise<void> => {
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+
+  try {
+    const workflow = await unitOfWork.fixtureWorkflows.save(
+      createFixtureWorkflow({
+        fixtureId,
+        ingestionStatus: "succeeded",
+        oddsStatus: "succeeded",
+        enrichmentStatus: "pending",
+        candidateStatus: "pending",
+        predictionStatus: "pending",
+        parlayStatus: "pending",
+        validationStatus: "pending",
+        isCandidate: false,
+        manualSelectionStatus: input.manualSelectionStatus ?? "none",
+        ...(input.manualReason !== undefined ? { manualSelectionReason: input.manualReason } : {}),
+        selectionOverride: input.selectionOverride ?? "none",
+        ...(input.overrideReason !== undefined ? { overrideReason: input.overrideReason } : {}),
+      }),
+    );
+
+    if ((input.manualSelectionStatus ?? "none") !== "none") {
+      await unitOfWork.auditEvents.save({
+        id: `audit:${fixtureId}:manual-selection`,
+        aggregateType: "fixture-workflow",
+        aggregateId: fixtureId,
+        eventType: "fixture-workflow.manual-selection.updated",
+        actor: "ops-user",
+        payload: {
+          status: input.manualSelectionStatus,
+          reason: input.manualReason ?? null,
+        },
+        occurredAt: workflow.updatedAt,
+        createdAt: workflow.updatedAt,
+        updatedAt: workflow.updatedAt,
+      });
+    }
+
+    if ((input.selectionOverride ?? "none") !== "none") {
+      await unitOfWork.auditEvents.save({
+        id: `audit:${fixtureId}:selection-override`,
+        aggregateType: "fixture-workflow",
+        aggregateId: fixtureId,
+        eventType: "fixture-workflow.selection-override.updated",
+        actor: "public-api",
+        payload: {
+          mode: input.selectionOverride,
+          reason: input.overrideReason ?? null,
+        },
+        occurredAt: workflow.updatedAt,
+        createdAt: workflow.updatedAt,
+        updatedAt: workflow.updatedAt,
+      });
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
 const cleanupAutomationArtifacts = async (databaseUrl: string, prefix: string): Promise<void> => {
   const prisma = createPrismaClient(databaseUrl);
 
@@ -202,11 +273,14 @@ test("buildHermesCronSpecs exposes hermes-native schedules for fixtures and odds
   assert.equal(specs.some((spec) => spec.intent === "ingest-odds"), true);
 });
 
-test("router registers ingest workflows", () => {
+test("router registers ingest workflows", async () => {
   const router = createHermesJobRouter();
+  const publicApiModule = await import("@gana-v8/public-api");
 
   assert.deepEqual([...router.intents()].sort(), ["ingest-fixtures", "ingest-odds"]);
   assert.match(describeWorkspace(), /hermes-control-plane/);
+  assert.equal(typeof publicApiModule.findFixtureOpsById, "function");
+  assert.equal(typeof publicApiModule.loadOperationSnapshotFromUnitOfWork, "function");
 });
 
 test("runDemoControlPlane dispatches fixture and odds demo jobs", async () => {
@@ -282,7 +356,11 @@ test("createPersistedTaskQueue runs a persisted task lifecycle through the share
       new Date("2026-04-16T11:02:00.000Z"),
     );
     assert.equal(completed.task.status, "succeeded");
+    assert.equal(completed.task.triggerKind, "system");
+    assert.equal(completed.task.maxAttempts, 3);
     assert.equal(completed.taskRun.status, "succeeded");
+    assert.equal(completed.taskRun.workerName, "queue-adapter");
+    assert.deepEqual(completed.taskRun.result, { status: "succeeded" });
     assert.equal(completed.task.attempts.length, 1);
     assert.equal(completed.task.attempts[0]?.startedAt, "2026-04-16T11:01:00.000Z");
     assert.equal(completed.task.attempts[0]?.finishedAt, "2026-04-16T11:02:00.000Z");
@@ -729,6 +807,48 @@ test("runAutomationCycle processes scoring tasks, builds a parlay, and executes 
     } finally {
       await prisma.$disconnect();
     }
+  } finally {
+    await cleanupAutomationArtifacts(databaseUrl, prefix);
+  }
+});
+
+test("loadAutomationOpsSummary exposes scoring eligibility and recent workflow audit trail via public-api exports", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prefix = `haos${Date.now().toString(36)}`;
+
+  await cleanupAutomationArtifacts(databaseUrl, prefix);
+
+  try {
+    const includedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1");
+    const excludedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2");
+
+    await createAutomationFixtureWorkflowOps(databaseUrl, includedFixture.fixtureId, {
+      manualSelectionStatus: "selected",
+      selectionOverride: "force-include",
+      manualReason: "desk review",
+      overrideReason: "priority slate",
+    });
+    await createAutomationFixtureWorkflowOps(databaseUrl, excludedFixture.fixtureId, {
+      manualSelectionStatus: "rejected",
+      manualReason: "bad market",
+    });
+
+    const summary = await loadAutomationOpsSummary(databaseUrl, {
+      fixtureIds: [includedFixture.fixtureId, excludedFixture.fixtureId],
+    });
+
+    const included = summary.fixtures.find((fixture) => fixture.fixtureId === includedFixture.fixtureId);
+    const excluded = summary.fixtures.find((fixture) => fixture.fixtureId === excludedFixture.fixtureId);
+
+    assert.equal(summary.fixtures.length, 2);
+    assert.ok(included);
+    assert.ok(excluded);
+    assert.equal(included?.scoringEligibility.eligible, true);
+    assert.match(included?.scoringEligibility.reason ?? "", /force-included/i);
+    assert.equal(included?.recentAuditEvents.length, 2);
+    assert.equal(included?.recentAuditEvents[0]?.eventType, "fixture-workflow.manual-selection.updated");
+    assert.equal(excluded?.scoringEligibility.eligible, false);
+    assert.match(excluded?.scoringEligibility.reason ?? "", /force-excluded/i);
   } finally {
     await cleanupAutomationArtifacts(databaseUrl, prefix);
   }

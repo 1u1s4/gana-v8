@@ -3,8 +3,10 @@ import { execFileSync } from "node:child_process";
 import test from "node:test";
 
 import {
+  createAiRun,
   createAuditEvent,
   createFixture,
+  createFixtureWorkflow,
   createParlay,
   createPrediction,
   createSandboxNamespace,
@@ -16,6 +18,8 @@ import {
 import {
   PrismaTaskRepository,
   PrismaSandboxNamespaceRepository,
+  aiRunDomainToCreateInput,
+  aiRunRecordToDomain,
   auditEventDomainToCreateInput,
   auditEventRecordToDomain,
   createInMemoryUnitOfWork,
@@ -118,9 +122,34 @@ test("in-memory repositories store and query core aggregates", async () => {
   await uow.predictions.save(prediction);
   await uow.parlays.save(parlay);
   await uow.validations.save(validation);
+  const workflow = createFixtureWorkflow({
+    fixtureId: fixture.id,
+    ingestionStatus: "succeeded",
+    oddsStatus: "pending",
+    enrichmentStatus: "pending",
+    candidateStatus: "pending",
+    predictionStatus: "pending",
+    parlayStatus: "pending",
+    validationStatus: "pending",
+    isCandidate: false,
+    lastIngestedAt: "2026-04-14T19:59:00.000Z",
+    manualSelectionStatus: "selected",
+    manualSelectionBy: "ops-user",
+    manualSelectionReason: "Important televised match",
+    manuallySelectedAt: "2026-04-14T20:02:00.000Z",
+    selectionOverride: "force-include",
+    overrideReason: "Pinned by operator",
+    overriddenAt: "2026-04-14T20:03:00.000Z",
+    diagnostics: {
+      research: { lean: "home" },
+      notes: ["derby", "premium-slate"],
+    },
+  });
+
   await uow.auditEvents.save(auditEvent);
   await uow.taskRuns.save(taskRun);
   await uow.sandboxNamespaces.save(sandbox);
+  await uow.fixtureWorkflows.save(workflow);
 
   assert.equal(
     (await uow.fixtures.findByCompetition("Premier League")).length,
@@ -131,10 +160,66 @@ test("in-memory repositories store and query core aggregates", async () => {
   assert.equal((await uow.validations.findByTargetId(parlay.id)).length, 1);
   assert.equal((await uow.auditEvents.findByAggregate("parlay", parlay.id)).length, 1);
   assert.equal((await uow.taskRuns.findByTaskId(taskRun.taskId)).length, 1);
+  assert.equal((await uow.fixtureWorkflows.findByFixtureId(fixture.id))?.fixtureId, fixture.id);
+  assert.equal(
+    (await uow.fixtureWorkflows.findByFixtureId(fixture.id))?.manualSelectionStatus,
+    "selected",
+  );
+  assert.equal(
+    (await uow.fixtureWorkflows.findByFixtureId(fixture.id))?.selectionOverride,
+    "force-include",
+  );
+  assert.deepEqual((await uow.fixtureWorkflows.findByFixtureId(fixture.id))?.diagnostics, {
+    research: { lean: "home" },
+    notes: ["derby", "premium-slate"],
+  });
   assert.equal(
     (await uow.sandboxNamespaces.findByEnvironment("sandbox")).length,
     1,
   );
+});
+
+test("prisma mappers preserve ai-run metadata roundtrip shape", () => {
+  const aiRun = createAiRun({
+    id: "ai-run-1",
+    taskId: "task-1",
+    provider: "codex",
+    model: "gpt-5.4",
+    promptVersion: "v8-slice-3",
+    status: "failed",
+    providerRequestId: "req-ai-1",
+    usage: {
+      promptTokens: 11,
+      completionTokens: 7,
+      totalTokens: 18,
+    },
+    outputRef: "s3://bucket/run.json",
+    error: "provider timeout",
+    fallbackReason: "provider timeout",
+    degraded: true,
+    createdAt: "2026-04-18T00:00:00.000Z",
+    updatedAt: "2026-04-18T00:01:00.000Z",
+  });
+
+  const prismaInput = aiRunDomainToCreateInput(aiRun);
+  const roundTrip = aiRunRecordToDomain({
+    ...prismaInput,
+    providerRequestId: prismaInput.providerRequestId ?? null,
+    usagePromptTokens: prismaInput.usagePromptTokens ?? null,
+    usageCompletionTokens: prismaInput.usageCompletionTokens ?? null,
+    usageTotalTokens: prismaInput.usageTotalTokens ?? null,
+    outputRef: prismaInput.outputRef ?? null,
+    error: prismaInput.error ?? null,
+    fallbackReason: prismaInput.fallbackReason ?? null,
+    degraded: prismaInput.degraded ?? null,
+    createdAt: new Date(aiRun.createdAt),
+    updatedAt: new Date(aiRun.updatedAt),
+  });
+
+  assert.equal(roundTrip.providerRequestId, "req-ai-1");
+  assert.equal(roundTrip.fallbackReason, "provider timeout");
+  assert.equal(roundTrip.degraded, true);
+  assert.deepEqual(roundTrip.usage, aiRun.usage);
 });
 
 test("prisma mappers preserve domain roundtrip shape for core persisted entities", () => {
@@ -320,8 +405,10 @@ test("prisma task repository rehydrates attempts from taskRuns", async () => {
     id: "task-2",
     kind: "prediction",
     status: "succeeded",
+    triggerKind: "system",
     priority: 7,
     payload: { fixtureId: "fx-99" },
+    maxAttempts: 3,
     attempts: [
       {
         startedAt: "2026-04-20T10:00:00.000Z",

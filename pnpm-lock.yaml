@@ -50,6 +50,9 @@ importers:
       '@gana-v8/policy-engine':
         specifier: workspace:*
         version: link:../../packages/policy-engine
+      '@gana-v8/public-api':
+        specifier: workspace:*
+        version: link:../public-api
       '@gana-v8/publisher-worker':
         specifier: workspace:*
         version: link:../publisher-worker
@@ -155,6 +158,9 @@ importers:
 
   apps/research-worker:
     dependencies:
+      '@gana-v8/ai-runtime':
+        specifier: workspace:*
+        version: link:../../packages/ai-runtime
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
@@ -164,6 +170,9 @@ importers:
       '@gana-v8/feature-store':
         specifier: workspace:*
         version: link:../../packages/feature-store
+      '@gana-v8/model-registry':
+        specifier: workspace:*
+        version: link:../../packages/model-registry
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -173,6 +182,9 @@ importers:
       '@gana-v8/research-engine':
         specifier: workspace:*
         version: link:../../packages/research-engine
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   apps/sandbox-runner:
     dependencies:
@@ -182,15 +194,24 @@ importers:
       '@gana-v8/dev-cli':
         specifier: workspace:*
         version: link:../../packages/dev-cli
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../../packages/domain-core
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../../packages/storage-adapters
       '@gana-v8/testing-fixtures':
         specifier: workspace:*
         version: link:../../packages/testing-fixtures
 
   apps/scoring-worker:
     dependencies:
+      '@gana-v8/ai-runtime':
+        specifier: workspace:*
+        version: link:../../packages/ai-runtime
       '@gana-v8/config-runtime':
         specifier: workspace:*
         version: link:../../packages/config-runtime
@@ -200,6 +221,9 @@ importers:
       '@gana-v8/feature-store':
         specifier: workspace:*
         version: link:../../packages/feature-store
+      '@gana-v8/model-registry':
+        specifier: workspace:*
+        version: link:../../packages/model-registry
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -209,6 +233,9 @@ importers:
       '@gana-v8/storage-adapters':
         specifier: workspace:*
         version: link:../../packages/storage-adapters
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   apps/validation-worker:
     dependencies:
@@ -233,6 +260,15 @@ importers:
       '@gana-v8/validation-engine':
         specifier: workspace:*
         version: link:../../packages/validation-engine
+
+  packages/ai-runtime:
+    dependencies:
+      '@gana-v8/model-registry':
+        specifier: workspace:*
+        version: link:../model-registry
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   packages/audit-lineage:
     dependencies:
@@ -301,9 +337,9 @@ importers:
 
   packages/model-registry:
     dependencies:
-      '@gana-v8/domain-core':
-        specifier: workspace:*
-        version: link:../domain-core
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   packages/observability:
     dependencies:

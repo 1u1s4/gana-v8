@@ -46,6 +46,9 @@
       "@gana-v8/model-registry": [
         "packages/model-registry/src/index.ts"
       ],
+      "@gana-v8/ai-runtime": [
+        "packages/ai-runtime/src/index.ts"
+      ],
       "@gana-v8/prediction-engine": [
         "packages/prediction-engine/src/index.ts"
       ],

@@ -25,6 +25,16 @@ export interface TopEvidenceFeature {
   readonly weightedScore: number;
 }
 
+export interface ResearchTraceMetadata {
+  readonly synthesisMode: "deterministic" | "ai-assisted" | "ai-fallback";
+  readonly aiRunId?: string;
+  readonly aiProvider?: string;
+  readonly aiModel?: string;
+  readonly aiPromptVersion?: string;
+  readonly providerRequestId?: string;
+  readonly fallbackSummary?: string;
+}
+
 export interface FeatureVectorValues {
   readonly researchScoreHome: number;
   readonly researchScoreDraw: number;
@@ -48,12 +58,14 @@ export interface FeatureVectorSnapshot {
   readonly risks: readonly string[];
   readonly features: FeatureVectorValues;
   readonly readiness: FeatureReadiness;
+  readonly researchTrace?: ResearchTraceMetadata;
 }
 
 export interface BuildFeatureVectorSnapshotInput {
   readonly fixture: FixtureEntity;
   readonly dossier: ResearchDossier;
   readonly generatedAt?: string;
+  readonly researchTrace?: ResearchTraceMetadata;
 }
 
 export interface PersistedFeatureSnapshotMetadata {
@@ -63,6 +75,13 @@ export interface PersistedFeatureSnapshotMetadata {
   readonly researchTopEvidenceIds: readonly string[];
   readonly researchTopEvidenceTitles: readonly string[];
   readonly researchRiskSummary: readonly string[];
+  readonly researchSynthesisMode?: ResearchTraceMetadata["synthesisMode"];
+  readonly researchAiRunId?: string;
+  readonly researchAiProvider?: string;
+  readonly researchAiModel?: string;
+  readonly researchAiPromptVersion?: string;
+  readonly researchAiProviderRequestId?: string;
+  readonly researchFallbackSummary?: string;
   readonly featureReadinessStatus?: FeatureReadiness["status"];
   readonly featureReadinessReasons: readonly string[];
   readonly featureScoreHome?: number;
@@ -165,6 +184,30 @@ export const summarizePersistedFeatureMetadata = (
   researchTopEvidenceIds: splitMetadataList(fixture.metadata.researchTopEvidenceIds),
   researchTopEvidenceTitles: splitMetadataList(fixture.metadata.researchTopEvidenceTitles),
   researchRiskSummary: splitMetadataList(fixture.metadata.researchRiskSummary),
+  ...(fixture.metadata.researchSynthesisMode !== undefined
+    ? {
+        researchSynthesisMode:
+          fixture.metadata.researchSynthesisMode as ResearchTraceMetadata["synthesisMode"],
+      }
+    : {}),
+  ...(fixture.metadata.researchAiRunId !== undefined
+    ? { researchAiRunId: fixture.metadata.researchAiRunId }
+    : {}),
+  ...(fixture.metadata.researchAiProvider !== undefined
+    ? { researchAiProvider: fixture.metadata.researchAiProvider }
+    : {}),
+  ...(fixture.metadata.researchAiModel !== undefined
+    ? { researchAiModel: fixture.metadata.researchAiModel }
+    : {}),
+  ...(fixture.metadata.researchAiPromptVersion !== undefined
+    ? { researchAiPromptVersion: fixture.metadata.researchAiPromptVersion }
+    : {}),
+  ...(fixture.metadata.researchAiProviderRequestId !== undefined
+    ? { researchAiProviderRequestId: fixture.metadata.researchAiProviderRequestId }
+    : {}),
+  ...(fixture.metadata.researchFallbackSummary !== undefined
+    ? { researchFallbackSummary: fixture.metadata.researchFallbackSummary }
+    : {}),
   ...(fixture.metadata.featureReadinessStatus !== undefined
     ? {
         featureReadinessStatus:
@@ -196,6 +239,29 @@ export const applyFeatureSnapshotToFixture = (
     researchTopEvidenceIds: snapshot.topEvidence.map((item) => item.id).join(" | "),
     researchTopEvidenceTitles: snapshot.topEvidence.map((item) => item.title).join(" | "),
     researchRiskSummary: snapshot.risks.join(" | "),
+    ...(snapshot.researchTrace
+      ? {
+          researchSynthesisMode: snapshot.researchTrace.synthesisMode,
+          ...(snapshot.researchTrace.aiRunId
+            ? { researchAiRunId: snapshot.researchTrace.aiRunId }
+            : {}),
+          ...(snapshot.researchTrace.aiProvider
+            ? { researchAiProvider: snapshot.researchTrace.aiProvider }
+            : {}),
+          ...(snapshot.researchTrace.aiModel
+            ? { researchAiModel: snapshot.researchTrace.aiModel }
+            : {}),
+          ...(snapshot.researchTrace.aiPromptVersion
+            ? { researchAiPromptVersion: snapshot.researchTrace.aiPromptVersion }
+            : {}),
+          ...(snapshot.researchTrace.providerRequestId
+            ? { researchAiProviderRequestId: snapshot.researchTrace.providerRequestId }
+            : {}),
+          ...(snapshot.researchTrace.fallbackSummary
+            ? { researchFallbackSummary: snapshot.researchTrace.fallbackSummary }
+            : {}),
+        }
+      : {}),
     featureReadinessStatus: snapshot.readiness.status,
     featureReadinessReasons: snapshot.readiness.reasons.join(" | "),
     featureScoreHome: String(snapshot.features.researchScoreHome),
@@ -240,6 +306,7 @@ export const buildFeatureVectorSnapshot = (
       status: "ready",
       reasons: [],
     },
+    ...(input.researchTrace ? { researchTrace: input.researchTrace } : {}),
   };
 
   const readiness = createInitialReadiness(input.fixture, input.dossier, topEvidence);

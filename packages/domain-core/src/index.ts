@@ -2,6 +2,7 @@ export * from './common.js';
 export * from './entities/audit-event.js';
 export * from './entities/ai-run.js';
 export * from './entities/fixture.js';
+export * from './entities/fixture-workflow.js';
 export * from './entities/parlay.js';
 export * from './entities/prediction.js';
 export * from './entities/sandbox.js';

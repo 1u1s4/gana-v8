@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFixture, createPrediction } from "@gana-v8/domain-core";
+import { createFixture, createFixtureWorkflow, createPrediction } from "@gana-v8/domain-core";
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
@@ -93,6 +93,8 @@ test("publishParlayMvp persists a two-leg parlay from published moneyline predic
   });
 
   const parlays = await unitOfWork.parlays.list();
+  const workflowOne = await unitOfWork.fixtureWorkflows.findByFixtureId("fx-1");
+  const workflowTwo = await unitOfWork.fixtureWorkflows.findByFixtureId("fx-2");
 
   assert.match(describeWorkspace(), /publisher-worker/);
   assert.equal(result.status, "persisted");
@@ -102,6 +104,8 @@ test("publishParlayMvp persists a two-leg parlay from published moneyline predic
   assert.equal(parlays.length, 1);
   assert.equal(parlays[0]?.legs.length, 2);
   assert.equal(parlays[0]?.status, "ready");
+  assert.equal(workflowOne?.parlayStatus, "succeeded");
+  assert.equal(workflowTwo?.parlayStatus, "succeeded");
   assert.equal(
     result.skipReasons.some((skip) => skip.reason === "duplicate-fixture"),
     true,
@@ -130,6 +134,79 @@ test("publishParlayMvp returns scorecard and reasons when not enough valid predi
   assert.match(result.scorecard.reasons.join(" | "), /requires at least 2 legs/);
   assert.equal(
     result.skipReasons.some((skip) => skip.reason === "invalid-implied-probability"),
+    true,
+  );
+});
+
+test("publishParlayMvp respects workflow overrides when selecting parlay legs", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await unitOfWork.fixtureWorkflows.save(
+    createFixtureWorkflow({
+      fixtureId: "fx-1",
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "succeeded",
+      candidateStatus: "succeeded",
+      predictionStatus: "succeeded",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: true,
+      selectionOverride: "force-include",
+    }),
+  );
+  await unitOfWork.fixtureWorkflows.save(
+    createFixtureWorkflow({
+      fixtureId: "fx-3",
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "succeeded",
+      candidateStatus: "succeeded",
+      predictionStatus: "succeeded",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: true,
+      selectionOverride: "force-exclude",
+    }),
+  );
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord("pred-force-include", "fx-1", {
+        confidence: 0.42,
+        probabilities: { implied: 0.54, model: 0.46, edge: -0.08 },
+      }),
+      predictionRecord("pred-best", "fx-2", {
+        confidence: 0.76,
+        probabilities: { implied: 0.45, model: 0.67, edge: 0.22 },
+      }),
+      predictionRecord("pred-force-exclude", "fx-3", {
+        confidence: 0.79,
+        probabilities: { implied: 0.42, model: 0.69, edge: 0.27 },
+      }),
+      predictionRecord("pred-alternate", "fx-4", {
+        confidence: 0.74,
+        probabilities: { implied: 0.47, model: 0.63, edge: 0.16 },
+      }),
+    ]),
+    generatedAt: "2026-04-16T12:40:00.000Z",
+    stake: 10,
+    unitOfWork,
+    maxLegs: 2,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.equal(
+    result.selectedCandidates.some((candidate) => candidate.predictionId === "pred-force-include"),
+    true,
+  );
+  assert.equal(
+    result.selectedCandidates.some((candidate) => candidate.predictionId === "pred-force-exclude"),
+    false,
+  );
+  assert.equal(
+    result.skipReasons.some(
+      (skip) => skip.predictionId === "pred-force-exclude" && skip.reason === "workflow-excluded",
+    ),
     true,
   );
 });

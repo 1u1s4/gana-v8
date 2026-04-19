@@ -1,7 +1,14 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": false
+    "noEmit": false,
+    "paths": {
+      "@gana-v8/ai-runtime": ["../../packages/ai-runtime/dist/index.d.ts"],
+      "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
+      "@gana-v8/feature-store": ["../../packages/feature-store/dist/src/index.d.ts"],
+      "@gana-v8/model-registry": ["../../packages/model-registry/dist/index.d.ts"],
+      "@gana-v8/research-engine": ["../../packages/research-engine/dist/index.d.ts"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules", "tests"]

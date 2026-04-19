@@ -6,6 +6,8 @@ import type {
   EntityId,
   FixtureEntity,
   FixtureRepository,
+  FixtureWorkflowEntity,
+  FixtureWorkflowRepository,
   ParlayEntity,
   ParlayRepository,
   PredictionEntity,
@@ -31,6 +33,9 @@ import {
   fixtureDomainToCreateInput,
   fixtureInclude,
   fixtureRecordToDomain,
+  fixtureWorkflowDomainToCreateInput,
+  fixtureWorkflowInclude,
+  fixtureWorkflowRecordToDomain,
   parlayDomainToCreateInput,
   parlayInclude,
   parlayRecordToDomain,
@@ -55,6 +60,7 @@ import {
 export type PrismaClientLike = Pick<
   PrismaClient,
   | "fixture"
+  | "fixtureWorkflow"
   | "task"
   | "taskRun"
   | "aiRun"
@@ -125,12 +131,6 @@ export class PrismaTaskRepository implements TaskRepository {
       },
       update: {
         ...taskDomainToCreateInput(entity),
-        taskRuns: {
-          deleteMany: {},
-          create: entity.attempts.map((attempt, index) =>
-            taskAttemptToTaskRunInput(entity.id, attempt, index + 1),
-          ),
-        },
       },
       ...taskInclude,
     });
@@ -164,6 +164,48 @@ export class PrismaTaskRepository implements TaskRepository {
       ...taskInclude,
     });
     return records.map(taskRecordToDomain);
+  }
+}
+
+export class PrismaFixtureWorkflowRepository implements FixtureWorkflowRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: FixtureWorkflowEntity): Promise<FixtureWorkflowEntity> {
+    const record = await this.client.fixtureWorkflow.upsert({
+      where: { id: entity.id },
+      create: fixtureWorkflowDomainToCreateInput(entity),
+      update: fixtureWorkflowDomainToCreateInput(entity),
+      ...fixtureWorkflowInclude,
+    });
+    return fixtureWorkflowRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<FixtureWorkflowEntity | null> {
+    const record = await this.client.fixtureWorkflow.findUnique({
+      where: { id },
+      ...fixtureWorkflowInclude,
+    });
+    return record ? fixtureWorkflowRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<FixtureWorkflowEntity[]> {
+    const records = await this.client.fixtureWorkflow.findMany({
+      orderBy: { updatedAt: "asc" },
+      ...fixtureWorkflowInclude,
+    });
+    return records.map(fixtureWorkflowRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.fixtureWorkflow.delete({ where: { id } });
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<FixtureWorkflowEntity | null> {
+    const record = await this.client.fixtureWorkflow.findUnique({
+      where: { fixtureId },
+      ...fixtureWorkflowInclude,
+    });
+    return record ? fixtureWorkflowRecordToDomain(record) : null;
   }
 }
 

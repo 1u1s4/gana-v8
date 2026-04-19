@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Model metadata and release channel registry placeholders.",
+  "description": "Operational AI model registry, selection logic, prompt registry, and template catalog.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,11 +19,11 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs model-registry",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "node ../../scripts/workspace-test.mjs .",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts && node ../../scripts/workspace-test.mjs .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
-    "@gana-v8/domain-core": "workspace:*"
+    "zod": "^3.25.76"
   }
 }

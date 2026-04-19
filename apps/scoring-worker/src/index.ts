@@ -1,16 +1,27 @@
 import {
   createAiRun,
+  createFixtureWorkflow,
   createPrediction,
   createTask,
+  transitionFixtureWorkflowStage,
+  type AiRunEntity,
+  type AiRunUsage,
   type FixtureEntity,
+  type FixtureWorkflowEntity,
   type PredictionEntity,
   type TaskEntity,
 } from "@gana-v8/domain-core";
 import {
-  summarizePersistedFeatureMetadata,
-} from "@gana-v8/feature-store";
+  runStructuredOutput,
+  type GetAiProviderAdapterOptions,
+  type ReasoningLevel,
+  type RunStructuredOutputResult,
+} from "@gana-v8/ai-runtime";
+import { summarizePersistedFeatureMetadata } from "@gana-v8/feature-store";
+import { renderPrompt, type PromptRegistryKey } from "@gana-v8/model-registry";
 import {
   buildAtomicPrediction,
+  type AtomicPredictionArtifact,
   type CandidateEligibilityPolicy,
   type ResearchDossierLike,
 } from "@gana-v8/prediction-engine";
@@ -19,6 +30,7 @@ import {
   createPrismaUnitOfWork,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
+import { z } from "zod";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/scoring-worker",
@@ -102,6 +114,7 @@ export interface ScoreFixturePredictionOptions {
   readonly unitOfWork?: StorageUnitOfWork;
   readonly generatedAt?: string;
   readonly policy?: Partial<CandidateEligibilityPolicy>;
+  readonly ai?: ScoringSynthesisAiConfig;
 }
 
 export interface FixtureScoreResult {
@@ -109,6 +122,7 @@ export interface FixtureScoreResult {
   readonly status: "scored" | "skipped";
   readonly reason?: string;
   readonly aiRunId?: string;
+  readonly aiRunStatus?: AiRunEntity["status"];
   readonly prediction?: PredictionEntity;
 }
 
@@ -128,6 +142,26 @@ const SCORING_TASK_PREFIX = "task:scoring-worker";
 const AI_RUN_PROVIDER = "internal";
 const AI_RUN_MODEL = "deterministic-moneyline-v1";
 const AI_RUN_PROMPT_VERSION = "scoring-worker-mvp-v1";
+const DEFAULT_SCORING_AI_PROVIDER = "codex";
+const DEFAULT_SCORING_AI_MODEL = "gpt-5.4";
+const DEFAULT_SCORING_AI_REASONING: ReasoningLevel = "low";
+const DEFAULT_SCORING_AI_PROMPT_KEY: PromptRegistryKey = "scoring.fixture-synthesis";
+const SCORING_AI_OUTPUT_CONTRACT = '{"summary":"string","advisorySignals":["string"]}';
+const scoringStructuredOutputSchema = z.object({
+  summary: z.string().min(1),
+  advisorySignals: z.array(z.string().min(1)).max(4).optional(),
+});
+type ScoringStructuredOutput = z.infer<typeof scoringStructuredOutputSchema>;
+export interface ScoringSynthesisAiConfig extends GetAiProviderAdapterOptions {
+  readonly enabled?: boolean;
+  readonly provider?: "codex";
+  readonly requestedModel?: string;
+  readonly requestedReasoning?: ReasoningLevel;
+  readonly promptKey?: PromptRegistryKey;
+  readonly promptVersion?: string;
+  readonly webSearchMode?: "disabled" | "auto" | "required";
+}
+
 const DEFAULT_SCORING_POLICY: Partial<CandidateEligibilityPolicy> = {
   minConfidence: 0.3,
   minEdge: 0,
@@ -182,6 +216,37 @@ const createScoringTaskId = (fixtureId: string): string => `${SCORING_TASK_PREFI
 const createAiRunId = (fixtureId: string, generatedAt: string): string => `airun:${fixtureId}:${generatedAt}`;
 const createPredictionId = (fixtureId: string, outcome: string, generatedAt: string): string =>
   `prediction:${fixtureId}:moneyline:${outcome}:${generatedAt}`;
+
+const persistScoringWorkflow = async (
+  unitOfWork: StorageUnitOfWork,
+  fixtureId: string,
+  generatedAt: string,
+  status: "succeeded" | "failed",
+  errorMessage?: string,
+): Promise<FixtureWorkflowEntity> => {
+  const current =
+    (await unitOfWork.fixtureWorkflows.findByFixtureId(fixtureId)) ??
+    createFixtureWorkflow({
+      fixtureId,
+      ingestionStatus: "pending",
+      oddsStatus: "pending",
+      enrichmentStatus: "pending",
+      candidateStatus: "pending",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: false,
+    });
+
+  return unitOfWork.fixtureWorkflows.save(
+    transitionFixtureWorkflowStage(current, "prediction", {
+      status,
+      occurredAt: generatedAt,
+      isCandidate: status === "succeeded",
+      ...(errorMessage ? { errorMessage } : {}),
+    }),
+  );
+};
 
 const enrichFixtureMetadata = (
   fixture: FixtureEntity,
@@ -333,6 +398,176 @@ export const buildResearchDossierFromFixture = (
   };
 };
 
+const isScoringAiEnabled = (config?: ScoringSynthesisAiConfig): boolean => config?.enabled === true;
+
+const toUsage = (
+  result: Pick<RunStructuredOutputResult<typeof scoringStructuredOutputSchema>, "usageJson">,
+): AiRunUsage | undefined => {
+  const inputTokens = result.usageJson?.inputTokens;
+  const outputTokens = result.usageJson?.outputTokens;
+  const totalTokens = result.usageJson?.totalTokens;
+
+  if (
+    typeof inputTokens !== "number" ||
+    typeof outputTokens !== "number" ||
+    typeof totalTokens !== "number"
+  ) {
+    return undefined;
+  }
+
+  return {
+    promptTokens: inputTokens,
+    completionTokens: outputTokens,
+    totalTokens,
+  };
+};
+
+const createScoringAiContext = (
+  fixture: FixtureEntity,
+  dossier: ResearchDossierLike,
+  artifact: AtomicPredictionArtifact,
+): string => {
+  const rationale = artifact.prediction.rationale.map((line, index) => `${index + 1}. ${line}`).join("\n");
+
+  return [
+    `FixtureId: ${fixture.id}`,
+    `Competition: ${fixture.competition}`,
+    `Match: ${fixture.homeTeam} vs ${fixture.awayTeam}`,
+    `ScheduledAt: ${fixture.scheduledAt}`,
+    `Deterministic outcome: ${artifact.prediction.market}:${artifact.prediction.outcome}`,
+    `Confidence: ${artifact.prediction.confidence}`,
+    `ModelProbability: ${artifact.prediction.probabilities.model}`,
+    `ImpliedProbability: ${artifact.prediction.probabilities.implied}`,
+    `Edge: ${artifact.prediction.probabilities.edge}`,
+    `RecommendedLean: ${dossier.recommendedLean}`,
+    `DossierSummary: ${dossier.summary}`,
+    `EvidenceCount: ${dossier.evidence.length}`,
+    "Deterministic rationale:",
+    rationale,
+  ].join("\n");
+};
+
+const renderScoringAiPrompt = (
+  fixture: FixtureEntity,
+  dossier: ResearchDossierLike,
+  artifact: AtomicPredictionArtifact,
+  config?: ScoringSynthesisAiConfig,
+): { systemPrompt: string; userPrompt: string; version: string } =>
+  renderPrompt(
+    config?.promptKey ?? DEFAULT_SCORING_AI_PROMPT_KEY,
+    {
+      context: createScoringAiContext(fixture, dossier, artifact),
+      outputContract: SCORING_AI_OUTPUT_CONTRACT,
+    },
+    config?.promptVersion,
+  );
+
+const createDeterministicAiRun = (
+  fixtureId: string,
+  taskId: string,
+  generatedAt: string,
+  outputSuffix = "deterministic-baseline.json",
+): AiRunEntity =>
+  createAiRun({
+    id: createAiRunId(fixtureId, generatedAt),
+    taskId,
+    provider: AI_RUN_PROVIDER,
+    model: AI_RUN_MODEL,
+    promptVersion: AI_RUN_PROMPT_VERSION,
+    status: "completed",
+    outputRef: `scoring-worker://${fixtureId}/${generatedAt}/${outputSuffix}`,
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
+  });
+
+const createScoringFallbackAiRun = (
+  fixtureId: string,
+  taskId: string,
+  generatedAt: string,
+  config: ScoringSynthesisAiConfig | undefined,
+  promptVersion: string,
+  error: unknown,
+): AiRunEntity => {
+  const message = error instanceof Error ? error.message : "Unknown scoring AI synthesis failure.";
+  return createAiRun({
+    id: createAiRunId(fixtureId, generatedAt),
+    taskId,
+    provider: config?.provider ?? DEFAULT_SCORING_AI_PROVIDER,
+    model: config?.requestedModel ?? DEFAULT_SCORING_AI_MODEL,
+    promptVersion,
+    status: "failed",
+    outputRef: `scoring-worker://${fixtureId}/${generatedAt}/deterministic-fallback.json`,
+    error: `AI-assisted scoring fallback to deterministic baseline: ${message}`,
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
+  });
+};
+
+export const resolveScoringAiConfig = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): ScoringSynthesisAiConfig => {
+  const mode = env.GANA_SCORING_SYNTHESIS_MODE?.trim().toLowerCase();
+  const enabled = mode === "ai-assisted" || env.GANA_ENABLE_SCORING_AI?.trim() === "1";
+  const reasoning = env.GANA_SCORING_AI_REASONING?.trim().toLowerCase();
+
+  return {
+    enabled,
+    provider: DEFAULT_SCORING_AI_PROVIDER,
+    requestedModel: env.GANA_SCORING_AI_MODEL?.trim() || DEFAULT_SCORING_AI_MODEL,
+    requestedReasoning:
+      reasoning === "low" || reasoning === "medium" || reasoning === "high"
+        ? reasoning
+        : DEFAULT_SCORING_AI_REASONING,
+    promptKey: DEFAULT_SCORING_AI_PROMPT_KEY,
+    ...(env.GANA_SCORING_AI_PROMPT_VERSION?.trim()
+      ? { promptVersion: env.GANA_SCORING_AI_PROMPT_VERSION.trim() }
+      : {}),
+    webSearchMode: "disabled",
+  };
+};
+
+export const runScoringSynthesisAi = async (input: {
+  readonly fixture: FixtureEntity;
+  readonly dossier: ResearchDossierLike;
+  readonly artifact: AtomicPredictionArtifact;
+  readonly taskId: string;
+  readonly generatedAt: string;
+  readonly config?: ScoringSynthesisAiConfig;
+}): Promise<{ readonly aiRun: AiRunEntity; readonly advisory: ScoringStructuredOutput }> => {
+  const renderedPrompt = renderScoringAiPrompt(input.fixture, input.dossier, input.artifact, input.config);
+  const result = await runStructuredOutput(
+    {
+      provider: input.config?.provider ?? DEFAULT_SCORING_AI_PROVIDER,
+      requestedModel: input.config?.requestedModel ?? DEFAULT_SCORING_AI_MODEL,
+      requestedReasoning: input.config?.requestedReasoning ?? DEFAULT_SCORING_AI_REASONING,
+      webSearchMode: input.config?.webSearchMode ?? "disabled",
+      schema: scoringStructuredOutputSchema,
+      instructions: renderedPrompt.systemPrompt,
+      input: renderedPrompt.userPrompt,
+      includeEvents: true,
+    },
+    input.config,
+  );
+
+  const usage = toUsage(result);
+  return {
+    aiRun: createAiRun({
+      id: createAiRunId(input.fixture.id, input.generatedAt),
+      taskId: input.taskId,
+      provider: result.provider,
+      model: result.resolvedModel,
+      promptVersion: renderedPrompt.version,
+      ...(result.providerRequestId ? { providerRequestId: result.providerRequestId } : {}),
+      ...(usage ? { usage } : {}),
+      outputRef: `scoring-worker://${input.fixture.id}/${input.generatedAt}/ai-synthesis.json`,
+      status: "completed",
+      createdAt: input.generatedAt,
+      updatedAt: input.generatedAt,
+    }),
+    advisory: result.structuredOutput,
+  };
+};
+
 const findLatestH2hSnapshot = async (
   client: ScoringWorkerPrismaClientLike,
   fixture: FixtureEntity,
@@ -480,6 +715,18 @@ export const scoreFixturePrediction = async (
       };
     }
 
+    const existingWorkflow = await runtime.unitOfWork.fixtureWorkflows.findByFixtureId(fixture.id);
+    if (
+      existingWorkflow?.selectionOverride === "force-exclude" ||
+      existingWorkflow?.manualSelectionStatus === "rejected"
+    ) {
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: "Fixture is force-excluded by workflow ops.",
+      };
+    }
+
     const latestOddsSnapshot = await findLatestH2hSnapshot(runtime.client, fixture);
     if (!latestOddsSnapshot) {
       return {
@@ -510,20 +757,6 @@ export const scoreFixturePrediction = async (
       generatedAt,
     );
 
-    const aiRun = await runtime.unitOfWork.aiRuns.save(
-      createAiRun({
-        id: createAiRunId(fixture.id, generatedAt),
-        taskId: task.id,
-        provider: AI_RUN_PROVIDER,
-        model: AI_RUN_MODEL,
-        promptVersion: AI_RUN_PROMPT_VERSION,
-        status: "completed",
-        outputRef: `scoring-worker://${fixture.id}/${generatedAt}`,
-        createdAt: generatedAt,
-        updatedAt: generatedAt,
-      }),
-    );
-
     const artifact = buildAtomicPrediction(enrichedFixture, dossier, {
       generatedAt,
       policy: { ...DEFAULT_SCORING_POLICY, ...options.policy },
@@ -531,13 +764,68 @@ export const scoreFixturePrediction = async (
         createPredictionId(artifactFixture.id, candidate.outcome, generatedAt),
     });
 
+    let aiRun: AiRunEntity;
+    let advisorySignals: readonly string[] = [];
+    let advisorySummary: string | undefined;
+
+    if (artifact && isScoringAiEnabled(options.ai)) {
+      const promptVersion = renderScoringAiPrompt(enrichedFixture, dossier, artifact, options.ai).version;
+      try {
+        const aiTrace = await runScoringSynthesisAi({
+          fixture: enrichedFixture,
+          dossier,
+          artifact,
+          taskId: task.id,
+          generatedAt,
+          ...(options.ai ? { config: options.ai } : {}),
+        });
+        aiRun = aiTrace.aiRun;
+        advisorySummary = aiTrace.advisory.summary;
+        advisorySignals = aiTrace.advisory.advisorySignals ?? [];
+      } catch (error) {
+        aiRun = createScoringFallbackAiRun(
+          fixture.id,
+          task.id,
+          generatedAt,
+          options.ai,
+          promptVersion,
+          error,
+        );
+      }
+    } else {
+      aiRun = createDeterministicAiRun(
+        fixture.id,
+        task.id,
+        generatedAt,
+        artifact ? "deterministic-baseline.json" : "no-candidate.json",
+      );
+    }
+
+    aiRun = await runtime.unitOfWork.aiRuns.save(aiRun);
+
     if (!artifact) {
+      await persistScoringWorkflow(
+        runtime.unitOfWork,
+        fixture.id,
+        generatedAt,
+        "failed",
+        "No moneyline candidate satisfied scoring policy.",
+      );
       return {
         fixtureId: fixture.id,
         status: "skipped",
         reason: "No moneyline candidate satisfied scoring policy.",
         aiRunId: aiRun.id,
+        aiRunStatus: aiRun.status,
       };
+    }
+
+    const rationale = [...artifact.prediction.rationale];
+    if (advisorySummary) {
+      rationale.push(`AI advisory: ${advisorySummary}`);
+    }
+    if (advisorySignals.length > 0) {
+      rationale.push(`AI signals: ${advisorySignals.join(" | ")}`);
     }
 
     const prediction = await runtime.unitOfWork.predictions.save(
@@ -551,16 +839,18 @@ export const scoreFixturePrediction = async (
         outcome: artifact.prediction.outcome,
         probabilities: artifact.prediction.probabilities,
         ...(artifact.prediction.publishedAt ? { publishedAt: artifact.prediction.publishedAt } : {}),
-        rationale: [...artifact.prediction.rationale],
+        rationale,
         status: artifact.prediction.status,
         updatedAt: artifact.prediction.updatedAt,
       }),
     );
+    await persistScoringWorkflow(runtime.unitOfWork, fixture.id, generatedAt, "succeeded");
 
     return {
       fixtureId: fixture.id,
       status: "scored",
       aiRunId: aiRun.id,
+      aiRunStatus: aiRun.status,
       prediction,
     };
   } finally {
