@@ -21,6 +21,7 @@ import type {
   ValidationTargetType,
   WorkflowStageStatus,
 } from "@gana-v8/domain-core";
+import { createOpaqueTaskRunId } from "@gana-v8/domain-core";
 import {
   Prisma,
   type AiRun,
@@ -169,7 +170,7 @@ export const taskAttemptToTaskRunInput = (
   attempt: TaskAttempt,
   attemptNumber: number,
 ): Prisma.TaskRunCreateWithoutTaskInput => ({
-  id: `${taskId}:attempt:${attemptNumber}`,
+  id: createOpaqueTaskRunId(taskId, attemptNumber),
   attemptNumber,
   status: attempt.finishedAt
     ? attempt.error

@@ -1,6 +1,8 @@
+import { loadRuntimeConfig, type RuntimeConfig } from "@gana-v8/config-runtime";
 import {
   createAiRun,
   createFixtureWorkflow,
+  createOpaqueTaskId,
   createPrediction,
   createTask,
   transitionFixtureWorkflowStage,
@@ -26,8 +28,8 @@ import {
   type ResearchDossierLike,
 } from "@gana-v8/prediction-engine";
 import {
-  createPrismaClient,
   createPrismaUnitOfWork,
+  createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
 import { z } from "zod";
@@ -82,6 +84,7 @@ export interface ScoringWorkerPrismaClientLike {
 type RuntimeInitOptions = {
   readonly client?: ScoringWorkerPrismaClientLike;
   readonly unitOfWork?: StorageUnitOfWork;
+  readonly env?: Readonly<Record<string, string | undefined>>;
 };
 
 type OutcomeKey = keyof ImpliedProbabilities;
@@ -115,6 +118,7 @@ export interface ScoreFixturePredictionOptions {
   readonly generatedAt?: string;
   readonly policy?: Partial<CandidateEligibilityPolicy>;
   readonly ai?: ScoringSynthesisAiConfig;
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface FixtureScoreResult {
@@ -138,7 +142,6 @@ export interface RunScoringWorkerSummary {
   readonly results: readonly FixtureScoreResult[];
 }
 
-const SCORING_TASK_PREFIX = "task:scoring-worker";
 const AI_RUN_PROVIDER = "internal";
 const AI_RUN_MODEL = "deterministic-moneyline-v1";
 const AI_RUN_PROMPT_VERSION = "scoring-worker-mvp-v1";
@@ -152,6 +155,22 @@ const scoringStructuredOutputSchema = z.object({
   advisorySignals: z.array(z.string().min(1)).max(4).optional(),
 });
 type ScoringStructuredOutput = z.infer<typeof scoringStructuredOutputSchema>;
+
+const deriveTaskLineage = (runtimeConfig: RuntimeConfig): Record<string, unknown> => ({
+  environment: runtimeConfig.app.env,
+  profile: runtimeConfig.app.profile,
+  providerSource: runtimeConfig.provider.source,
+  demoMode: runtimeConfig.flags.demoMode,
+  cohort: runtimeConfig.flags.demoMode ? `demo:${runtimeConfig.app.profile}` : `live:${runtimeConfig.app.profile}`,
+  source: "scoring-worker",
+});
+
+const buildTaskPayload = (fixtureId: string, runtimeConfig: RuntimeConfig): Record<string, unknown> => ({
+  fixtureId,
+  source: "scoring-worker",
+  lineage: deriveTaskLineage(runtimeConfig),
+});
+
 export interface ScoringSynthesisAiConfig extends GetAiProviderAdapterOptions {
   readonly enabled?: boolean;
   readonly provider?: "codex";
@@ -197,7 +216,7 @@ const createManagedRuntime = (
     };
   }
 
-  const client = (options.client ?? createPrismaClient(databaseUrl)) as unknown as ScoringWorkerPrismaClientLike;
+  const client = (options.client ?? createVerifiedPrismaClient({ databaseUrl })) as unknown as ScoringWorkerPrismaClientLike;
   const unitOfWork = options.unitOfWork ?? createPrismaUnitOfWork(client as never);
   const disconnect = options.client
     ? async () => {}
@@ -212,7 +231,8 @@ const createManagedRuntime = (
   };
 };
 
-const createScoringTaskId = (fixtureId: string): string => `${SCORING_TASK_PREFIX}:${fixtureId}`;
+const createScoringTaskId = (fixtureId: string): string =>
+  createOpaqueTaskId(`scoring-worker:${fixtureId}`);
 const createAiRunId = (fixtureId: string, generatedAt: string): string => `airun:${fixtureId}:${generatedAt}`;
 const createPredictionId = (fixtureId: string, outcome: string, generatedAt: string): string =>
   `prediction:${fixtureId}:moneyline:${outcome}:${generatedAt}`;
@@ -665,10 +685,25 @@ const ensureTask = async (
   fixtureId: string,
   taskId: string,
   generatedAt: string,
+  runtimeConfig: RuntimeConfig,
 ): Promise<TaskEntity> => {
+  const payload = buildTaskPayload(fixtureId, runtimeConfig);
   const existing = await unitOfWork.tasks.getById(taskId);
   if (existing) {
-    return existing;
+    const currentLineage = JSON.stringify(existing.payload.lineage ?? null);
+    const nextLineage = JSON.stringify(payload.lineage ?? null);
+    if (currentLineage === nextLineage && existing.payload.source === payload.source) {
+      return existing;
+    }
+
+    return unitOfWork.tasks.save({
+      ...existing,
+      payload: {
+        ...existing.payload,
+        ...payload,
+      },
+      updatedAt: generatedAt,
+    });
   }
 
   const task = createTask({
@@ -676,7 +711,7 @@ const ensureTask = async (
     kind: "prediction",
     status: "succeeded",
     priority: 50,
-    payload: { fixtureId, source: "scoring-worker" },
+    payload,
     attempts: [{ startedAt: generatedAt, finishedAt: generatedAt }],
     scheduledFor: generatedAt,
     createdAt: generatedAt,
@@ -694,6 +729,17 @@ export const scoreFixturePrediction = async (
 ): Promise<FixtureScoreResult> => {
   const runtime = createManagedRuntime(databaseUrl, options);
   const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const runtimeEnv =
+    options.env ??
+    (options.client || options.unitOfWork
+      ? {
+          NODE_ENV: "test",
+          GANA_RUNTIME_PROFILE: "ci-smoke",
+        }
+      : undefined);
+  const runtimeConfig = runtimeEnv
+    ? loadRuntimeConfig({ appName: "scoring-worker", env: runtimeEnv })
+    : loadRuntimeConfig({ appName: "scoring-worker" });
 
   try {
     const fixture = (await runtime.unitOfWork.fixtures.getById(fixtureId)) ??
@@ -755,6 +801,7 @@ export const scoreFixturePrediction = async (
       fixture.id,
       taskId ?? createScoringTaskId(fixture.id),
       generatedAt,
+      runtimeConfig,
     );
 
     const artifact = buildAtomicPrediction(enrichedFixture, dossier, {
@@ -885,6 +932,7 @@ export const runScoringWorker = async (
         ...(options.client ? { client: options.client } : {}),
         ...(options.policy ? { policy: options.policy } : {}),
         ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
+        ...(options.env ? { env: options.env } : {}),
       }),
     );
   }

@@ -20,6 +20,7 @@ import {
   PrismaSandboxNamespaceRepository,
   aiRunDomainToCreateInput,
   aiRunRecordToDomain,
+  assertSchemaReadiness,
   auditEventDomainToCreateInput,
   auditEventRecordToDomain,
   createInMemoryUnitOfWork,
@@ -31,7 +32,11 @@ import {
   predictionRecordToDomain,
   sandboxNamespaceDomainToCreateInput,
   sandboxNamespaceRecordToDomain,
+  taskDomainToCreateInput,
+  taskAttemptToTaskRunInput,
   taskRecordToDomain,
+  taskRunDomainToCreateInput,
+  taskRunRecordToDomain,
   validationDomainToCreateInput,
   validationRecordToDomain,
 } from "../src/index.js";
@@ -179,6 +184,20 @@ test("in-memory repositories store and query core aggregates", async () => {
   );
 });
 
+test("taskAttemptToTaskRunInput emits opaque trn task run ids", () => {
+  const taskRun = taskAttemptToTaskRunInput(
+    "tsk_1234567890abcdef",
+    {
+      startedAt: "2026-04-20T13:55:00.000Z",
+      finishedAt: "2026-04-20T13:56:00.000Z",
+    },
+    1,
+  );
+
+  assert.match(taskRun.id, /^trn_[a-f0-9]{16}$/);
+  assert.equal(taskRun.attemptNumber, 1);
+});
+
 test("prisma mappers preserve ai-run metadata roundtrip shape", () => {
   const aiRun = createAiRun({
     id: "ai-run-1",
@@ -220,6 +239,94 @@ test("prisma mappers preserve ai-run metadata roundtrip shape", () => {
   assert.equal(roundTrip.fallbackReason, "provider timeout");
   assert.equal(roundTrip.degraded, true);
   assert.deepEqual(roundTrip.usage, aiRun.usage);
+});
+
+test("prisma mappers preserve long task, task-run, ai-run and validation errors without truncation", () => {
+  const longError = "provider timeout :: " + "x".repeat(1200);
+  const longSummary = "validation summary :: " + "y".repeat(1200);
+
+  const task = createTask({
+    id: "task-long-error",
+    kind: "odds-ingestion",
+    status: "failed",
+    priority: 80,
+    payload: { fixtureId: "fixture:api-football:1492226" },
+    lastErrorMessage: longError,
+    createdAt: "2026-04-19T18:00:00.000Z",
+    updatedAt: "2026-04-19T18:01:00.000Z",
+  });
+  const taskRun = createTaskRun({
+    id: "task-long-error:attempt:1",
+    taskId: task.id,
+    attemptNumber: 1,
+    status: "failed",
+    startedAt: "2026-04-19T18:00:00.000Z",
+    finishedAt: "2026-04-19T18:01:00.000Z",
+    error: longError,
+    result: { message: longError },
+  });
+  const aiRun = createAiRun({
+    id: "ai-long-error",
+    taskId: task.id,
+    provider: "codex",
+    model: "gpt-5.4",
+    promptVersion: "v8-phase-0",
+    status: "failed",
+    error: longError,
+    fallbackReason: longError,
+    createdAt: "2026-04-19T18:00:00.000Z",
+    updatedAt: "2026-04-19T18:01:00.000Z",
+  });
+  const validation = createValidation({
+    id: "validation-long-summary",
+    targetType: "task",
+    targetId: task.id,
+    kind: "sandbox-regression",
+    status: "failed",
+    checks: [{ code: "task-error", message: longError, passed: false }],
+    summary: longSummary,
+    executedAt: "2026-04-19T18:02:00.000Z",
+    createdAt: "2026-04-19T18:02:00.000Z",
+    updatedAt: "2026-04-19T18:02:00.000Z",
+  });
+
+  const taskInput = taskDomainToCreateInput(task);
+  const taskRoundTrip = taskRecordToDomain({
+    ...taskInput,
+    payload: task.payload,
+    lastErrorMessage: taskInput.lastErrorMessage ?? null,
+    taskRuns: [],
+  } as never);
+  const taskRunInput = taskRunDomainToCreateInput(taskRun);
+  const taskRunRoundTrip = taskRunRecordToDomain({
+    ...taskRunInput,
+    error: taskRunInput.error ?? null,
+    result: taskRunInput.result ?? null,
+  } as never);
+  const aiRunInput = aiRunDomainToCreateInput(aiRun);
+  const aiRunRoundTrip = aiRunRecordToDomain({
+    ...aiRunInput,
+    providerRequestId: aiRunInput.providerRequestId ?? null,
+    usagePromptTokens: aiRunInput.usagePromptTokens ?? null,
+    usageCompletionTokens: aiRunInput.usageCompletionTokens ?? null,
+    usageTotalTokens: aiRunInput.usageTotalTokens ?? null,
+    outputRef: aiRunInput.outputRef ?? null,
+    error: aiRunInput.error ?? null,
+    fallbackReason: aiRunInput.fallbackReason ?? null,
+    degraded: aiRunInput.degraded ?? null,
+  } as never);
+  const validationInput = validationDomainToCreateInput(validation);
+  const validationRoundTrip = validationRecordToDomain({
+    ...validationInput,
+    checks: validation.checks,
+    summary: validationInput.summary,
+  } as never);
+
+  assert.equal(taskRoundTrip.lastErrorMessage, longError);
+  assert.equal(taskRunRoundTrip.error, longError);
+  assert.equal(aiRunRoundTrip.error, longError);
+  assert.equal(aiRunRoundTrip.fallbackReason, longError);
+  assert.equal(validationRoundTrip.summary, longSummary);
 });
 
 test("prisma mappers preserve domain roundtrip shape for core persisted entities", () => {
@@ -492,4 +599,37 @@ test("prisma unit of work now exposes sandbox namespace persistence", () => {
 test("root prisma schema validates and generates client without a live database", () => {
   execFileSync("pnpm", ["db:validate"], { cwd: new URL("../../..", import.meta.url) });
   execFileSync("pnpm", ["db:generate"], { cwd: new URL("../../..", import.meta.url) });
+});
+
+test("root prisma schema stores operational errors and summaries in text columns", () => {
+  const schema = execFileSync(
+    "node",
+    [
+      "-e",
+      "const fs=require('fs');process.stdout.write(fs.readFileSync(process.argv[1],'utf8'))",
+      new URL("../../../../prisma/schema.prisma", import.meta.url).pathname,
+    ],
+  ).toString();
+
+  assert.match(schema, /lastErrorMessage\s+String\?\s+@db\.Text/);
+  assert.match(schema, /error\s+String\?\s+@db\.Text/);
+  assert.match(schema, /summary\s+String\s+@db\.Text/);
+});
+
+test("assertSchemaReadiness surfaces actionable guidance when migrations are pending", () => {
+  assert.throws(
+    () =>
+      assertSchemaReadiness({
+        execFileSyncImpl: () => {
+          const error = new Error("migrate status failed") as Error & {
+            stdout?: Buffer;
+            stderr?: Buffer;
+          };
+          error.stdout = Buffer.from("Following migration have not yet been applied: 20260419_phase0_error_text_columns");
+          error.stderr = Buffer.from("");
+          throw error;
+        },
+      }),
+    /db:migrate:deploy/i,
+  );
 });

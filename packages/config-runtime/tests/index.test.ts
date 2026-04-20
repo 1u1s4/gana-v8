@@ -79,3 +79,30 @@ test("loadRuntimeConfig rejects unsupported enum values", () => {
     /Unsupported boolean value/,
   );
 });
+
+test("loadRuntimeConfig rejects remote databases for local-dev profiles", () => {
+  assert.throws(
+    () =>
+      loadRuntimeConfig({
+        env: {
+          GANA_RUNTIME_PROFILE: "local-dev",
+          DATABASE_URL:
+            "mysql://doadmin:secret@db-mysql-nyc3-67864-do-user-16803165-0.f.db.ondigitalocean.com:25060/gana_v8_ops?sslaccept=accept_invalid_certs",
+        },
+      }),
+    /local-dev.*must not use a remote database host/i,
+  );
+});
+
+test("loadRuntimeConfig rejects localhost databases for production profile", () => {
+  assert.throws(
+    () =>
+      loadRuntimeConfig({
+        env: {
+          GANA_RUNTIME_PROFILE: "production",
+          DATABASE_URL: "mysql://gana:secret@localhost:3306/gana_v8_local_dev",
+        },
+      }),
+    /production.*must not use a local database host/i,
+  );
+});

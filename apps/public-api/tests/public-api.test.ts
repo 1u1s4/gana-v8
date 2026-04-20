@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 
 import {
+  createAuditEvent,
   createFixtureWorkflow,
   createAiRun,
   createFixture,
@@ -87,6 +88,256 @@ test("public api routes ai runs and provider states", () => {
     routePublicApiRequest(handlers, `/provider-states/${encodeURIComponent(snapshot.providerStates[0]!.provider)}`).status,
     200,
   );
+});
+
+test("public api exposes persisted live ingestion runs reconstructed from task, task-run, and audit events", () => {
+  const fixtureTask = createTask({
+    id: "task-live-fixtures-1",
+    kind: "fixture-ingestion",
+    status: "succeeded",
+    priority: 80,
+    payload: {
+      league: "39",
+      season: 2025,
+      window: {
+        start: "2026-04-20T00:00:00.000Z",
+        end: "2026-04-21T00:00:00.000Z",
+        granularity: "daily",
+      },
+      metadata: { labels: ["official", "live", "fixtures"], source: "ingestion-worker/live-runner" },
+      traceId: "trace-live-fixtures-1",
+      workflowId: "wf-live-fixtures-1",
+    },
+    attempts: [{ startedAt: "2026-04-20T12:00:00.000Z", finishedAt: "2026-04-20T12:01:00.000Z" }],
+    scheduledFor: "2026-04-20T12:00:00.000Z",
+    createdAt: "2026-04-20T12:00:00.000Z",
+    updatedAt: "2026-04-20T12:01:00.000Z",
+  });
+  const fixtureRun = createTaskRun({
+    id: "trn_live_fixture_1",
+    taskId: fixtureTask.id,
+    attemptNumber: 1,
+    status: "succeeded",
+    startedAt: "2026-04-20T12:00:00.000Z",
+    finishedAt: "2026-04-20T12:01:00.000Z",
+  });
+  const fixtureAudit = createAuditEvent({
+    id: "audit:task-live-fixtures-1",
+    aggregateType: "task",
+    aggregateId: fixtureTask.id,
+    eventType: "ingest-fixtures.succeeded",
+    actor: "ingestion-worker",
+    payload: {
+      taskRunId: fixtureRun.id,
+      status: "succeeded",
+      intent: "ingest-fixtures",
+      workflowId: "wf-live-fixtures-1",
+      request: {
+        league: "39",
+        season: 2025,
+        window: {
+          start: "2026-04-20T00:00:00.000Z",
+          end: "2026-04-21T00:00:00.000Z",
+          granularity: "daily",
+        },
+        quirksApplied: ["api-football-season-inferred"],
+      },
+      provider: {
+        endpointFamily: "fixtures",
+        providerSource: "live-readonly",
+        providerBaseUrl: "https://provider.example/v3",
+        requestKind: "live-runner",
+      },
+      batchId: "batch-fixtures-1",
+      checksum: "chk-fixtures-1",
+      observedRecords: 3,
+      rawRefs: ["memory://fixtures/1.json"],
+      snapshotId: "snapshot-fixtures-1",
+      warnings: [],
+    },
+    occurredAt: "2026-04-20T12:01:00.000Z",
+  });
+  const oddsTask = createTask({
+    id: "task-live-odds-1",
+    kind: "odds-ingestion",
+    status: "failed",
+    priority: 90,
+    payload: {
+      fixtureIds: ["1499235"],
+      marketKeys: ["h2h"],
+      window: {
+        start: "2026-04-20T11:45:00.000Z",
+        end: "2026-04-20T13:30:00.000Z",
+        granularity: "intraday",
+      },
+      metadata: { labels: ["official", "live", "odds"], source: "ingestion-worker/live-runner" },
+      traceId: "trace-live-odds-1",
+      workflowId: "wf-live-odds-1",
+    },
+    attempts: [{ startedAt: "2026-04-20T12:05:00.000Z", finishedAt: "2026-04-20T12:06:00.000Z", error: "provider failed" }],
+    scheduledFor: "2026-04-20T12:05:00.000Z",
+    createdAt: "2026-04-20T12:05:00.000Z",
+    updatedAt: "2026-04-20T12:06:00.000Z",
+  });
+  const oddsRun = createTaskRun({
+    id: "trn_live_odds_1",
+    taskId: oddsTask.id,
+    attemptNumber: 1,
+    status: "failed",
+    startedAt: "2026-04-20T12:05:00.000Z",
+    finishedAt: "2026-04-20T12:06:00.000Z",
+    error: "provider failed",
+  });
+  const oddsAudit = createAuditEvent({
+    id: "audit:task-live-odds-1",
+    aggregateType: "task",
+    aggregateId: oddsTask.id,
+    eventType: "ingest-odds.failed",
+    actor: "ingestion-worker",
+    payload: {
+      taskRunId: oddsRun.id,
+      status: "failed",
+      intent: "ingest-odds",
+      workflowId: "wf-live-odds-1",
+      request: {
+        fixtureIds: ["1499235"],
+        marketKeys: ["h2h"],
+        window: {
+          start: "2026-04-20T11:45:00.000Z",
+          end: "2026-04-20T13:30:00.000Z",
+          granularity: "intraday",
+        },
+        quirksApplied: [],
+      },
+      provider: {
+        endpointFamily: "odds",
+        providerSource: "live-readonly",
+        providerBaseUrl: "https://provider.example/v3",
+        requestKind: "live-runner",
+      },
+      error: "provider failed",
+      errorDetails: {
+        category: "provider-envelope",
+        endpoint: "odds",
+        provider: "api-football",
+        retriable: false,
+        url: "https://provider.example/v3/odds?fixture=1499235",
+        providerErrors: { token: "invalid" },
+      },
+      warnings: [],
+    },
+    occurredAt: "2026-04-20T12:06:00.000Z",
+  });
+
+  const snapshot = createOperationSnapshot({
+    generatedAt: "2026-04-20T12:10:00.000Z",
+    tasks: [fixtureTask, oddsTask],
+    taskRuns: [fixtureRun, oddsRun],
+    auditEvents: [fixtureAudit, oddsAudit],
+    rawBatches: [
+      {
+        id: "batch-fixtures-1",
+        endpointFamily: "fixtures",
+        providerCode: "api-football",
+        extractionStatus: "success",
+        extractionTime: "2026-04-20T12:01:00.000Z",
+        recordCount: 3,
+      },
+    ],
+    oddsSnapshots: [
+      {
+        id: "odds-snapshot-1",
+        fixtureId: "fixture:api-football:1499235",
+        providerFixtureId: "1499235",
+        bookmakerKey: "bet365",
+        marketKey: "h2h",
+        capturedAt: "2026-04-20T12:02:00.000Z",
+        selectionCount: 3,
+      },
+    ],
+  });
+  const handlers = createPublicApiHandlers(snapshot);
+  const listResponse = routePublicApiRequest(handlers, "/live-ingestion-runs");
+  const detailResponse = routePublicApiRequest(handlers, `/live-ingestion-runs/${fixtureTask.id}`);
+
+  assert.equal(listResponse.status, 200);
+  assert.equal(detailResponse.status, 200);
+  const runs = listResponse.body as Array<Record<string, any>>;
+  const detail = detailResponse.body as Record<string, any>;
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0]?.taskId, oddsTask.id);
+  assert.equal(detail.taskRunId, fixtureRun.id);
+  assert.equal(detail.provider.endpointFamily, "fixtures");
+  assert.equal(detail.provider.providerSource, "live-readonly");
+  assert.equal(detail.request.league, "39");
+  assert.equal(detail.request.season, 2025);
+  assert.deepEqual(detail.request.quirksApplied, ["api-football-season-inferred"]);
+  assert.equal(runs[1]?.batch.batchId, "batch-fixtures-1");
+  assert.equal(runs[0]?.providerError.category, "provider-envelope");
+});
+
+test("public api health reports live ingestion freshness and recent failures", () => {
+  const snapshot = createOperationSnapshot({
+    generatedAt: "2026-04-20T12:10:00.000Z",
+    tasks: [
+      createTask({
+        id: "task-live-fixtures-stale",
+        kind: "fixture-ingestion",
+        status: "succeeded",
+        priority: 80,
+        payload: {},
+        attempts: [{ startedAt: "2026-04-18T09:00:00.000Z", finishedAt: "2026-04-18T09:10:00.000Z" }],
+        scheduledFor: "2026-04-18T09:00:00.000Z",
+        createdAt: "2026-04-18T09:00:00.000Z",
+        updatedAt: "2026-04-18T09:10:00.000Z",
+      }),
+      createTask({
+        id: "task-live-odds-failed",
+        kind: "odds-ingestion",
+        status: "failed",
+        priority: 90,
+        payload: {},
+        attempts: [{ startedAt: "2026-04-20T11:40:00.000Z", finishedAt: "2026-04-20T11:50:00.000Z", error: "provider failed" }],
+        scheduledFor: "2026-04-20T11:40:00.000Z",
+        createdAt: "2026-04-20T11:40:00.000Z",
+        updatedAt: "2026-04-20T11:50:00.000Z",
+      }),
+    ],
+    rawBatches: [
+      {
+        id: "stale-fixtures-batch",
+        endpointFamily: "fixtures",
+        providerCode: "api-football",
+        extractionStatus: "success",
+        extractionTime: "2026-04-18T09:10:00.000Z",
+        recordCount: 5,
+      },
+    ],
+    oddsSnapshots: [
+      {
+        id: "stale-odds-snapshot",
+        fixtureId: "fixture:api-football:1499235",
+        providerFixtureId: "1499235",
+        bookmakerKey: "bet365",
+        marketKey: "h2h",
+        capturedAt: "2026-04-20T08:00:00.000Z",
+        selectionCount: 3,
+      },
+    ],
+  });
+
+  const health = snapshot.health;
+  const fixturesFreshness = health.checks.find((check) => check.name === "live-fixtures-freshness");
+  const oddsFreshness = health.checks.find((check) => check.name === "live-odds-freshness");
+  const failures = health.checks.find((check) => check.name === "live-ingestion-recent-failures");
+
+  assert.equal(health.status, "degraded");
+  assert.equal(fixturesFreshness?.status, "warn");
+  assert.match(fixturesFreshness?.detail ?? "", /51\.00h old/i);
+  assert.equal(oddsFreshness?.status, "warn");
+  assert.match(oddsFreshness?.detail ?? "", /4\.17h|4\./i);
+  assert.equal(failures?.status, "warn");
+  assert.match(failures?.detail ?? "", /1 recent failed\/quarantined/i);
 });
 
 test("public api enriches AI run read models with provider request ids, fallback reason, and compatibility fields", () => {
@@ -185,6 +436,10 @@ test("public api derives an operational summary from tasks, task runs, etl batch
   assert.equal(summary.etl.endpointCounts.odds, 1);
   assert.equal(summary.etl.latestBatch?.id, "batch-odds-1");
   assert.equal(summary.validation.total, snapshot.validationSummary.total);
+  assert.ok(summary.observability.workers.length >= 1);
+  assert.equal(typeof summary.observability.traceability.taskTraceCoverageRate, "number");
+  assert.equal(summary.policy.status === "ready" || summary.policy.status === "degraded" || summary.policy.status === "blocked", true);
+  assert.equal(typeof summary.policy.publishAllowed, "boolean");
 });
 
 test("public api builds task log entries sorted by newest timestamp", () => {
@@ -243,6 +498,8 @@ test("public api handlers return consistent derived read models", () => {
   assert.equal(api.validationSummary().completionRate, 1);
   assert.match(api.health().checks[0]?.detail ?? "", /fixture/);
   assert.equal(api.operationalSummary().taskCounts.total, snapshot.tasks.length);
+  assert.ok(api.operationalSummary().observability.workers.length >= 1);
+  assert.equal(typeof api.operationalSummary().policy.publishAllowed, "boolean");
   assert.equal(api.operationalLogs().length, listOperationalLogs(snapshot).length);
 });
 
@@ -501,7 +758,7 @@ test("public api returns 400 for invalid task status filters", () => {
       body: {
         error: "invalid_query_parameter",
         parameter: "status",
-        allowedValues: ["queued", "running", "failed", "succeeded", "cancelled"],
+        allowedValues: ["queued", "running", "failed", "quarantined", "succeeded", "cancelled"],
       },
     },
   );

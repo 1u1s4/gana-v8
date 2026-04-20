@@ -1,13 +1,13 @@
-import type {
+import { createOperationalSummary, type
   AiRunReadModel,
-  OperationSnapshot,
-  OperationalLogEntry,
-  OperationalSummary,
-  ProviderStateReadModel,
-  PublicApiHealth,
-  RawIngestionBatchReadModel,
-  ValidationSummary,
-  OddsSnapshotReadModel,
+  type OperationSnapshot,
+  type OperationalLogEntry,
+  type OperationalSummary,
+  type ProviderStateReadModel,
+  type PublicApiHealth,
+  type RawIngestionBatchReadModel,
+  type ValidationSummary,
+  type OddsSnapshotReadModel,
 } from "@gana-v8/public-api";
 
 export interface OperatorConsoleFixture {
@@ -297,32 +297,7 @@ export function createOperatorConsoleSnapshotFromOperation(
       latestOddsSnapshot,
       endpointCounts: summarizeEndpointCounts(operationSnapshot.rawBatches),
     },
-    operationalSummary: {
-      generatedAt: operationSnapshot.generatedAt,
-      taskCounts: {
-        total: operationSnapshot.tasks.length,
-        queued: operationSnapshot.tasks.filter((task) => task.status === "queued").length,
-        running: operationSnapshot.tasks.filter((task) => task.status === "running").length,
-        failed: operationSnapshot.tasks.filter((task) => task.status === "failed").length,
-        succeeded: operationSnapshot.tasks.filter((task) => task.status === "succeeded").length,
-        cancelled: operationSnapshot.tasks.filter((task) => task.status === "cancelled").length,
-      },
-      taskRunCounts: {
-        total: operationSnapshot.taskRuns.length,
-        running: operationSnapshot.taskRuns.filter((taskRun) => taskRun.status === "running").length,
-        failed: operationSnapshot.taskRuns.filter((taskRun) => taskRun.status === "failed").length,
-        succeeded: operationSnapshot.taskRuns.filter((taskRun) => taskRun.status === "succeeded").length,
-        cancelled: operationSnapshot.taskRuns.filter((taskRun) => taskRun.status === "cancelled").length,
-      },
-      etl: {
-        rawBatchCount: operationSnapshot.rawBatches.length,
-        oddsSnapshotCount: operationSnapshot.oddsSnapshots.length,
-        endpointCounts: summarizeEndpointCounts(operationSnapshot.rawBatches),
-        latestBatch,
-        latestOddsSnapshot,
-      },
-      validation: operationSnapshot.validationSummary,
-    },
+    operationalSummary: createOperationalSummary(operationSnapshot),
     operationalLogs: [
       ...operationSnapshot.taskRuns.map((taskRun) => ({
         id: `${taskRun.id}:task-run`,
@@ -553,6 +528,64 @@ export function createOperatorConsoleSnapshot(
             selectionCount: 3,
           },
         },
+        observability: {
+          workers: [
+            {
+              worker: "ingestion-worker",
+              taskKinds: ["fixture-ingestion"],
+              totalRuns: 1,
+              runningRuns: 0,
+              failedRuns: 0,
+              succeededRuns: 1,
+              cancelledRuns: 0,
+              latestRunAt: "2026-04-15T00:01:00.000Z",
+            },
+          ],
+          providers: [
+            {
+              provider: "internal",
+              aiRunCount: 1,
+              failedAiRunCount: 0,
+              rawBatchCount: 1,
+              latestActivityAt: "2026-04-15T00:03:00.000Z",
+            },
+          ],
+          retries: {
+            queuedWithRetryHistory: 0,
+            retryingNow: 0,
+            failed: 0,
+            quarantined: 0,
+            exhausted: 0,
+          },
+          backfills: [
+            { area: "fixtures", status: "ok", detail: "Latest fixtures batch is fresh" },
+            { area: "odds", status: "ok", detail: "Latest odds snapshot is fresh" },
+            { area: "validation", status: "ok", detail: "Validation surface is current" },
+          ],
+          traceability: {
+            tasksWithTraceId: 1,
+            tasksWithoutTraceId: 0,
+            taskTraceCoverageRate: 1,
+            aiRunsWithProviderRequestId: 1,
+            aiRunsWithoutProviderRequestId: 0,
+            aiRunRequestCoverageRate: 1,
+          },
+          alerts: [],
+        },
+        policy: {
+          status: "ready",
+          publishAllowed: true,
+          retryRecommended: false,
+          backfillRequired: false,
+          gates: [
+            { name: "health", status: "pass", detail: "Health checks are green" },
+            { name: "retries", status: "pass", detail: "Retry queue is healthy" },
+            { name: "backfills", status: "pass", detail: "No backfill required" },
+            { name: "traceability", status: "pass", detail: "task traces 100% | provider requests 100%" },
+            { name: "publication-readiness", status: "pass", detail: "Publish allowed" },
+          ],
+          summary: "Operator policy ready",
+        },
         validation: input.validationSummary ?? {
           total: 2,
           passed: 1,
@@ -649,6 +682,10 @@ export function buildOperatorConsoleModel(
         (providerState) =>
           `${providerState.provider}: ${providerState.failedAiRunCount} failed ai run(s)`,
       ),
+    ...snapshot.operationalSummary.observability.alerts,
+    ...(snapshot.operationalSummary.policy.status !== "ready"
+      ? [`policy: ${snapshot.operationalSummary.policy.summary}`]
+      : []),
   ];
 
   const panels: OperatorConsolePanel[] = [
@@ -711,6 +748,36 @@ export function buildOperatorConsoleModel(
         ...snapshot.providerStates.map(
           (providerState) =>
             `${providerState.provider} | aiRuns ${providerState.aiRunCount} | failed ${providerState.failedAiRunCount} | latestPrompt ${providerState.latestPromptVersion ?? "unknown"} | remaining ${providerState.quota?.remaining ?? "unknown"}`,
+        ),
+      ],
+    },
+    {
+      title: "Observability",
+      lines: [
+        `Workers: ${snapshot.operationalSummary.observability.workers.length}`,
+        ...snapshot.operationalSummary.observability.workers.map(
+          (worker) =>
+            `${worker.worker} | runs ${worker.totalRuns} | failed ${worker.failedRuns} | running ${worker.runningRuns}`,
+        ),
+        `Providers: ${snapshot.operationalSummary.observability.providers.length}`,
+        ...snapshot.operationalSummary.observability.providers.map(
+          (provider) =>
+            `${provider.provider} | ai ${provider.aiRunCount} | failed ${provider.failedAiRunCount} | raw ${provider.rawBatchCount}`,
+        ),
+        `Retries: retrying ${snapshot.operationalSummary.observability.retries.retryingNow} | quarantined ${snapshot.operationalSummary.observability.retries.quarantined} | exhausted ${snapshot.operationalSummary.observability.retries.exhausted}`,
+        `Traceability: tasks ${Math.round(snapshot.operationalSummary.observability.traceability.taskTraceCoverageRate * 100)}% | providers ${Math.round(snapshot.operationalSummary.observability.traceability.aiRunRequestCoverageRate * 100)}%`,
+      ],
+    },
+    {
+      title: "Policy",
+      lines: [
+        `Status: ${snapshot.operationalSummary.policy.status}`,
+        `Publish allowed: ${snapshot.operationalSummary.policy.publishAllowed ? "yes" : "no"}`,
+        `Backfill required: ${snapshot.operationalSummary.policy.backfillRequired ? "yes" : "no"}`,
+        `Retry recommended: ${snapshot.operationalSummary.policy.retryRecommended ? "yes" : "no"}`,
+        snapshot.operationalSummary.policy.summary,
+        ...snapshot.operationalSummary.policy.gates.map(
+          (gate: { status: string; name: string; detail: string }) => `${gate.status.toUpperCase()} | ${gate.name} | ${gate.detail}`,
         ),
       ],
     },

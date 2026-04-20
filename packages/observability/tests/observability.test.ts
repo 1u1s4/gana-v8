@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createLogEvent,
   createObservabilityKit,
+  createOperationalObservabilitySummary,
   createTelemetryContext,
   finishSpan,
   InMemoryEventLog,
@@ -86,4 +87,111 @@ test("observability kit logs span failures and keeps correlation context", () =>
     type: "counter",
     value: 1,
   });
+});
+
+test("operational observability summary reports workers, retry pressure, backfills, and trace coverage", () => {
+  const summary = createOperationalObservabilitySummary({
+    generatedAt: "2026-04-20T12:00:00.000Z",
+    tasks: [
+      {
+        id: "task-1",
+        kind: "fixture-ingestion",
+        status: "quarantined",
+        triggerKind: "system",
+        priority: 100,
+        payload: { traceId: "trace-1" },
+        attempts: [{ startedAt: "2026-04-20T10:00:00.000Z", finishedAt: "2026-04-20T10:01:00.000Z" }],
+        maxAttempts: 1,
+        lastErrorMessage: "provider timeout",
+        createdAt: "2026-04-20T10:00:00.000Z",
+        updatedAt: "2026-04-20T10:01:00.000Z",
+      },
+      {
+        id: "task-2",
+        kind: "prediction",
+        status: "running",
+        triggerKind: "system",
+        priority: 50,
+        payload: {},
+        attempts: [
+          { startedAt: "2026-04-20T10:00:00.000Z", finishedAt: "2026-04-20T10:01:00.000Z" },
+          { startedAt: "2026-04-20T11:00:00.000Z" },
+        ],
+        maxAttempts: 3,
+        createdAt: "2026-04-20T10:00:00.000Z",
+        updatedAt: "2026-04-20T11:00:00.000Z",
+      },
+    ],
+    taskRuns: [
+      {
+        id: "run-1",
+        taskId: "task-1",
+        attemptNumber: 1,
+        status: "failed",
+        workerName: "ingestion-worker",
+        startedAt: "2026-04-20T10:00:00.000Z",
+        finishedAt: "2026-04-20T10:01:00.000Z",
+        error: "provider timeout",
+        createdAt: "2026-04-20T10:00:00.000Z",
+        updatedAt: "2026-04-20T10:01:00.000Z",
+      },
+      {
+        id: "run-2",
+        taskId: "task-2",
+        attemptNumber: 2,
+        status: "running",
+        workerName: "scoring-worker",
+        startedAt: "2026-04-20T11:00:00.000Z",
+        createdAt: "2026-04-20T11:00:00.000Z",
+        updatedAt: "2026-04-20T11:00:00.000Z",
+      },
+    ],
+    aiRuns: [
+      {
+        id: "airun-1",
+        taskId: "task-2",
+        provider: "codex",
+        model: "gpt-5.4",
+        promptVersion: "v1",
+        status: "failed",
+        error: "quota",
+        createdAt: "2026-04-20T11:00:00.000Z",
+        updatedAt: "2026-04-20T11:01:00.000Z",
+      },
+    ],
+    rawBatches: [
+      {
+        id: "batch-1",
+        endpointFamily: "fixtures",
+        providerCode: "api-football",
+        extractionStatus: "succeeded",
+        extractionTime: "2026-04-18T10:00:00.000Z",
+        recordCount: 12,
+      },
+    ],
+    oddsSnapshots: [
+      {
+        id: "odds-1",
+        marketKey: "h2h",
+        capturedAt: "2026-04-20T09:00:00.000Z",
+        selectionCount: 3,
+      },
+    ],
+    health: {
+      status: "degraded",
+      checks: [
+        { name: "live-fixtures-freshness", status: "warn", detail: "Latest fixtures batch is 50h old" },
+        { name: "live-odds-freshness", status: "pass", detail: "Latest odds snapshot is 1h old" },
+        { name: "validations", status: "warn", detail: "1 partial validation" },
+      ],
+    },
+  });
+
+  assert.equal(summary.workers.length, 2);
+  assert.equal(summary.providers.some((provider) => provider.provider === "codex"), true);
+  assert.equal(summary.retries.quarantined, 1);
+  assert.equal(summary.retries.retryingNow, 1);
+  assert.equal(summary.backfills.some((entry) => entry.area === "fixtures" && entry.status === "needed"), true);
+  assert.equal(summary.traceability.tasksWithTraceId, 1);
+  assert.equal(summary.alerts.some((alert) => alert.includes("backfill fixtures")), true);
 });

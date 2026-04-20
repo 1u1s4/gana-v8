@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const workspaceInfo = {
   packageName: "@gana-v8/queue-adapters",
   workspaceName: "queue-adapters",
@@ -10,7 +12,7 @@ export const workspaceInfo = {
   ],
 } as const;
 
-export type QueueTaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type QueueTaskStatus = "queued" | "running" | "succeeded" | "failed" | "quarantined" | "cancelled";
 export type QueueTaskKind =
   | "fixture-ingestion"
   | "odds-ingestion"
@@ -37,6 +39,8 @@ export interface QueueTaskEntity {
   readonly scheduledFor?: string;
   readonly maxAttempts: number;
   readonly lastErrorMessage?: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiresAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -62,6 +66,7 @@ export interface QueueTaskSummary {
   readonly running: number;
   readonly succeeded: number;
   readonly failed: number;
+  readonly quarantined: number;
   readonly cancelled: number;
   readonly latestTasks: readonly QueueTaskEntity[];
 }
@@ -77,6 +82,8 @@ export interface EnqueueQueueTaskInput {
   readonly payload: Record<string, unknown>;
   readonly priority?: number;
   readonly scheduledFor?: Date;
+  readonly maxAttempts?: number;
+  readonly leaseMs?: number;
   readonly now?: Date;
 }
 
@@ -99,8 +106,26 @@ export interface QueueUnitOfWorkLike {
 }
 
 export interface PrismaTaskClientLike {
-  updateMany(args: { where: { id: string; status: QueueTaskStatus }; data: { status: QueueTaskStatus; updatedAt: Date } }): Promise<{ count: number }>;
-  update(args: { where: { id: string }; data: { status: QueueTaskStatus; updatedAt: Date } }): Promise<unknown>;
+  updateMany(args: {
+    where: { id: string; status: QueueTaskStatus };
+    data: {
+      status: QueueTaskStatus;
+      updatedAt: Date;
+      triggerKind?: QueueTaskEntity["triggerKind"];
+      scheduledFor?: Date | null;
+      lastErrorMessage?: string | null;
+    };
+  }): Promise<{ count: number }>;
+  update(args: {
+    where: { id: string };
+    data: {
+      status: QueueTaskStatus;
+      updatedAt: Date;
+      triggerKind?: QueueTaskEntity["triggerKind"];
+      scheduledFor?: Date | null;
+      lastErrorMessage?: string | null;
+    };
+  }): Promise<unknown>;
 }
 
 export interface PrismaQueueClientLike {
@@ -111,8 +136,10 @@ export interface PrismaQueueClientLike {
 export interface TaskQueueAdapter {
   enqueue(input: EnqueueQueueTaskInput): Promise<QueueTaskEntity>;
   claimNext(kind?: QueueTaskKind, now?: Date): Promise<QueueTaskClaim | null>;
+  renewLease(taskId: string, taskRunId: string, now?: Date, leaseMs?: number): Promise<QueueTaskClaim>;
   complete(taskId: string, taskRunId: string, now?: Date): Promise<QueueTaskClaim>;
   fail(taskId: string, taskRunId: string, error: string, now?: Date): Promise<QueueTaskClaim>;
+  quarantine(taskId: string, taskRunId: string, reason: string, now?: Date): Promise<QueueTaskClaim>;
   requeue(taskId: string, now?: Date): Promise<QueueTaskEntity>;
   summary(): Promise<QueueTaskSummary>;
   getTaskById(taskId: string): Promise<QueueTaskEntity | null>;
@@ -166,6 +193,11 @@ const compareQueuedReadyTasks = (left: QueueTaskEntity, right: QueueTaskEntity):
   return left.createdAt.localeCompare(right.createdAt);
 };
 
+const computeOpaqueId = (prefix: string, seed: string): string => {
+  const digest = createHash("sha256").update(seed).digest("hex");
+  return `${prefix}_${digest.slice(0, 16)}`;
+};
+
 const createTask = (input: {
   readonly id: string;
   readonly kind: QueueTaskKind;
@@ -189,7 +221,16 @@ const createTask = (input: {
 
 const createTaskRun = (input: QueueTaskRunEntity): QueueTaskRunEntity => input;
 
-const startTask = (task: QueueTaskEntity, startedAt: string): QueueTaskEntity => {
+const DEFAULT_LEASE_MS = 5 * 60 * 1000;
+const DEFAULT_LEASE_OWNER = "in-memory-queue";
+const DEFAULT_RETRY_BACKOFF_MS = 60 * 1000;
+
+const startTask = (
+  task: QueueTaskEntity,
+  startedAt: string,
+  leaseOwner: string = DEFAULT_LEASE_OWNER,
+  leaseMs: number = DEFAULT_LEASE_MS,
+): QueueTaskEntity => {
   if (task.status !== "queued") {
     throw new Error(`Task ${task.id} is not queued`);
   }
@@ -198,6 +239,8 @@ const startTask = (task: QueueTaskEntity, startedAt: string): QueueTaskEntity =>
     ...task,
     status: "running",
     attempts: [...task.attempts, { startedAt }],
+    leaseOwner,
+    leaseExpiresAt: new Date(Date.parse(startedAt) + leaseMs).toISOString(),
     updatedAt: startedAt,
   };
 };
@@ -217,8 +260,10 @@ const finishTask = (
     throw new Error(`Task ${task.id} has no attempt to finish`);
   }
 
+  const { leaseOwner: _leaseOwner, leaseExpiresAt: _leaseExpiresAt, ...rest } = task;
+
   return {
-    ...task,
+    ...rest,
     status: outcome,
     attempts: [
       ...task.attempts.slice(0, -1),
@@ -233,12 +278,84 @@ const finishTask = (
   };
 };
 
+const shouldRetryTask = (task: QueueTaskEntity): boolean => task.attempts.length < task.maxAttempts;
+
+const hasExpiredLease = (task: QueueTaskEntity, nowIso: string): boolean => {
+  if (task.status !== "running") {
+    return false;
+  }
+
+  const leaseDeadline = task.leaseExpiresAt ?? new Date(Date.parse(task.updatedAt) + DEFAULT_LEASE_MS).toISOString();
+  return leaseDeadline <= nowIso;
+};
+
+const recycleExpiredLeaseTask = (task: QueueTaskEntity, nowIso: string): QueueTaskEntity => {
+  const { leaseOwner: _leaseOwner, leaseExpiresAt: _leaseExpiresAt, ...rest } = task;
+  return {
+    ...rest,
+    status: "queued",
+    updatedAt: nowIso,
+  };
+};
+
+const renewTaskLease = (
+  task: QueueTaskEntity,
+  renewedAt: string,
+  leaseMs: number = DEFAULT_LEASE_MS,
+  leaseOwner: string = DEFAULT_LEASE_OWNER,
+): QueueTaskEntity => {
+  if (task.status !== "running") {
+    throw new Error(`Task ${task.id} is not running`);
+  }
+
+  return {
+    ...task,
+    leaseOwner,
+    leaseExpiresAt: new Date(Date.parse(renewedAt) + leaseMs).toISOString(),
+    updatedAt: renewedAt,
+  };
+};
+
+const computeRetryScheduledFor = (task: QueueTaskEntity, failedAt: string): string =>
+  new Date(Date.parse(failedAt) + DEFAULT_RETRY_BACKOFF_MS * Math.max(task.attempts.length, 1)).toISOString();
+
+const quarantineTask = (
+  task: QueueTaskEntity,
+  reason: string,
+  quarantinedAt: string,
+): QueueTaskEntity => ({
+  ...finishTask(task, "failed", quarantinedAt, reason),
+  status: "quarantined",
+  updatedAt: quarantinedAt,
+});
+
+const scheduleTaskRetry = (
+  task: QueueTaskEntity,
+  failedAt: string,
+  error: string,
+): { task: QueueTaskEntity; retryScheduledFor: string } => {
+  const retryScheduledFor = computeRetryScheduledFor(task, failedAt);
+  const failedTask = finishTask(task, "failed", failedAt, error);
+
+  return {
+    retryScheduledFor,
+    task: {
+      ...failedTask,
+      status: "queued",
+      triggerKind: "retry",
+      scheduledFor: retryScheduledFor,
+      updatedAt: failedAt,
+    },
+  };
+};
+
 const buildTaskSummary = (tasks: readonly QueueTaskEntity[]): QueueTaskSummary => ({
   total: tasks.length,
   queued: tasks.filter((task) => task.status === "queued").length,
   running: tasks.filter((task) => task.status === "running").length,
   succeeded: tasks.filter((task) => task.status === "succeeded").length,
   failed: tasks.filter((task) => task.status === "failed").length,
+  quarantined: tasks.filter((task) => task.status === "quarantined").length,
   cancelled: tasks.filter((task) => task.status === "cancelled").length,
   latestTasks: [...tasks].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 10),
 });
@@ -257,6 +374,8 @@ const nextReadyTask = (
       return !candidate.scheduledFor || candidate.scheduledFor <= nowIso;
     })
     .sort(compareQueuedReadyTasks)[0] ?? null;
+
+const inputLeaseMs = (_kind?: QueueTaskKind): number => DEFAULT_LEASE_MS;
 
 const inMemoryQueueLocks = new WeakMap<QueueUnitOfWorkLike, Promise<void>>();
 
@@ -293,12 +412,18 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
       const now = input.now ?? new Date();
       return unitOfWork.tasks.save(
         createTask({
-          id: input.id ?? `task:${input.kind}:${now.toISOString()}`,
+          id:
+            input.id ??
+            computeOpaqueId(
+              "tsk",
+              JSON.stringify({ kind: input.kind, payload: input.payload, now: now.toISOString(), priority: input.priority ?? 50 }),
+            ),
           kind: input.kind,
           status: "queued",
           priority: input.priority ?? 50,
           payload: input.payload,
           ...(input.scheduledFor ? { scheduledFor: input.scheduledFor.toISOString() } : {}),
+          ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
           createdAt: now.toISOString(),
           updatedAt: now.toISOString(),
         }),
@@ -308,27 +433,54 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
 
   async claimNext(kind, now = new Date()) {
     return runInMemoryQueueMutation(unitOfWork, async () => {
-      const task = nextReadyTask(await unitOfWork.tasks.findByStatus("queued"), kind, now.toISOString());
+      const nowIso = now.toISOString();
+      const runningTasks = await unitOfWork.tasks.findByStatus("running");
+      for (const runningTask of runningTasks) {
+        if (hasExpiredLease(runningTask, nowIso)) {
+          await unitOfWork.tasks.save(recycleExpiredLeaseTask(runningTask, nowIso));
+        }
+      }
+
+      const task = nextReadyTask(await unitOfWork.tasks.findByStatus("queued"), kind, nowIso);
       if (!task) {
         return null;
       }
 
-      const claimedTask = await unitOfWork.tasks.save(startTask(task, now.toISOString()));
+      const claimedTask = await unitOfWork.tasks.save(
+        startTask(task, nowIso, DEFAULT_LEASE_OWNER, inputLeaseMs(kind))
+      );
       const attemptNumber = claimedTask.attempts.length;
       const taskRun = await unitOfWork.taskRuns.save(
         createTaskRun({
-          id: `${claimedTask.id}:attempt:${attemptNumber}`,
+          id: computeOpaqueId("trn", `${claimedTask.id}:${attemptNumber}:${nowIso}`),
           taskId: claimedTask.id,
           attemptNumber,
           status: "running",
-          workerName: "queue-adapter",
-          startedAt: now.toISOString(),
-          createdAt: now.toISOString(),
+          startedAt: nowIso,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        }),
+      );
+
+
+      return { task: claimedTask, taskRun };
+    });
+  },
+
+  async renewLease(taskId, taskRunId, now = new Date(), leaseMs = DEFAULT_LEASE_MS) {
+    return runInMemoryQueueMutation(unitOfWork, async () => {
+      const task = ensureTask(await unitOfWork.tasks.getById(taskId), taskId);
+      const taskRun = ensureTaskRun(await unitOfWork.taskRuns.getById(taskRunId), taskRunId);
+      ensureTaskLifecycleMatch(task, taskRun, taskId);
+      const renewedTask = await unitOfWork.tasks.save(renewTaskLease(task, now.toISOString(), leaseMs));
+      const renewedTaskRun = await unitOfWork.taskRuns.save(
+        createTaskRun({
+          ...taskRun,
           updatedAt: now.toISOString(),
         }),
       );
 
-      return { task: claimedTask, taskRun };
+      return { task: renewedTask, taskRun: renewedTaskRun };
     });
   },
 
@@ -357,15 +509,41 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
       const task = ensureTask(await unitOfWork.tasks.getById(taskId), taskId);
       const taskRun = ensureTaskRun(await unitOfWork.taskRuns.getById(taskRunId), taskRunId);
       ensureTaskLifecycleMatch(task, taskRun, taskId);
-      const savedTask = await unitOfWork.tasks.save(finishTask(task, "failed", now.toISOString(), error));
+      const failureTime = now.toISOString();
+      const retryPlan = shouldRetryTask(task) ? scheduleTaskRetry(task, failureTime, error) : null;
+      const terminalTask = retryPlan ? retryPlan.task : quarantineTask(task, error, failureTime);
+      const savedTask = await unitOfWork.tasks.save(terminalTask);
       const savedTaskRun = await unitOfWork.taskRuns.save(
         createTaskRun({
           ...taskRun,
           status: "failed",
           error,
-          result: { status: "failed", error },
-          finishedAt: now.toISOString(),
-          updatedAt: now.toISOString(),
+          ...(retryPlan ? { retryScheduledFor: retryPlan.retryScheduledFor } : {}),
+          result: { status: retryPlan ? "failed" : "quarantined", error },
+          finishedAt: failureTime,
+          updatedAt: failureTime,
+        }),
+      );
+
+      return { task: savedTask, taskRun: savedTaskRun };
+    });
+  },
+
+  async quarantine(taskId, taskRunId, reason, now = new Date()) {
+    return runInMemoryQueueMutation(unitOfWork, async () => {
+      const task = ensureTask(await unitOfWork.tasks.getById(taskId), taskId);
+      const taskRun = ensureTaskRun(await unitOfWork.taskRuns.getById(taskRunId), taskRunId);
+      ensureTaskLifecycleMatch(task, taskRun, taskId);
+      const quarantinedAt = now.toISOString();
+      const savedTask = await unitOfWork.tasks.save(quarantineTask(task, reason, quarantinedAt));
+      const savedTaskRun = await unitOfWork.taskRuns.save(
+        createTaskRun({
+          ...taskRun,
+          status: "failed",
+          error: reason,
+          result: { status: "quarantined", error: reason },
+          finishedAt: quarantinedAt,
+          updatedAt: quarantinedAt,
         }),
       );
 
@@ -376,12 +554,14 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
   async requeue(taskId, now = new Date()) {
     return runInMemoryQueueMutation(unitOfWork, async () => {
       const task = ensureTask(await unitOfWork.tasks.getById(taskId), taskId);
-      if (task.status !== "failed" && task.status !== "cancelled") {
+      if (task.status !== "failed" && task.status !== "quarantined" && task.status !== "cancelled") {
         throw new Error(`Task ${taskId} cannot be requeued from status ${task.status}`);
       }
 
+      const { leaseOwner: _leaseOwner, leaseExpiresAt: _leaseExpiresAt, ...rest } = task;
+
       return unitOfWork.tasks.save({
-        ...task,
+        ...rest,
         status: "queued",
         updatedAt: now.toISOString(),
       });
@@ -408,12 +588,18 @@ export const createPrismaTaskQueueAdapter = (
       const now = input.now ?? new Date();
       return transactionalUnitOfWork.tasks.save(
         createTask({
-          id: input.id ?? `task:${input.kind}:${now.toISOString()}`,
+          id:
+            input.id ??
+            computeOpaqueId(
+              "tsk",
+              JSON.stringify({ kind: input.kind, payload: input.payload, now: now.toISOString(), priority: input.priority ?? 50 }),
+            ),
           kind: input.kind,
           status: "queued",
           priority: input.priority ?? 50,
           payload: input.payload,
           ...(input.scheduledFor ? { scheduledFor: input.scheduledFor.toISOString() } : {}),
+          ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
           createdAt: now.toISOString(),
           updatedAt: now.toISOString(),
         }),
@@ -425,6 +611,28 @@ export const createPrismaTaskQueueAdapter = (
     return client.$transaction(async (transactionClient) => {
       const transactionalUnitOfWork = options.createTransactionalUnitOfWork(transactionClient);
       const nowIso = now.toISOString();
+      const runningTasks = await transactionalUnitOfWork.tasks.findByStatus("running");
+      for (const runningTask of runningTasks) {
+        if (!hasExpiredLease(runningTask, nowIso)) {
+          continue;
+        }
+
+        const recycledTask = recycleExpiredLeaseTask(runningTask, nowIso);
+        const recycleResult = await (transactionClient as { task: PrismaTaskClientLike }).task.updateMany({
+          where: { id: runningTask.id, status: "running" },
+          data: {
+            status: "queued",
+            updatedAt: new Date(nowIso),
+            triggerKind: recycledTask.triggerKind,
+            scheduledFor: recycledTask.scheduledFor ? new Date(recycledTask.scheduledFor) : null,
+            lastErrorMessage: recycledTask.lastErrorMessage ?? null,
+          },
+        });
+        if (recycleResult.count > 0) {
+          await transactionalUnitOfWork.tasks.save(recycledTask);
+        }
+      }
+
       const queuedTasks = await transactionalUnitOfWork.tasks.findByStatus("queued");
       const readyTasks = queuedTasks
         .filter((candidate) => {
@@ -453,10 +661,9 @@ export const createPrismaTaskQueueAdapter = (
             0,
           ) + 1;
         await transactionalUnitOfWork.tasks.save(startTask(task, nowIso));
-        const taskRunId = `${task.id}:attempt:${attemptNumber}`;
-        await transactionalUnitOfWork.taskRuns.save(
+        const taskRun = await transactionalUnitOfWork.taskRuns.save(
           createTaskRun({
-            id: taskRunId,
+            id: computeOpaqueId("trn", `${task.id}:${attemptNumber}:${nowIso}`),
             taskId: task.id,
             attemptNumber,
             status: "running",
@@ -469,11 +676,42 @@ export const createPrismaTaskQueueAdapter = (
 
         return {
           task: ensureTask(await transactionalUnitOfWork.tasks.getById(task.id), task.id),
-          taskRun: ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId),
+          taskRun: ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRun.id), taskRun.id),
         };
       }
 
       return null;
+    });
+  },
+
+  async renewLease(taskId, taskRunId, now = new Date(), leaseMs = DEFAULT_LEASE_MS) {
+    return client.$transaction(async (transactionClient) => {
+      const transactionalUnitOfWork = options.createTransactionalUnitOfWork(transactionClient);
+      const nowIso = now.toISOString();
+      const task = ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId);
+      const taskRun = ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId);
+      ensureTaskLifecycleMatch(task, taskRun, taskId);
+      const renewedTask = renewTaskLease(task, nowIso, leaseMs);
+      const updateTaskResult = await (transactionClient as { task: PrismaTaskClientLike }).task.updateMany({
+        where: { id: taskId, status: "running" },
+        data: { status: "running", updatedAt: new Date(nowIso) },
+      });
+      if (updateTaskResult.count === 0) {
+        throw new Error(`Task ${taskId} could not renew its lease because its persisted status changed`);
+      }
+
+      await transactionalUnitOfWork.tasks.save(renewedTask);
+      const savedTaskRun = await transactionalUnitOfWork.taskRuns.save(
+        createTaskRun({
+          ...taskRun,
+          updatedAt: nowIso,
+        }),
+      );
+
+      return {
+        task: renewTaskLease(ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId), nowIso, leaseMs),
+        taskRun: savedTaskRun,
+      };
     });
   },
 
@@ -519,10 +757,17 @@ export const createPrismaTaskQueueAdapter = (
       const task = ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId);
       const taskRun = ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId);
       ensureTaskLifecycleMatch(task, taskRun, taskId);
-      const finishedTask = finishTask(task, "failed", nowIso, error);
+      const retryPlan = shouldRetryTask(task) ? scheduleTaskRetry(task, nowIso, error) : null;
+      const finishedTask = retryPlan ? retryPlan.task : quarantineTask(task, error, nowIso);
       const updateTaskResult = await (transactionClient as { task: PrismaTaskClientLike }).task.updateMany({
         where: { id: taskId, status: "running" },
-        data: { status: "failed", updatedAt: new Date(nowIso) },
+        data: {
+          status: finishedTask.status,
+          updatedAt: new Date(nowIso),
+          triggerKind: finishedTask.triggerKind,
+          scheduledFor: finishedTask.scheduledFor ? new Date(finishedTask.scheduledFor) : null,
+          lastErrorMessage: finishedTask.lastErrorMessage ?? null,
+        },
       });
       if (updateTaskResult.count === 0) {
         throw new Error(`Task ${taskId} could not be failed because its persisted status changed`);
@@ -535,7 +780,50 @@ export const createPrismaTaskQueueAdapter = (
           status: "failed",
           workerName: "queue-adapter",
           error,
-          result: { status: "failed", error },
+          ...(retryPlan ? { retryScheduledFor: retryPlan.retryScheduledFor } : {}),
+          result: { status: retryPlan ? "failed" : "quarantined", error },
+          finishedAt: nowIso,
+          updatedAt: nowIso,
+        }),
+      );
+
+      return {
+        task: ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId),
+        taskRun: savedTaskRun,
+      };
+    });
+  },
+
+  async quarantine(taskId, taskRunId, reason, now = new Date()) {
+    return client.$transaction(async (transactionClient) => {
+      const transactionalUnitOfWork = options.createTransactionalUnitOfWork(transactionClient);
+      const nowIso = now.toISOString();
+      const task = ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId);
+      const taskRun = ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId);
+      ensureTaskLifecycleMatch(task, taskRun, taskId);
+      const quarantinedTask = quarantineTask(task, reason, nowIso);
+      const updateTaskResult = await (transactionClient as { task: PrismaTaskClientLike }).task.updateMany({
+        where: { id: taskId, status: "running" },
+        data: {
+          status: quarantinedTask.status,
+          updatedAt: new Date(nowIso),
+          triggerKind: quarantinedTask.triggerKind,
+          scheduledFor: quarantinedTask.scheduledFor ? new Date(quarantinedTask.scheduledFor) : null,
+          lastErrorMessage: quarantinedTask.lastErrorMessage ?? null,
+        },
+      });
+      if (updateTaskResult.count === 0) {
+        throw new Error(`Task ${taskId} could not be quarantined because its persisted status changed`);
+      }
+
+      await transactionalUnitOfWork.tasks.save(quarantinedTask);
+      const savedTaskRun = await transactionalUnitOfWork.taskRuns.save(
+        createTaskRun({
+          ...ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRunId), taskRunId),
+          status: "failed",
+          workerName: "queue-adapter",
+          error: reason,
+          result: { status: "quarantined", error: reason },
           finishedAt: nowIso,
           updatedAt: nowIso,
         }),
@@ -552,12 +840,13 @@ export const createPrismaTaskQueueAdapter = (
     return client.$transaction(async (transactionClient) => {
       const transactionalUnitOfWork = options.createTransactionalUnitOfWork(transactionClient);
       const task = ensureTask(await transactionalUnitOfWork.tasks.getById(taskId), taskId);
-      if (task.status !== "failed" && task.status !== "cancelled") {
+      if (task.status !== "failed" && task.status !== "quarantined" && task.status !== "cancelled") {
         throw new Error(`Task ${taskId} cannot be requeued from status ${task.status}`);
       }
 
+      const { leaseOwner: _leaseOwner, leaseExpiresAt: _leaseExpiresAt, ...rest } = task;
       const requeuedTask = {
-        ...task,
+        ...rest,
         status: "queued" as const,
         updatedAt: now.toISOString(),
       };

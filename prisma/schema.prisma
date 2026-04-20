@@ -34,6 +34,7 @@ enum TaskStatus {
   running
   succeeded
   failed
+  quarantined
   cancelled
 }
 
@@ -197,7 +198,7 @@ model FixtureWorkflow {
   overrideReason String?
   overriddenAt DateTime?
   errorCount       Int                 @default(0)
-  lastErrorMessage String?
+  lastErrorMessage String?             @db.Text
   diagnostics      Json?
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
@@ -278,7 +279,7 @@ model Task {
   payload          Json
   scheduledFor     DateTime?
   maxAttempts      Int             @default(3)
-  lastErrorMessage String?
+  lastErrorMessage String?         @db.Text
   taskRuns         TaskRun[]
   aiRuns           AiRun[]
   createdAt        DateTime        @default(now())
@@ -297,7 +298,7 @@ model TaskRun {
   workerName        String?
   startedAt         DateTime
   finishedAt        DateTime?
-  error             String?
+  error             String?       @db.Text
   result            Json?
   retryScheduledFor DateTime?
   createdAt         DateTime      @default(now())
@@ -320,8 +321,8 @@ model AiRun {
   usageCompletionTokens Int?
   usageTotalTokens      Int?
   outputRef             String?
-  error                 String?
-  fallbackReason        String?
+  error                 String?       @db.Text
+  fallbackReason        String?       @db.Text
   degraded              Boolean?
   predictions           Prediction[]
   createdAt             DateTime     @default(now())
@@ -392,7 +393,7 @@ model Validation {
   kind       ValidationKind
   status     ValidationStatus
   checks     Json
-  summary    String
+  summary    String               @db.Text
   executedAt DateTime?
   createdAt  DateTime             @default(now())
   updatedAt  DateTime             @updatedAt

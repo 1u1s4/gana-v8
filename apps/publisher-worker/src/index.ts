@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+
+import { automationActor, systemActor, type AuthorizationActor } from "@gana-v8/authz";
+import { loadRuntimeConfig, type RuntimeConfig } from "@gana-v8/config-runtime";
 import type {
   FixtureEntity,
   FixtureWorkflowEntity,
@@ -6,14 +10,22 @@ import type {
 } from "@gana-v8/domain-core";
 import { createFixtureWorkflow, transitionFixtureWorkflowStage } from "@gana-v8/domain-core";
 import {
+  evaluatePublicationReadiness,
+  normalizePublicationLineage,
+  type PublicationChannel,
+  type PublicationDecision,
+  type PublicationGateConfig,
+  type PublicationLineage,
+} from "@gana-v8/publication-engine";
+import {
   buildParlayFromCandidates,
   scoreAtomicCandidate,
   type AtomicCandidate,
   type ParlayScorecard,
 } from "@gana-v8/parlay-engine";
 import {
-  createPrismaClient,
   createPrismaUnitOfWork,
+  createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
 
@@ -37,8 +49,21 @@ export function describeWorkspace() {
   return `${workspaceInfo.workspaceName} (${workspaceInfo.category})`;
 }
 
+export interface PublishedPredictionRecordAiTask {
+  readonly id: string;
+  readonly triggerKind?: string;
+  readonly payload?: Record<string, unknown> | null;
+}
+
+export interface PublishedPredictionRecordAiRun {
+  readonly id: string;
+  readonly taskId: string;
+  readonly task?: PublishedPredictionRecordAiTask | null;
+}
+
 export interface PublishedPredictionRecord extends PredictionEntity {
   readonly fixture: FixtureEntity | null;
+  readonly aiRun?: PublishedPredictionRecordAiRun | null;
 }
 
 export interface PublisherWorkerPrismaClientLike {
@@ -50,6 +75,11 @@ export interface PublisherWorkerPrismaClientLike {
       };
       include?: {
         fixture?: boolean;
+        aiRun?: {
+          include?: {
+            task?: boolean;
+          };
+        } | boolean;
       };
       orderBy?: Array<{
         publishedAt?: "desc" | "asc";
@@ -71,9 +101,18 @@ export interface PublisherWorkerSkipReason {
     | "missing-fixture"
     | "unsupported-market"
     | "not-published"
+    | "outside-live-window"
     | "workflow-excluded"
-    | "not-enough-candidates";
+    | "not-enough-candidates"
+    | "publication-blocked";
   readonly detail: string;
+}
+
+export interface PublisherWorkerPublicationOptions {
+  readonly actor?: AuthorizationActor;
+  readonly channel?: PublicationChannel;
+  readonly gateConfig?: PublicationGateConfig;
+  readonly lineage?: Partial<PublicationLineage>;
 }
 
 export interface PublishParlayMvpOptions {
@@ -85,6 +124,8 @@ export interface PublishParlayMvpOptions {
   readonly maxLegs?: number;
   readonly source?: ParlayEntity["source"];
   readonly stake?: number;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly publication?: PublisherWorkerPublicationOptions;
 }
 
 export interface PublishParlayMvpResult {
@@ -96,14 +137,49 @@ export interface PublishParlayMvpResult {
   readonly candidateCount: number;
   readonly selectedCandidates: readonly AtomicCandidate[];
   readonly skipReasons: readonly PublisherWorkerSkipReason[];
+  readonly publicationDecision?: PublicationDecision;
 }
 
 const DEFAULT_GENERATED_AT = "2026-04-16T12:00:00.000Z";
 const DEFAULT_STAKE = 10;
 const DEFAULT_MIN_LEGS = 2;
 const DEFAULT_MAX_LEGS = 2;
+const LIVE_FIXTURE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+const LIVE_FIXTURE_LOOKAHEAD_MS = 36 * 60 * 60 * 1000;
 
 const round = (value: number): number => Number(value.toFixed(4));
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const deriveRuntimePublicationLineage = (runtimeConfig: RuntimeConfig): PublicationLineage => ({
+  environment: runtimeConfig.app.env,
+  profile: runtimeConfig.app.profile,
+  providerSource: runtimeConfig.provider.source,
+  demoMode: runtimeConfig.flags.demoMode,
+  cohort: runtimeConfig.flags.demoMode ? `demo:${runtimeConfig.app.profile}` : `live:${runtimeConfig.app.profile}`,
+  source: "publisher-worker",
+});
+
+const defaultPublicationChannel = (runtimeConfig: RuntimeConfig): PublicationChannel =>
+  runtimeConfig.flags.demoMode ? "preview-store" : "parlay-store";
+
+const defaultPublicationActor = (runtimeConfig: RuntimeConfig): AuthorizationActor =>
+  runtimeConfig.flags.demoMode
+    ? automationActor("publisher-worker:preview", "Publisher Worker Preview")
+    : systemActor("publisher-worker:system", "Publisher Worker System");
+
+const extractPredictionLineage = (prediction: PublishedPredictionRecord): PublicationLineage | null => {
+  const payload = asRecord(prediction.aiRun?.task?.payload);
+  const lineage = payload ? normalizePublicationLineage(payload.lineage as Record<string, unknown> | undefined) : null;
+  if (lineage) {
+    return lineage;
+  }
+
+  return null;
+};
 
 const createManagedRuntime = (
   databaseUrl?: string,
@@ -121,7 +197,7 @@ const createManagedRuntime = (
     };
   }
 
-  const client = (options.client ?? createPrismaClient(databaseUrl)) as PublisherWorkerPrismaClientLike;
+  const client = (options.client ?? createVerifiedPrismaClient({ databaseUrl })) as PublisherWorkerPrismaClientLike;
   const unitOfWork = options.unitOfWork ?? createPrismaUnitOfWork(client as never);
 
   return {
@@ -142,8 +218,21 @@ const normalizeTeamKey = (team: string): string =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-const createParlayId = (generatedAt: string, legs: readonly AtomicCandidate[]): string =>
-  `parlay:auto:${generatedAt.replace(/[^0-9]/g, "")}:${legs.map((leg) => leg.predictionId).join(":")}`;
+const createParlayId = (generatedAt: string, legs: readonly AtomicCandidate[]): string => {
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({
+      generatedAt,
+      legs: legs.map((leg) => ({
+        predictionId: leg.predictionId,
+        fixtureId: leg.fixtureId,
+        outcome: leg.outcome,
+      })),
+    }))
+    .digest("hex")
+    .slice(0, 24);
+
+  return `parlay:auto:${generatedAt.replace(/[^0-9]/g, "")}:${fingerprint}`;
+};
 
 const persistParlayWorkflow = async (
   unitOfWork: StorageUnitOfWork,
@@ -187,6 +276,76 @@ const createEmptyScorecard = (reasons: readonly string[]): ParlayScorecard => ({
   ready: false,
   reasons,
 });
+
+const isFixtureWithinLiveParlayWindow = (
+  fixture: FixtureEntity,
+  generatedAt: string,
+): boolean => {
+  const scheduledAtMs = Date.parse(fixture.scheduledAt);
+  const generatedAtMs = Date.parse(generatedAt);
+
+  if (!Number.isFinite(scheduledAtMs) || !Number.isFinite(generatedAtMs)) {
+    return false;
+  }
+
+  return (
+    scheduledAtMs >= generatedAtMs - LIVE_FIXTURE_LOOKBACK_MS &&
+    scheduledAtMs <= generatedAtMs + LIVE_FIXTURE_LOOKAHEAD_MS
+  );
+};
+
+const collectCandidateValidation = (
+  prediction: PublishedPredictionRecord,
+  generatedAt: string,
+): PublisherWorkerSkipReason | null => {
+  if (prediction.status !== "published") {
+    return {
+      predictionId: prediction.id,
+      fixtureId: prediction.fixtureId,
+      reason: "not-published",
+      detail: `Prediction ${prediction.id} has status ${prediction.status}`,
+    };
+  }
+
+  if (prediction.market !== "moneyline") {
+    return {
+      predictionId: prediction.id,
+      fixtureId: prediction.fixtureId,
+      reason: "unsupported-market",
+      detail: `Prediction ${prediction.id} market ${prediction.market} is outside MVP moneyline scope`,
+    };
+  }
+
+  if (!prediction.fixture) {
+    return {
+      predictionId: prediction.id,
+      fixtureId: prediction.fixtureId,
+      reason: "missing-fixture",
+      detail: `Prediction ${prediction.id} could not load fixture ${prediction.fixtureId}`,
+    };
+  }
+
+  if (!isFixtureWithinLiveParlayWindow(prediction.fixture, generatedAt)) {
+    return {
+      predictionId: prediction.id,
+      fixtureId: prediction.fixtureId,
+      reason: "outside-live-window",
+      detail: `Prediction ${prediction.id} skipped because fixture ${prediction.fixtureId} is outside the live parlay window`,
+    };
+  }
+
+  const implied = prediction.probabilities.implied;
+  if (!Number.isFinite(implied) || implied <= 0 || implied >= 1) {
+    return {
+      predictionId: prediction.id,
+      fixtureId: prediction.fixtureId,
+      reason: "invalid-implied-probability",
+      detail: `Prediction ${prediction.id} implied probability must be between 0 and 1`,
+    };
+  }
+
+  return null;
+};
 
 export const toAtomicCandidateFromPrediction = (
   prediction: PublishedPredictionRecord,
@@ -233,19 +392,20 @@ export const toAtomicCandidateFromPrediction = (
 
 export const loadPublishedPredictionCandidates = async (
   databaseUrl?: string,
-  options: Pick<PublishParlayMvpOptions, "client" | "maxPredictions"> = {},
+  options: Pick<PublishParlayMvpOptions, "client" | "maxPredictions"> & { generatedAt?: string } = {},
 ): Promise<{
   readonly predictions: readonly PublishedPredictionRecord[];
   readonly candidates: readonly AtomicCandidate[];
   readonly skipReasons: readonly PublisherWorkerSkipReason[];
 }> => {
-  const client = (options.client ?? createPrismaClient(databaseUrl)) as PublisherWorkerPrismaClientLike;
+  const client = (options.client ?? createVerifiedPrismaClient({ databaseUrl })) as PublisherWorkerPrismaClientLike;
   const ownsClient = options.client === undefined;
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
 
   try {
     const predictions = await client.prediction.findMany({
       where: { status: "published" },
-      include: { fixture: true },
+      include: { fixture: true, aiRun: { include: { task: true } } },
       orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }, { confidence: "desc" }],
       ...(options.maxPredictions !== undefined ? { take: options.maxPredictions } : {}),
     });
@@ -254,44 +414,9 @@ export const loadPublishedPredictionCandidates = async (
     const skipReasons: PublisherWorkerSkipReason[] = [];
 
     for (const prediction of predictions) {
-      if (prediction.status !== "published") {
-        skipReasons.push({
-          predictionId: prediction.id,
-          fixtureId: prediction.fixtureId,
-          reason: "not-published",
-          detail: `Prediction ${prediction.id} has status ${prediction.status}`,
-        });
-        continue;
-      }
-
-      if (prediction.market !== "moneyline") {
-        skipReasons.push({
-          predictionId: prediction.id,
-          fixtureId: prediction.fixtureId,
-          reason: "unsupported-market",
-          detail: `Prediction ${prediction.id} market ${prediction.market} is outside MVP moneyline scope`,
-        });
-        continue;
-      }
-
-      if (!prediction.fixture) {
-        skipReasons.push({
-          predictionId: prediction.id,
-          fixtureId: prediction.fixtureId,
-          reason: "missing-fixture",
-          detail: `Prediction ${prediction.id} could not load fixture ${prediction.fixtureId}`,
-        });
-        continue;
-      }
-
-      const implied = prediction.probabilities.implied;
-      if (!Number.isFinite(implied) || implied <= 0 || implied >= 1) {
-        skipReasons.push({
-          predictionId: prediction.id,
-          fixtureId: prediction.fixtureId,
-          reason: "invalid-implied-probability",
-          detail: `Prediction ${prediction.id} implied probability must be between 0 and 1`,
-        });
+      const invalid = collectCandidateValidation(prediction, generatedAt);
+      if (invalid) {
+        skipReasons.push(invalid);
         continue;
       }
 
@@ -420,11 +545,22 @@ export const publishParlayMvp = async (
   const stake = options.stake ?? DEFAULT_STAKE;
   const minLegs = options.minLegs ?? DEFAULT_MIN_LEGS;
   const maxLegs = options.maxLegs ?? DEFAULT_MAX_LEGS;
+  const runtimeEnv =
+    options.env ??
+    (options.client || options.unitOfWork
+      ? {
+          NODE_ENV: "test",
+          GANA_RUNTIME_PROFILE: "ci-smoke",
+        }
+      : undefined);
+  const runtimeConfig = runtimeEnv
+    ? loadRuntimeConfig({ appName: "publisher-worker", env: runtimeEnv })
+    : loadRuntimeConfig({ appName: "publisher-worker" });
 
   try {
     const loaded = await runtime.client.prediction.findMany({
       where: { status: "published" },
-      include: { fixture: true },
+      include: { fixture: true, aiRun: { include: { task: true } } },
       orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }, { confidence: "desc" }],
       ...(options.maxPredictions !== undefined ? { take: options.maxPredictions } : {}),
     });
@@ -433,34 +569,9 @@ export const publishParlayMvp = async (
     const skipReasons: PublisherWorkerSkipReason[] = [];
 
     for (const prediction of loaded) {
-      if (prediction.market !== "moneyline") {
-        skipReasons.push({
-          predictionId: prediction.id,
-          fixtureId: prediction.fixtureId,
-          reason: "unsupported-market",
-          detail: `Prediction ${prediction.id} market ${prediction.market} is outside MVP moneyline scope`,
-        });
-        continue;
-      }
-
-      if (!prediction.fixture) {
-        skipReasons.push({
-          predictionId: prediction.id,
-          fixtureId: prediction.fixtureId,
-          reason: "missing-fixture",
-          detail: `Prediction ${prediction.id} could not load fixture ${prediction.fixtureId}`,
-        });
-        continue;
-      }
-
-      const implied = prediction.probabilities.implied;
-      if (!Number.isFinite(implied) || implied <= 0 || implied >= 1) {
-        skipReasons.push({
-          predictionId: prediction.id,
-          fixtureId: prediction.fixtureId,
-          reason: "invalid-implied-probability",
-          detail: `Prediction ${prediction.id} implied probability must be between 0 and 1`,
-        });
+      const invalid = collectCandidateValidation(prediction, generatedAt);
+      if (invalid) {
+        skipReasons.push(invalid);
         continue;
       }
 
@@ -519,6 +630,37 @@ export const publishParlayMvp = async (
       };
     }
 
+    const selectedPredictionMap = new Map(loaded.map((prediction) => [prediction.id, prediction] as const));
+    const selectedPredictionLineages = built.selectedCandidates
+      .map((candidate) => selectedPredictionMap.get(candidate.predictionId))
+      .flatMap((prediction) => (prediction ? [extractPredictionLineage(prediction)] : []));
+    const publicationDecision = evaluatePublicationReadiness({
+      actor: options.publication?.actor ?? defaultPublicationActor(runtimeConfig),
+      channel: options.publication?.channel ?? defaultPublicationChannel(runtimeConfig),
+      ...(options.publication?.gateConfig ? { gateConfig: options.publication.gateConfig } : {}),
+      lineage: options.publication?.lineage ?? deriveRuntimePublicationLineage(runtimeConfig),
+      sourceLineages: selectedPredictionLineages,
+    });
+
+    if (!publicationDecision.allowed) {
+      return {
+        generatedAt,
+        status: "skipped",
+        scorecard: built.scorecard,
+        loadedPredictionCount: loaded.length,
+        candidateCount: candidates.length,
+        selectedCandidates: built.selectedCandidates,
+        skipReasons: [
+          ...mergedSkips,
+          {
+            reason: "publication-blocked",
+            detail: publicationDecision.reasons.map((reason: { message: string }) => reason.message).join("; "),
+          },
+        ],
+        publicationDecision,
+      };
+    }
+
     const parlay = await runtime.unitOfWork.parlays.save(built.parlay);
     await persistParlayWorkflow(
       runtime.unitOfWork,
@@ -534,6 +676,7 @@ export const publishParlayMvp = async (
       candidateCount: candidates.length,
       selectedCandidates: built.selectedCandidates,
       skipReasons: mergedSkips,
+      publicationDecision,
     };
   } finally {
     await runtime.disconnect();

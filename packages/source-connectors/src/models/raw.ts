@@ -84,6 +84,7 @@ export interface SourceIngestionBatch<TRecord extends RawSourceRecord = RawSourc
 export interface FetchFixturesWindowInput {
   readonly window: SourceCoverageWindow;
   readonly league?: string;
+  readonly season?: number;
 }
 
 export interface FetchOddsWindowInput {

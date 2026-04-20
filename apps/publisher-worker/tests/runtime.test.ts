@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { automationActor, createAuthorizationActor } from "@gana-v8/authz";
 import { createFixture, createFixtureWorkflow, createPrediction } from "@gana-v8/domain-core";
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
@@ -45,6 +46,26 @@ const predictionRecord = (
   }),
   fixture: fixture(fixtureId),
   ...overrides,
+});
+
+const withLineage = (
+  prediction: PublishedPredictionRecord,
+  lineage: Record<string, unknown>,
+): PublishedPredictionRecord => ({
+  ...prediction,
+  aiRun: {
+    id: `airun:${prediction.id}`,
+    taskId: `task:${prediction.id}`,
+    task: {
+      id: `task:${prediction.id}`,
+      triggerKind: "system",
+      payload: {
+        fixtureId: prediction.fixtureId,
+        source: "scoring-worker",
+        lineage,
+      },
+    },
+  },
 });
 
 const createClient = (
@@ -209,4 +230,242 @@ test("publishParlayMvp respects workflow overrides when selecting parlay legs", 
     ),
     true,
   );
+});
+
+test("publishParlayMvp excludes far-future demo predictions when live candidates are available", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord("pred-mictlan", "fixture:api-football:1499245", {
+        outcome: "home",
+        confidence: 0.676,
+        probabilities: { implied: 0.4463, model: 0.4498, edge: 0.0035 },
+        fixture: fixture("fixture:api-football:1499245", {
+          competition: "Liga Nacional",
+          homeTeam: "Mictlán",
+          awayTeam: "Xelajú",
+          scheduledAt: "2026-04-19T23:00:00.000Z",
+        }),
+        publishedAt: "2026-04-19T19:43:33.728Z",
+        updatedAt: "2026-04-19T19:43:33.728Z",
+      }),
+      predictionRecord("pred-antigua", "fixture:api-football:1499240", {
+        outcome: "draw",
+        confidence: 0.3422,
+        probabilities: { implied: 0.2315, model: 0.2416, edge: 0.0101 },
+        fixture: fixture("fixture:api-football:1499240", {
+          competition: "Liga Nacional",
+          homeTeam: "Antigua GFC",
+          awayTeam: "Malacateco",
+          scheduledAt: "2026-04-20T01:00:00.000Z",
+        }),
+        publishedAt: "2026-04-19T19:43:37.639Z",
+        updatedAt: "2026-04-19T19:43:37.639Z",
+      }),
+      predictionRecord("pred-demo", "haemo4orszd-fixture-1", {
+        outcome: "away",
+        confidence: 0.3241,
+        probabilities: { implied: 0.1982, model: 0.2477, edge: 0.0495 },
+        fixture: fixture("haemo4orszd-fixture-1", {
+          competition: "Automation Test League",
+          homeTeam: "Home 1",
+          awayTeam: "Away 1",
+          scheduledAt: "2099-01-01T10:00:00.000Z",
+        }),
+        publishedAt: "2099-01-01T10:05:00.000Z",
+        updatedAt: "2099-01-01T10:05:00.000Z",
+      }),
+    ]),
+    generatedAt: "2026-04-19T19:44:00.000Z",
+    stake: 10,
+    unitOfWork,
+    maxLegs: 2,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.equal(
+    result.selectedCandidates.some((candidate) => candidate.predictionId === "pred-demo"),
+    false,
+  );
+  assert.deepEqual(
+    result.selectedCandidates.map((candidate) => candidate.predictionId),
+    ["pred-mictlan", "pred-antigua"],
+  );
+});
+
+test("publishParlayMvp generates a persisted parlay id that fits the database column", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord(
+        "prediction:fixture:api-football:1499245:moneyline:home:2026-04-19T19:43:33.728Z",
+        "fixture:api-football:1499245",
+        {
+          outcome: "home",
+          confidence: 0.676,
+          probabilities: { implied: 0.4463, model: 0.4498, edge: 0.0035 },
+          fixture: fixture("fixture:api-football:1499245", {
+            competition: "Liga Nacional",
+            homeTeam: "Mictlán",
+            awayTeam: "Xelajú",
+            scheduledAt: "2026-04-19T23:00:00.000Z",
+          }),
+          publishedAt: "2026-04-19T19:43:33.728Z",
+          updatedAt: "2026-04-19T19:43:33.728Z",
+        },
+      ),
+      predictionRecord(
+        "prediction:fixture:api-football:1499240:moneyline:draw:2026-04-19T19:43:37.639Z",
+        "fixture:api-football:1499240",
+        {
+          outcome: "draw",
+          confidence: 0.3422,
+          probabilities: { implied: 0.2315, model: 0.2416, edge: 0.0101 },
+          fixture: fixture("fixture:api-football:1499240", {
+            competition: "Liga Nacional",
+            homeTeam: "Antigua GFC",
+            awayTeam: "Malacateco",
+            scheduledAt: "2026-04-20T01:00:00.000Z",
+          }),
+          publishedAt: "2026-04-19T19:43:37.639Z",
+          updatedAt: "2026-04-19T19:43:37.639Z",
+        },
+      ),
+    ]),
+    generatedAt: "2026-04-19T19:44:00.000Z",
+    stake: 10,
+    unitOfWork,
+    maxLegs: 2,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.ok(result.parlay);
+  assert.equal(result.parlay!.id.length <= 128, true);
+});
+
+test("publishParlayMvp blocks live publication when selected predictions carry demo lineage", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      withLineage(predictionRecord("pred-demo-1", "fx-1"), {
+        environment: "test",
+        profile: "ci-smoke",
+        providerSource: "mock",
+        demoMode: true,
+        cohort: "demo-ci",
+        source: "scoring-worker",
+      }),
+      withLineage(predictionRecord("pred-demo-2", "fx-2"), {
+        environment: "test",
+        profile: "ci-smoke",
+        providerSource: "mock",
+        demoMode: true,
+        cohort: "demo-ci",
+        source: "scoring-worker",
+      }),
+    ]),
+    generatedAt: "2026-04-16T12:30:00.000Z",
+    stake: 10,
+    unitOfWork,
+    publication: {
+      channel: "parlay-store",
+      actor: automationActor("automation:publisher"),
+    },
+    env: {
+      GANA_APP_ENV: "production",
+      GANA_RUNTIME_PROFILE: "production",
+      DATABASE_URL: "mysql://gana:secret@db.example.com:3306/gana_v8",
+      GANA_PROVIDER_SOURCE: "live-readonly",
+      GANA_DRY_RUN: "0",
+      GANA_DEMO_MODE: "0",
+    },
+  });
+
+  assert.equal(result.status, "skipped");
+  assert.equal(result.publicationDecision?.allowed, false);
+  assert.equal(result.skipReasons.some((reason) => reason.reason === "publication-blocked"), true);
+  assert.equal((await unitOfWork.parlays.list()).length, 0);
+});
+
+test("publishParlayMvp respects per-channel publication pauses without touching candidate selection", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const liveLineage = {
+    environment: "production",
+    profile: "production",
+    providerSource: "live-readonly",
+    demoMode: false,
+    cohort: "live-main",
+    source: "scoring-worker",
+  } as const;
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      withLineage(predictionRecord("pred-live-1", "fx-1"), liveLineage),
+      withLineage(predictionRecord("pred-live-2", "fx-2"), liveLineage),
+    ]),
+    generatedAt: "2026-04-16T12:30:00.000Z",
+    stake: 10,
+    unitOfWork,
+    publication: {
+      channel: "telegram",
+      actor: automationActor("automation:publisher"),
+      gateConfig: {
+        channelStates: {
+          telegram: "paused",
+        },
+      },
+    },
+    env: {
+      GANA_APP_ENV: "production",
+      GANA_RUNTIME_PROFILE: "production",
+      DATABASE_URL: "mysql://gana:secret@db.example.com:3306/gana_v8",
+      GANA_PROVIDER_SOURCE: "live-readonly",
+      GANA_DRY_RUN: "0",
+      GANA_DEMO_MODE: "0",
+    },
+  });
+
+  assert.equal(result.status, "skipped");
+  assert.equal(result.selectedCandidates.length, 2);
+  assert.equal(result.publicationDecision?.reasons.some((reason: { code: string }) => reason.code === "channel-paused"), true);
+});
+
+test("publishParlayMvp requires channel capability for sensitive publication targets", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const liveLineage = {
+    environment: "production",
+    profile: "production",
+    providerSource: "live-readonly",
+    demoMode: false,
+    cohort: "live-main",
+    source: "scoring-worker",
+  } as const;
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      withLineage(predictionRecord("pred-live-authz-1", "fx-1"), liveLineage),
+      withLineage(predictionRecord("pred-live-authz-2", "fx-2"), liveLineage),
+    ]),
+    generatedAt: "2026-04-16T12:30:00.000Z",
+    stake: 10,
+    unitOfWork,
+    publication: {
+      channel: "telegram",
+      actor: createAuthorizationActor({ id: "viewer:luis", role: "viewer" }),
+    },
+    env: {
+      GANA_APP_ENV: "production",
+      GANA_RUNTIME_PROFILE: "production",
+      DATABASE_URL: "mysql://gana:secret@db.example.com:3306/gana_v8",
+      GANA_PROVIDER_SOURCE: "live-readonly",
+      GANA_DRY_RUN: "0",
+      GANA_DEMO_MODE: "0",
+    },
+  });
+
+  assert.equal(result.status, "skipped");
+  assert.equal(result.publicationDecision?.reasons.some((reason: { code: string }) => reason.code === "missing-capability"), true);
 });

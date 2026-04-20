@@ -252,6 +252,26 @@ test("loadEligibleFixturesForScoring returns latest h2h context and skip reasons
   assert.match(result[1]?.reason ?? "", /No latest h2h odds snapshot/);
 });
 
+test("scoreFixturePrediction auto-generates opaque tsk task ids when no task id is provided", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const baseFixture = fixture();
+
+  await unitOfWork.fixtures.save(baseFixture);
+
+  const result = await scoreFixturePrediction(undefined, baseFixture.id, undefined, {
+    client: createFakeClient([baseFixture], [snapshot()]) as never,
+    generatedAt: "2026-04-15T12:10:00.000Z",
+    unitOfWork,
+  });
+
+  const persistedTasks = await unitOfWork.tasks.list();
+  const persistedTask = persistedTasks.at(-1);
+
+  assert.equal(result.status, "scored");
+  assert.match(persistedTask?.id ?? "", /^tsk_[a-f0-9]{16}$/);
+  assert.equal(result.prediction?.fixtureId, baseFixture.id);
+});
+
 test("scoreFixturePrediction persists completed AiRun and published prediction for eligible fixtures", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   const baseFixture = fixture();
@@ -276,6 +296,7 @@ test("scoreFixturePrediction persists completed AiRun and published prediction f
   const aiRuns = await unitOfWork.aiRuns.list();
   const predictions = await unitOfWork.predictions.list();
   const workflow = await unitOfWork.fixtureWorkflows.findByFixtureId(baseFixture.id);
+  const persistedTask = await unitOfWork.tasks.getById(task.id);
 
   assert.equal(result.status, "scored");
   assert.equal(result.aiRunStatus, "completed");
@@ -289,6 +310,14 @@ test("scoreFixturePrediction persists completed AiRun and published prediction f
   assert.equal(predictions.length, 1);
   assert.equal(predictions[0]?.fixtureId, baseFixture.id);
   assert.equal(predictions[0]?.aiRunId, aiRuns[0]?.id);
+  assert.deepEqual(persistedTask?.payload.lineage, {
+    environment: "test",
+    profile: "ci-smoke",
+    providerSource: "mock",
+    demoMode: true,
+    cohort: "demo:ci-smoke",
+    source: "scoring-worker",
+  });
 });
 
 test("scoreFixturePrediction skips fixtures that are force-excluded by workflow ops", async () => {

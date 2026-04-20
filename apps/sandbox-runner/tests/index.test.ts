@@ -4,6 +4,7 @@ import test from "node:test";
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
+  compareSandboxReleases,
   materializeSandboxRun,
   parseSandboxRunnerArgs,
   runSandboxCli,
@@ -21,6 +22,11 @@ test("sandbox runner emits smoke summary with dry-run safety guarantees", () => 
 
   assert.equal(summary.stats.fixtureCount, 2);
   assert.equal(summary.stats.replayEventCount, 4);
+  assert.equal(summary.clock.mode, "virtual");
+  assert.equal(summary.clock.tickCount, 4);
+  assert.equal(summary.replayTimeline.length, 4);
+  assert.equal(summary.golden.packId, "football-dual-smoke");
+  assert.equal(summary.comparison.changed, false);
   assert.equal(summary.safety.publishEnabled, false);
   assert.equal(summary.safety.cronDryRunOnly, true);
   assert.ok(summary.namespaceKeys.every((key) => key.startsWith(`sandbox:${summary.sandboxId}:`)));
@@ -125,9 +131,28 @@ test("cli parsing and rendering stay deterministic", () => {
     summary: {
       profileName: string;
       stats: { replayEventCount: number };
+      clock: { tickCount: number };
+      golden: { fingerprint: string };
     };
   };
 
   assert.equal(rendered.summary.profileName, "historical-backtest");
   assert.equal(rendered.summary.stats.replayEventCount, 12);
+  assert.equal(rendered.summary.clock.tickCount, 12);
+  assert.equal(typeof rendered.summary.golden.fingerprint, "string");
+});
+
+test("sandbox runner compares releases reproducibly for the same pack", () => {
+  const comparison = compareSandboxReleases({
+    profileName: "historical-backtest",
+    packId: "football-replay-late-swing",
+    baselineGitSha: "1111111abcdef",
+    candidateGitSha: "2222222fedcba",
+    now: new Date("2026-08-16T20:30:00.000Z"),
+  });
+
+  assert.equal(comparison.packId, "football-replay-late-swing");
+  assert.equal(comparison.changed, false);
+  assert.equal(comparison.fingerprintChanged, false);
+  assert.deepEqual(comparison.changedFixtureIds, []);
 });

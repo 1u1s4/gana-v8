@@ -189,7 +189,7 @@ test("operator console builds panels and alerts from the snapshot", () => {
   const snapshot = createOperatorConsoleSnapshot();
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 13);
+  assert.equal(model.panels.length, 15);
   assert.equal(model.health.status, "ok");
   assert.equal(model.validationSummary.partial, 1);
   assert.equal(model.alerts.length, 0);
@@ -197,13 +197,22 @@ test("operator console builds panels and alerts from the snapshot", () => {
   assert.equal(model.panels[2]?.title, "Task queue");
   assert.equal(model.panels[3]?.title, "Operational log");
   assert.equal(model.panels[4]?.title, "AI & providers");
-  assert.equal(model.panels[5]?.title, "Traceability");
+  assert.equal(model.panels[5]?.title, "Observability");
+  assert.equal(model.panels[6]?.title, "Policy");
+  assert.equal(model.panels[7]?.title, "Traceability");
 });
 
 test("operator console derives an ops-focused snapshot from public-api operation data", () => {
   const operationSnapshot = createOperationLikeSnapshot();
   const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot as never);
   const model = buildOperatorConsoleModel(snapshot);
+  const queuePanel = model.panels.find((panel) => panel.title === "Task queue");
+  const logPanel = model.panels.find((panel) => panel.title === "Operational log");
+  const aiPanel = model.panels.find((panel) => panel.title === "AI & providers");
+  const observabilityPanel = model.panels.find((panel) => panel.title === "Observability");
+  const policyPanel = model.panels.find((panel) => panel.title === "Policy");
+  const traceabilityPanel = model.panels.find((panel) => panel.title === "Traceability");
+  const fixtureOpsPanel = model.panels.find((panel) => panel.title === "Fixture ops");
 
   assert.equal(snapshot.tasks.length, operationSnapshot.tasks.length);
   assert.equal(snapshot.taskRuns.length, operationSnapshot.taskRuns.length);
@@ -213,18 +222,21 @@ test("operator console derives an ops-focused snapshot from public-api operation
   assert.ok(snapshot.operationalLogs.length >= 2);
   assert.equal(snapshot.aiRuns.length, 1);
   assert.equal(snapshot.providerStates[0]?.provider, "internal");
-  assert.match(model.panels[2]?.lines.join("\n") ?? "", /succeeded:1/);
-  assert.match(model.panels[3]?.lines.join("\n") ?? "", /fixture-ingestion succeeded/i);
-  assert.match(model.panels[4]?.lines.join("\n") ?? "", /deterministic-moneyline-v1/);
-  assert.match(model.panels[4]?.lines.join("\n") ?? "", /req-demo-scoring/);
-  assert.match(model.panels[4]?.lines.join("\n") ?? "", /latestPrompt/);
-  assert.match(model.panels[5]?.lines.join("\n") ?? "", /airun-demo-scoring/);
-  assert.match(model.panels[5]?.lines.join("\n") ?? "", /memory:\/\/demo\/airuns\/airun-demo-scoring.json/);
-  assert.match(model.panels[5]?.lines.join("\n") ?? "", /prediction:fixture:api-football:123:moneyline:home/);
-  assert.match(model.panels[5]?.lines.join("\n") ?? "", /parlay:demo/);
-  assert.match(model.panels[6]?.lines.join("\n") ?? "", /fixture:api-football:123/);
-  assert.match(model.panels[6]?.lines.join("\n") ?? "", /workflow/);
-  assert.match(model.panels[6]?.lines.join("\n") ?? "", /predictions 1/);
+  assert.match(queuePanel?.lines.join("\n") ?? "", /succeeded:1/);
+  assert.match(logPanel?.lines.join("\n") ?? "", /fixture-ingestion succeeded/i);
+  assert.match(aiPanel?.lines.join("\n") ?? "", /deterministic-moneyline-v1/);
+  assert.match(aiPanel?.lines.join("\n") ?? "", /req-demo-scoring/);
+  assert.match(aiPanel?.lines.join("\n") ?? "", /latestPrompt/);
+  assert.match(observabilityPanel?.lines.join("\n") ?? "", /Workers:/);
+  assert.match(observabilityPanel?.lines.join("\n") ?? "", /Traceability:/);
+  assert.match(policyPanel?.lines.join("\n") ?? "", /Publish allowed: no/);
+  assert.match(traceabilityPanel?.lines.join("\n") ?? "", /airun-demo-scoring/);
+  assert.match(traceabilityPanel?.lines.join("\n") ?? "", /memory:\/\/demo\/airuns\/airun-demo-scoring.json/);
+  assert.match(traceabilityPanel?.lines.join("\n") ?? "", /prediction:fixture:api-football:123:moneyline:home/);
+  assert.match(traceabilityPanel?.lines.join("\n") ?? "", /parlay:demo/);
+  assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /fixture:api-football:123/);
+  assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /workflow/);
+  assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /predictions 1/);
 });
 
 test("operator console surfaces fixture pipeline readiness from fixture metadata", () => {
@@ -395,15 +407,22 @@ test("operator console raises alerts from operational logs and degraded validati
   });
   const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot as never);
   const model = buildOperatorConsoleModel(snapshot);
+  const logPanel = model.panels.find((panel) => panel.title === "Operational log");
+  const aiPanel = model.panels.find((panel) => panel.title === "AI & providers");
+  const observabilityPanel = model.panels.find((panel) => panel.title === "Observability");
+  const policyPanel = model.panels.find((panel) => panel.title === "Policy");
+  const validationPanel = model.panels.find((panel) => panel.title === "Validation");
 
   assert.ok(model.alerts.some((alert) => alert.includes("task-failed")));
   assert.ok(model.alerts.some((alert) => alert.includes("provider timeout")));
-  assert.match(model.panels[3]?.lines.join("\n") ?? "", /provider timeout/);
-  assert.match(model.panels[4]?.lines.join("\n") ?? "", /req-timeout-1/);
-  assert.match(model.panels[4]?.lines.join("\n") ?? "", /fallback provider timeout/);
-  assert.match(model.panels[4]?.lines.join("\n") ?? "", /remaining 20/i);
-  assert.match(model.panels[5]?.lines.join("\n") ?? "", /fallback provider timeout/);
-  assert.match(model.panels[11]?.lines.join("\n") ?? "", /0 passed/);
+  assert.ok(model.alerts.some((alert) => alert.includes("policy:")));
+  assert.match(logPanel?.lines.join("\n") ?? "", /provider timeout/);
+  assert.match(aiPanel?.lines.join("\n") ?? "", /req-timeout-1/);
+  assert.match(aiPanel?.lines.join("\n") ?? "", /fallback provider timeout/);
+  assert.match(aiPanel?.lines.join("\n") ?? "", /remaining 20/i);
+  assert.match(observabilityPanel?.lines.join("\n") ?? "", /failed 1/);
+  assert.match(policyPanel?.lines.join("\n") ?? "", /degraded|blocked/i);
+  assert.match(validationPanel?.lines.join("\n") ?? "", /0 passed/);
 });
 
 test("operator console renderer prints a useful CLI view", () => {

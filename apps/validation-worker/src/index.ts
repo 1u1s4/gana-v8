@@ -16,6 +16,7 @@ import { settleParlayTicket, type AtomicLegSettlement } from "@gana-v8/parlay-en
 import {
   createPrismaClient,
   createPrismaUnitOfWork,
+  createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
 import { settleAtomicTicket } from "@gana-v8/validation-engine";
@@ -83,7 +84,7 @@ const createManagedRuntime = (
     };
   }
 
-  const client = createPrismaClient(databaseUrl);
+  const client = createVerifiedPrismaClient({ databaseUrl });
   return {
     unitOfWork: createPrismaUnitOfWork(client),
     disconnect: async () => {

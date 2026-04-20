@@ -7,8 +7,11 @@
     "tsBuildInfoFile": "./dist/.tsbuildinfo",
     "types": ["node"],
     "paths": {
+      "@gana-v8/authz": ["../../packages/authz/src/index.d.ts"],
+      "@gana-v8/config-runtime": ["../../packages/config-runtime/dist/src/index.d.ts"],
       "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
       "@gana-v8/parlay-engine": ["../../packages/parlay-engine/dist/index.d.ts"],
+      "@gana-v8/publication-engine": ["../../packages/publication-engine/dist/index.d.ts"],
       "@gana-v8/storage-adapters": ["../../packages/storage-adapters/dist/src/index.d.ts"]
     }
   },

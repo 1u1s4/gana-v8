@@ -209,6 +209,32 @@ const parseBoolean = (rawValue: string, variableName: string): boolean => {
   }
 };
 
+const localhostHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+
+const getDatabaseHostname = (databaseUrl: string): string | undefined => {
+  try {
+    return new URL(databaseUrl).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+};
+
+const assertDatabaseHostAllowed = (profile: RuntimeProfile, databaseUrl: string): void => {
+  const hostname = getDatabaseHostname(databaseUrl);
+  if (!hostname) {
+    return;
+  }
+
+  const isLocalHost = localhostHosts.has(hostname);
+  if (profile === "local-dev" && !isLocalHost) {
+    throw new Error(`Runtime profile ${profile} must not use a remote database host: ${hostname}`);
+  }
+
+  if (profile === "production" && isLocalHost) {
+    throw new Error(`Runtime profile ${profile} must not use a local database host: ${hostname}`);
+  }
+};
+
 export const defaultRuntimeProfileForEnv = (appEnv: AppEnvironment): RuntimeProfile => {
   switch (appEnv) {
     case "development":
@@ -264,6 +290,7 @@ export const loadRuntimeConfig = (
 
   const databaseUrl =
     firstDefined(env.GANA_DATABASE_URL, env.DATABASE_URL) ?? preset.databaseUrl;
+  assertDatabaseHostAllowed(profile, databaseUrl);
   const providerBaseUrl =
     firstDefined(env.GANA_PROVIDER_BASE_URL) ?? defaultProviderBaseUrls[providerSource];
   const logLevel = (() => {

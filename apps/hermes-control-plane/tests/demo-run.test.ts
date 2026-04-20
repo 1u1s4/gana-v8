@@ -2,16 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createFixture, createFixtureWorkflow, createTaskRun } from "@gana-v8/domain-core";
-import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
+import { PrismaClient } from "@prisma/client";
+import { createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
   buildHermesCronSpecs,
-  createHermesJobRouter,
   createPersistedTaskQueue,
+  createHermesJobRouter,
   describeWorkspace,
   enqueuePersistedTask,
   enqueuePredictionForEligibleFixtures,
   loadAutomationOpsSummary,
+  loadHermesRuntimeConfig,
+  loadLiveIngestionOpsSummary,
   loadPersistedTaskSummary,
   maybeClaimNextPersistedTask,
   requeuePersistedTask,
@@ -19,6 +22,12 @@ import {
   runDemoControlPlane,
   runNextPersistedTask,
 } from "../src/index.js";
+
+const TEST_RUNTIME_ENV = {
+  NODE_ENV: "test",
+} as const;
+
+const createPrismaClient = (databaseUrl: string) => new PrismaClient({ datasourceUrl: databaseUrl });
 
 const createAutomationFixtureWithOdds = async (
   databaseUrl: string,
@@ -274,7 +283,7 @@ test("buildHermesCronSpecs exposes hermes-native schedules for fixtures and odds
 });
 
 test("router registers ingest workflows", async () => {
-  const router = createHermesJobRouter();
+  const router = createHermesJobRouter(loadHermesRuntimeConfig(TEST_RUNTIME_ENV));
   const publicApiModule = await import("@gana-v8/public-api");
 
   assert.deepEqual([...router.intents()].sort(), ["ingest-fixtures", "ingest-odds"]);
@@ -284,12 +293,12 @@ test("router registers ingest workflows", async () => {
 });
 
 test("runDemoControlPlane dispatches fixture and odds demo jobs", async () => {
-  const summary = await runDemoControlPlane(new Date("2026-04-15T12:00:00.000Z"));
+  const summary = await runDemoControlPlane(new Date("2026-04-15T12:00:00.000Z"), { env: TEST_RUNTIME_ENV });
 
   assert.equal(summary.queuedBeforeRun, 2);
   assert.equal(summary.completedCount, 2);
-  assert.equal(summary.runtime.appEnv, "development");
-  assert.equal(summary.runtime.profile, "local-dev");
+  assert.equal(summary.runtime.appEnv, "test");
+  assert.equal(summary.runtime.profile, "ci-smoke");
   assert.equal(summary.runtime.providerSource, "mock");
   assert.equal(summary.runtime.providerBaseUrl, "mock://api-football");
   assert.equal(summary.runtime.dryRun, true);
@@ -302,12 +311,12 @@ test("runDemoControlPlane dispatches fixture and odds demo jobs", async () => {
 test("runDemoControlPlane exposes runtime overrides from config-runtime", async () => {
   const summary = await runDemoControlPlane(new Date("2026-04-15T12:00:00.000Z"), {
     env: {
+      ...TEST_RUNTIME_ENV,
       GANA_DEMO_MODE: "false",
       GANA_DRY_RUN: "false",
       GANA_LOG_LEVEL: "warn",
       GANA_PROVIDER_BASE_URL: "https://replay.gana.test/v1",
       GANA_RUNTIME_PROFILE: "ci-regression",
-      NODE_ENV: "test",
     },
   });
 
@@ -493,8 +502,45 @@ test("maybeClaimNextPersistedTask increments attempt number from existing task r
     assert.ok(claimedTask);
     assert.equal(claimedTask.task.id, queuedTask.id);
     assert.equal(claimedTask.taskRun.attemptNumber, 4);
-    assert.equal(claimedTask.taskRun.id, `${queuedTask.id}:attempt:4`);
+    assert.match(claimedTask.taskRun.id, /^trn_[a-f0-9]{16}$/);
   } finally {
+    await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
+    await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
+    await prisma.$disconnect();
+  }
+});
+
+test("maybeClaimNextPersistedTask recovers expired running tasks whose lease window elapsed", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prisma = createPrismaClient(databaseUrl);
+  const taskPrefix = `hermes-test-expired-lease-${Date.now()}`;
+  const queue = createPersistedTaskQueue(databaseUrl);
+
+  try {
+    const queuedTask = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-prediction`,
+      kind: "prediction",
+      payload: { fixtureId: "fx-expired-lease", market: "moneyline" },
+      now: new Date("2026-04-16T12:00:00.000Z"),
+    });
+
+    const firstClaim = await queue.claimNext(undefined, new Date("2026-04-16T12:01:00.000Z"));
+    assert.ok(firstClaim);
+    assert.equal(firstClaim.task.id, queuedTask.id);
+    assert.equal(firstClaim.taskRun.attemptNumber, 1);
+
+    const reclaimed = await maybeClaimNextPersistedTask(
+      databaseUrl,
+      undefined,
+      new Date("2026-04-16T12:06:01.000Z"),
+    );
+
+    assert.ok(reclaimed);
+    assert.equal(reclaimed.task.id, queuedTask.id);
+    assert.equal(reclaimed.taskRun.attemptNumber, 2);
+    assert.match(reclaimed.taskRun.id, /^trn_[a-f0-9]{16}$/);
+  } finally {
+    await queue.close();
     await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
     await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
     await prisma.$disconnect();
@@ -706,11 +752,15 @@ test("runNextPersistedTask processes prediction and validation tasks determinist
     assert.equal(validationResult.taskRun.status, "succeeded");
     assert.equal(validationResult.output.settledPredictionCount, 3);
 
-    const exhausted = await runNextPersistedTask(databaseUrl, {
-      research: async () => ({}),
-      prediction: async () => ({}),
-      validation: async () => ({}),
-    });
+    const exhausted = await runNextPersistedTask(
+      databaseUrl,
+      {
+        research: async () => ({}),
+        prediction: async () => ({}),
+        validation: async () => ({}),
+      },
+      { now: new Date("2026-04-16T11:05:00.000Z") },
+    );
 
     assert.equal(exhausted, null);
   } finally {
@@ -850,6 +900,106 @@ test("loadAutomationOpsSummary exposes scoring eligibility and recent workflow a
     assert.equal(excluded?.scoringEligibility.eligible, false);
     assert.match(excluded?.scoringEligibility.reason ?? "", /force-excluded/i);
   } finally {
+    await cleanupAutomationArtifacts(databaseUrl, prefix);
+  }
+});
+
+test("loadLiveIngestionOpsSummary exposes persisted live ingestion runs via public-api read models", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prefix = `hlis${Date.now().toString(36)}`;
+
+  await cleanupAutomationArtifacts(databaseUrl, prefix);
+
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+
+  try {
+    const taskId = `${prefix}-task-live-fixtures`;
+    const taskRunId = `${prefix}-trn-live-fixtures`;
+    await unitOfWork.tasks.save({
+      id: taskId,
+      kind: "fixture-ingestion",
+      status: "succeeded",
+      triggerKind: "manual",
+      priority: 80,
+      payload: {
+        league: "39",
+        season: 2025,
+        window: {
+          start: "2026-04-20T00:00:00.000Z",
+          end: "2026-04-21T00:00:00.000Z",
+          granularity: "daily",
+        },
+        metadata: { labels: ["official", "live", "fixtures"], source: "ingestion-worker/live-runner" },
+        traceId: `${prefix}-trace-live-fixtures`,
+        workflowId: `${prefix}-wf-live-fixtures`,
+      },
+      attempts: [{ startedAt: "2026-04-20T12:00:00.000Z", finishedAt: "2026-04-20T12:01:00.000Z" }],
+      scheduledFor: "2026-04-20T12:00:00.000Z",
+      maxAttempts: 3,
+      createdAt: "2026-04-20T12:00:00.000Z",
+      updatedAt: "2026-04-20T12:01:00.000Z",
+    });
+    await unitOfWork.taskRuns.save(createTaskRun({
+      id: taskRunId,
+      taskId,
+      attemptNumber: 1,
+      status: "succeeded",
+      startedAt: "2026-04-20T12:00:00.000Z",
+      finishedAt: "2026-04-20T12:01:00.000Z",
+      createdAt: "2026-04-20T12:00:00.000Z",
+      updatedAt: "2026-04-20T12:01:00.000Z",
+    }));
+    await unitOfWork.auditEvents.save({
+      id: `${prefix}-audit-live-fixtures`,
+      aggregateType: "task",
+      aggregateId: taskId,
+      eventType: "ingest-fixtures.succeeded",
+      actor: "ingestion-worker",
+      payload: {
+        taskRunId,
+        status: "succeeded",
+        intent: "ingest-fixtures",
+        workflowId: `${prefix}-wf-live-fixtures`,
+        request: {
+          league: "39",
+          season: 2025,
+          window: {
+            start: "2026-04-20T00:00:00.000Z",
+            end: "2026-04-21T00:00:00.000Z",
+            granularity: "daily",
+          },
+          quirksApplied: ["api-football-season-inferred"],
+        },
+        provider: {
+          endpointFamily: "fixtures",
+          providerSource: "live-readonly",
+          providerBaseUrl: "https://provider.example/v3",
+          requestKind: "live-runner",
+        },
+        batchId: `${prefix}-batch-live-fixtures`,
+        checksum: `${prefix}-checksum-live-fixtures`,
+        observedRecords: 4,
+        rawRefs: [`memory://${prefix}/fixtures.json`],
+        snapshotId: `${prefix}-snapshot-live-fixtures`,
+        warnings: [],
+      },
+      occurredAt: "2026-04-20T12:01:00.000Z",
+      createdAt: "2026-04-20T12:01:00.000Z",
+      updatedAt: "2026-04-20T12:01:00.000Z",
+    });
+
+    const summary = await loadLiveIngestionOpsSummary(databaseUrl, { taskIds: [taskId] });
+
+    assert.equal(summary.runs.length, 1);
+    assert.equal(summary.runs[0]?.taskId, taskId);
+    assert.equal(summary.runs[0]?.taskRunId, taskRunId);
+    assert.equal(summary.runs[0]?.provider.endpointFamily, "fixtures");
+    assert.equal(summary.runs[0]?.provider.providerSource, "live-readonly");
+    assert.equal(summary.runs[0]?.request?.league, "39");
+    assert.equal(summary.runs[0]?.batch?.batchId, `${prefix}-batch-live-fixtures`);
+  } finally {
+    await prisma.$disconnect();
     await cleanupAutomationArtifacts(databaseUrl, prefix);
   }
 });

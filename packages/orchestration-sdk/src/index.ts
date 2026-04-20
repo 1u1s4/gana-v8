@@ -87,6 +87,7 @@ export interface TaskExecutionResult<TResult = unknown> {
   readonly finishedAt: string;
   readonly output?: TResult;
   readonly error?: string;
+  readonly errorDetails?: Record<string, unknown>;
   readonly budgetSnapshot?: WorkflowBudgetSnapshot;
 }
 
@@ -403,6 +404,24 @@ export const createWorkflowRouter = (
   handlers: readonly WorkflowJobHandler[],
 ): WorkflowRouter => {
   const handlerMap = new Map(handlers.map((handler) => [handler.intent, handler]));
+  const serializeErrorDetails = (error: unknown): Record<string, unknown> | undefined => {
+    if (!error || typeof error !== "object") {
+      return undefined;
+    }
+
+    const details = Object.entries(error as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, value]) => {
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+        acc[key] = value;
+        return acc;
+      }
+      if (Array.isArray(value) || (value && typeof value === "object")) {
+        acc[key] = value;
+      }
+      return acc;
+    }, {});
+
+    return Object.keys(details).length > 0 ? details : undefined;
+  };
 
   return {
     async dispatch(envelope: TaskEnvelope): Promise<TaskExecutionResult> {
@@ -430,12 +449,14 @@ export const createWorkflowRouter = (
           status: "succeeded",
         };
       } catch (error) {
+        const errorDetails = serializeErrorDetails(error);
         return {
           budgetSnapshot: {
             attemptsUsed: 1,
             creditsUsed: 1,
             runtimeMsUsed: Date.now() - startedAt,
           },
+          ...(errorDetails ? { errorDetails } : {}),
           error: error instanceof Error ? error.message : String(error),
           finishedAt: new Date().toISOString(),
           status: "failed",

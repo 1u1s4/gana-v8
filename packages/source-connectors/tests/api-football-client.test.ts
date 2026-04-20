@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ApiFootballHttpClient } from "../src/clients/api-football.js";
+import { ApiFootballHttpClient, ApiFootballProviderError } from "../src/clients/api-football.js";
 
 const createJsonResponse = (payload: unknown): Response =>
   new Response(JSON.stringify(payload), {
@@ -56,6 +56,7 @@ test("ApiFootballHttpClient maps fixtures window responses into raw fixture reco
 
   const records = await client.fetchFixturesWindow({
     league: "39",
+    season: 2026,
     window: {
       end: "2026-04-16T00:00:00.000Z",
       granularity: "daily",
@@ -72,6 +73,7 @@ test("ApiFootballHttpClient maps fixtures window responses into raw fixture reco
   assert.match(requests[0]!.url, /fixtures\?from=2026-04-15/);
   assert.match(requests[0]!.url, /to=2026-04-16/);
   assert.match(requests[0]!.url, /league=39/);
+  assert.match(requests[0]!.url, /season=2026/);
   assert.equal((requests[0]!.init?.headers as Record<string, string>)["x-apisports-key"], "test-key");
 });
 
@@ -214,9 +216,10 @@ test("ApiFootballHttpClient maps and filters odds window responses", async () =>
   assert.deepEqual(records[0]?.selections.map((selection) => selection.priceDecimal), [2.1, 3.4, 3.2]);
 });
 
-test("ApiFootballHttpClient rejects provider-level errors", async () => {
+test("ApiFootballHttpClient rejects provider-level errors with structured metadata", async () => {
   const client = new ApiFootballHttpClient({
     apiKey: "test-key",
+    baseUrl: "https://example.test/v3",
     fetchImpl: async () =>
       createJsonResponse({
         errors: {
@@ -235,6 +238,15 @@ test("ApiFootballHttpClient rejects provider-level errors", async () => {
           start: "2026-04-15T00:00:00.000Z",
         },
       }),
-    /API-Football returned errors/,
+    (error) => {
+      assert.ok(error instanceof ApiFootballProviderError);
+      assert.equal(error.category, "provider-envelope");
+      assert.equal(error.provider, "api-football");
+      assert.equal(error.endpoint, "fixtures");
+      assert.equal(error.retriable, false);
+      assert.deepEqual(error.providerErrors, { token: "invalid" });
+      assert.match(error.message, /API-Football returned errors/);
+      return true;
+    },
   );
 });

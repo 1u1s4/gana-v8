@@ -14,6 +14,7 @@ export type TaskStatus =
   | "running"
   | "succeeded"
   | "failed"
+  | "quarantined"
   | "cancelled";
 
 export type TaskTriggerKind = "cron" | "manual" | "retry" | "system";

@@ -1,5 +1,23 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 
+import {
+  createOperationalObservabilitySummary,
+  type BackfillNeedReadModel,
+  type OperationalObservabilitySummary,
+  type ProviderMetricReadModel,
+  type RetryPressureSummary,
+  type TraceabilityCoverageSummary,
+  type WorkerMetricReadModel,
+} from "@gana-v8/observability";
+import {
+  evaluateOperationalPolicy,
+  type OperationalPolicyReport,
+} from "@gana-v8/policy-engine";
 import {
   applyFixtureWorkflowManualSelection as applyFixtureWorkflowManualSelectionTransition,
   applyFixtureWorkflowSelectionOverride as applyFixtureWorkflowSelectionOverrideTransition,
@@ -29,6 +47,7 @@ import {
 import {
   createPrismaClient,
   createPrismaUnitOfWork,
+  createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
 
@@ -96,6 +115,15 @@ export interface OperationalSummary {
     readonly latestBatch: RawIngestionBatchReadModel | null;
     readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
   };
+  readonly observability: {
+    readonly workers: readonly WorkerMetricReadModel[];
+    readonly providers: readonly ProviderMetricReadModel[];
+    readonly retries: RetryPressureSummary;
+    readonly backfills: readonly BackfillNeedReadModel[];
+    readonly traceability: TraceabilityCoverageSummary;
+    readonly alerts: readonly string[];
+  };
+  readonly policy: OperationalPolicyReport;
   readonly validation: ValidationSummary;
 }
 
@@ -211,6 +239,8 @@ export interface PublicApiHandlers {
   readonly taskRuns: () => readonly TaskRunEntity[];
   readonly taskRunById: (taskRunId: string) => TaskRunEntity | null;
   readonly taskRunsByTaskId: (taskId: string) => readonly TaskRunEntity[];
+  readonly liveIngestionRuns: () => readonly LiveIngestionRunReadModel[];
+  readonly liveIngestionRunByTaskId: (taskId: string) => LiveIngestionRunReadModel | null;
   readonly aiRuns: () => readonly AiRunReadModel[];
   readonly aiRunById: (aiRunId: string) => AiRunDetailReadModel | null;
   readonly providerStates: () => readonly ProviderStateReadModel[];
@@ -267,10 +297,60 @@ export interface FixtureOpsDetailReadModel {
   readonly recentTaskRuns: readonly TaskRunEntity[];
 }
 
+export interface LiveIngestionRunReadModel {
+  readonly taskId: string;
+  readonly taskRunId?: string;
+  readonly taskKind: Extract<TaskEntity["kind"], "fixture-ingestion" | "odds-ingestion">;
+  readonly intent: "ingest-fixtures" | "ingest-odds";
+  readonly status: TaskEntity["status"] | TaskRunEntity["status"];
+  readonly scheduledFor?: string;
+  readonly startedAt?: string;
+  readonly finishedAt?: string;
+  readonly workflowId?: string;
+  readonly traceId?: string;
+  readonly provider: {
+    readonly endpointFamily: "fixtures" | "odds";
+    readonly providerSource?: string;
+    readonly providerBaseUrl?: string;
+    readonly requestKind?: "live-runner" | "runtime";
+  };
+  readonly request?: {
+    readonly window: {
+      readonly start: string;
+      readonly end: string;
+      readonly granularity: "daily" | "intraday";
+    };
+    readonly league?: string;
+    readonly season?: number;
+    readonly fixtureIds?: readonly string[];
+    readonly marketKeys?: readonly string[];
+    readonly quirksApplied: readonly string[];
+  };
+  readonly batch?: {
+    readonly batchId: string;
+    readonly checksum?: string;
+    readonly observedRecords?: number;
+    readonly rawRefs: readonly string[];
+    readonly snapshotId?: string;
+    readonly warnings: readonly string[];
+  };
+  readonly providerError?: {
+    readonly category: string;
+    readonly provider: string;
+    readonly endpoint: string;
+    readonly url: string;
+    readonly retriable: boolean;
+    readonly httpStatus?: number;
+    readonly providerErrors?: Record<string, unknown> | readonly unknown[];
+    readonly message?: string;
+  };
+}
+
 const allowedTaskStatuses = [
   "queued",
   "running",
   "failed",
+  "quarantined",
   "succeeded",
   "cancelled",
 ] as const satisfies readonly TaskStatus[];
@@ -279,6 +359,7 @@ export const publicApiEndpointPaths = {
   fixtures: "/fixtures",
   tasks: "/tasks",
   taskRuns: "/task-runs",
+  liveIngestionRuns: "/live-ingestion-runs",
   aiRuns: "/ai-runs",
   providerStates: "/provider-states",
   rawBatches: "/raw-batches",
@@ -342,10 +423,31 @@ export function createHealthReport(input: {
   readonly generatedAt: string;
   readonly fixtures: readonly FixtureEntity[];
   readonly tasks: readonly TaskEntity[];
+  readonly rawBatches: readonly RawIngestionBatchReadModel[];
+  readonly oddsSnapshots: readonly OddsSnapshotReadModel[];
   readonly predictions: readonly PredictionEntity[];
   readonly parlays: readonly ParlayEntity[];
   readonly validationSummary: ValidationSummary;
 }): PublicApiHealth {
+  const generatedAtMs = Date.parse(input.generatedAt);
+  const latestFixturesBatch = sortByIsoDescending(
+    input.rawBatches.filter((batch) => batch.endpointFamily === "fixtures"),
+    (batch) => batch.extractionTime,
+  )[0] ?? null;
+  const latestOddsSnapshot = sortByIsoDescending(input.oddsSnapshots, (snapshot) => snapshot.capturedAt)[0] ?? null;
+  const recentLiveIngestionFailures = input.tasks.filter(
+    (task) =>
+      (task.kind === "fixture-ingestion" || task.kind === "odds-ingestion") &&
+      (task.status === "failed" || task.status === "quarantined") &&
+      Number.isFinite(generatedAtMs) &&
+      Date.parse(task.updatedAt) >= generatedAtMs - 24 * 60 * 60 * 1000,
+  );
+
+  const formatAgeHours = (timestamp: string): string => {
+    const ageHours = (generatedAtMs - Date.parse(timestamp)) / (60 * 60 * 1000);
+    return `${Math.max(ageHours, 0).toFixed(2)}h old`;
+  };
+
   const checks = [
     {
       name: "fixtures",
@@ -356,6 +458,35 @@ export function createHealthReport(input: {
       name: "tasks",
       status: input.tasks.length > 0 ? "pass" : "warn",
       detail: `${input.tasks.length} task(s) in snapshot`,
+    },
+    {
+      name: "live-fixtures-freshness",
+      status:
+        latestFixturesBatch &&
+        Number.isFinite(generatedAtMs) &&
+        Date.parse(latestFixturesBatch.extractionTime) >= generatedAtMs - 24 * 60 * 60 * 1000
+          ? "pass"
+          : "warn",
+      detail: latestFixturesBatch
+        ? `Latest fixtures batch ${latestFixturesBatch.id} is ${formatAgeHours(latestFixturesBatch.extractionTime)}`
+        : "No live fixtures batch found",
+    },
+    {
+      name: "live-odds-freshness",
+      status:
+        latestOddsSnapshot &&
+        Number.isFinite(generatedAtMs) &&
+        Date.parse(latestOddsSnapshot.capturedAt) >= generatedAtMs - 2 * 60 * 60 * 1000
+          ? "pass"
+          : "warn",
+      detail: latestOddsSnapshot
+        ? `Latest odds snapshot ${latestOddsSnapshot.id} is ${formatAgeHours(latestOddsSnapshot.capturedAt)}`
+        : "No live odds snapshot found",
+    },
+    {
+      name: "live-ingestion-recent-failures",
+      status: recentLiveIngestionFailures.length === 0 ? "pass" : "warn",
+      detail: `${recentLiveIngestionFailures.length} recent failed/quarantined live ingestion task(s) in last 24h`,
     },
     {
       name: "predictions",
@@ -437,6 +568,8 @@ export function createOperationSnapshot(input: {
       generatedAt,
       fixtures,
       tasks,
+      rawBatches,
+      oddsSnapshots,
       predictions,
       parlays,
       validationSummary,
@@ -457,6 +590,8 @@ export function createPublicApiHandlers(
     taskRuns: () => listTaskRuns(snapshot),
     taskRunById: (taskRunId: string) => findTaskRunById(snapshot, taskRunId),
     taskRunsByTaskId: (taskId: string) => listTaskRunsByTaskId(snapshot, taskId),
+    liveIngestionRuns: () => listLiveIngestionRuns(snapshot),
+    liveIngestionRunByTaskId: (taskId: string) => findLiveIngestionRunByTaskId(snapshot, taskId),
     aiRuns: () => listAiRuns(snapshot),
     aiRunById: (aiRunId: string) => findAiRunById(snapshot, aiRunId),
     providerStates: () => listProviderStates(snapshot),
@@ -530,6 +665,16 @@ export function routePublicApiRequest(
     }
 
     return { status: 200, body: taskRun };
+  }
+
+  const liveIngestionRunDetail = matchLiveIngestionRunDetailPath(normalizedPath);
+  if (liveIngestionRunDetail) {
+    const liveIngestionRun = handlers.liveIngestionRunByTaskId(liveIngestionRunDetail.taskId);
+    if (!liveIngestionRun) {
+      return createResourceNotFoundResponse("live-ingestion-run", liveIngestionRunDetail.taskId);
+    }
+
+    return { status: 200, body: liveIngestionRun };
   }
 
   const aiRunDetail = matchAiRunDetailPath(normalizedPath);
@@ -614,6 +759,8 @@ export function routePublicApiRequest(
     }
     case publicApiEndpointPaths.taskRuns:
       return { status: 200, body: handlers.taskRuns() };
+    case publicApiEndpointPaths.liveIngestionRuns:
+      return { status: 200, body: handlers.liveIngestionRuns() };
     case publicApiEndpointPaths.aiRuns:
       return { status: 200, body: handlers.aiRuns() };
     case publicApiEndpointPaths.providerStates:
@@ -950,6 +1097,196 @@ export function findTaskRunById(
   return snapshot.taskRuns.find((taskRun) => taskRun.id === taskRunId) ?? null;
 }
 
+const liveIngestionTaskKinds = new Set<LiveIngestionRunReadModel["taskKind"]>([
+  "fixture-ingestion",
+  "odds-ingestion",
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const toLiveIngestionIntent = (taskKind: LiveIngestionRunReadModel["taskKind"]): LiveIngestionRunReadModel["intent"] =>
+  taskKind === "odds-ingestion" ? "ingest-odds" : "ingest-fixtures";
+
+const toLiveIngestionEndpointFamily = (
+  taskKind: LiveIngestionRunReadModel["taskKind"],
+): LiveIngestionRunReadModel["provider"]["endpointFamily"] =>
+  taskKind === "odds-ingestion" ? "odds" : "fixtures";
+
+const isLiveIngestionTask = (task: TaskEntity): task is TaskEntity & { kind: LiveIngestionRunReadModel["taskKind"] } =>
+  liveIngestionTaskKinds.has(task.kind as LiveIngestionRunReadModel["taskKind"]);
+
+const findLatestTaskAuditEvent = (
+  snapshot: OperationSnapshot,
+  task: TaskEntity & { kind: LiveIngestionRunReadModel["taskKind"] },
+): AuditEventEntity | null => {
+  const expectedPrefix = toLiveIngestionIntent(task.kind);
+  return sortByIsoDescending(
+    snapshot.auditEvents.filter(
+      (auditEvent) =>
+        auditEvent.aggregateType === "task" &&
+        auditEvent.aggregateId === task.id &&
+        auditEvent.eventType.startsWith(expectedPrefix),
+    ),
+    (auditEvent) => auditEvent.occurredAt,
+  )[0] ?? null;
+};
+
+const toLiveIngestionRequest = (
+  task: TaskEntity & { kind: LiveIngestionRunReadModel["taskKind"] },
+  auditPayload: Record<string, unknown> | undefined,
+): LiveIngestionRunReadModel["request"] | undefined => {
+  const request = isRecord(auditPayload?.request) ? auditPayload?.request : undefined;
+  const payloadWindow = isRecord(task.payload.window)
+    ? task.payload.window
+    : request && isRecord(request.window)
+      ? request.window
+      : undefined;
+
+  if (!payloadWindow) {
+    return undefined;
+  }
+
+  const start = typeof payloadWindow.start === "string" ? payloadWindow.start : undefined;
+  const end = typeof payloadWindow.end === "string" ? payloadWindow.end : undefined;
+  const granularity = payloadWindow.granularity === "daily" || payloadWindow.granularity === "intraday"
+    ? payloadWindow.granularity
+    : undefined;
+
+  if (!start || !end || !granularity) {
+    return undefined;
+  }
+
+  const rawLeague = request?.league ?? task.payload.league;
+  const rawSeason = request?.season ?? task.payload.season;
+  const rawFixtureIds = request?.fixtureIds ?? task.payload.fixtureIds;
+  const rawMarketKeys = request?.marketKeys ?? task.payload.marketKeys;
+  const rawQuirksApplied = request?.quirksApplied;
+
+  return {
+    ...(typeof rawFixtureIds !== "undefined" && Array.isArray(rawFixtureIds)
+      ? { fixtureIds: rawFixtureIds.filter((value): value is string => typeof value === "string") }
+      : {}),
+    ...(typeof rawLeague === "string" ? { league: rawLeague } : {}),
+    ...(typeof rawMarketKeys !== "undefined" && Array.isArray(rawMarketKeys)
+      ? { marketKeys: rawMarketKeys.filter((value): value is string => typeof value === "string") }
+      : {}),
+    ...(typeof rawSeason === "number" ? { season: rawSeason } : {}),
+    quirksApplied: Array.isArray(rawQuirksApplied)
+      ? rawQuirksApplied.filter((value): value is string => typeof value === "string")
+      : [],
+    window: { start, end, granularity },
+  };
+};
+
+const toLiveIngestionProviderError = (
+  auditPayload: Record<string, unknown> | undefined,
+): LiveIngestionRunReadModel["providerError"] | undefined => {
+  const details = isRecord(auditPayload?.errorDetails) ? auditPayload.errorDetails : undefined;
+  if (!details) {
+    return undefined;
+  }
+
+  const category = typeof details.category === "string" ? details.category : undefined;
+  const provider = typeof details.provider === "string" ? details.provider : undefined;
+  const endpoint = typeof details.endpoint === "string" ? details.endpoint : undefined;
+  const url = typeof details.url === "string" ? details.url : undefined;
+  const retriable = typeof details.retriable === "boolean" ? details.retriable : undefined;
+  if (!category || !provider || !endpoint || !url || retriable === undefined) {
+    return undefined;
+  }
+
+  return {
+    category,
+    endpoint,
+    ...(typeof details.httpStatus === "number" ? { httpStatus: details.httpStatus } : {}),
+    ...(details.providerErrors !== undefined
+      ? { providerErrors: details.providerErrors as Record<string, unknown> | readonly unknown[] }
+      : {}),
+    provider,
+    retriable,
+    url,
+    ...(typeof auditPayload?.error === "string" ? { message: auditPayload.error } : {}),
+  };
+};
+
+const toLiveIngestionRun = (
+  snapshot: OperationSnapshot,
+  task: TaskEntity & { kind: LiveIngestionRunReadModel["taskKind"] },
+): LiveIngestionRunReadModel => {
+  const auditEvent = findLatestTaskAuditEvent(snapshot, task);
+  const auditPayload = isRecord(auditEvent?.payload) ? auditEvent.payload : undefined;
+  const taskRunId = typeof auditPayload?.taskRunId === "string" ? auditPayload.taskRunId : undefined;
+  const taskRun = taskRunId
+    ? findTaskRunById(snapshot, taskRunId)
+    : sortByIsoDescending(listTaskRunsByTaskId(snapshot, task.id), (candidate) => candidate.startedAt)[0] ?? null;
+  const provider = isRecord(auditPayload?.provider) ? auditPayload.provider : undefined;
+  const batchId = typeof auditPayload?.batchId === "string" ? auditPayload.batchId : undefined;
+  const request = toLiveIngestionRequest(task, auditPayload);
+  const providerError = toLiveIngestionProviderError(auditPayload);
+
+  return {
+    ...(batchId
+      ? {
+          batch: {
+            batchId,
+            ...(typeof auditPayload?.checksum === "string" ? { checksum: auditPayload.checksum } : {}),
+            ...(typeof auditPayload?.observedRecords === "number" ? { observedRecords: auditPayload.observedRecords } : {}),
+            rawRefs: Array.isArray(auditPayload?.rawRefs)
+              ? auditPayload.rawRefs.filter((value): value is string => typeof value === "string")
+              : [],
+            ...(typeof auditPayload?.snapshotId === "string" ? { snapshotId: auditPayload.snapshotId } : {}),
+            warnings: Array.isArray(auditPayload?.warnings)
+              ? auditPayload.warnings.filter((value): value is string => typeof value === "string")
+              : [],
+          },
+        }
+      : {}),
+    ...(taskRun?.finishedAt ? { finishedAt: taskRun.finishedAt } : {}),
+    intent:
+      typeof auditPayload?.intent === "string" && (auditPayload.intent === "ingest-fixtures" || auditPayload.intent === "ingest-odds")
+        ? auditPayload.intent
+        : toLiveIngestionIntent(task.kind),
+    provider: {
+      endpointFamily:
+        provider?.endpointFamily === "fixtures" || provider?.endpointFamily === "odds"
+          ? provider.endpointFamily
+          : toLiveIngestionEndpointFamily(task.kind),
+      ...(typeof provider?.providerBaseUrl === "string" ? { providerBaseUrl: provider.providerBaseUrl } : {}),
+      ...(typeof provider?.providerSource === "string" ? { providerSource: provider.providerSource } : {}),
+      ...(provider?.requestKind === "live-runner" || provider?.requestKind === "runtime"
+        ? { requestKind: provider.requestKind }
+        : {}),
+    },
+    ...(providerError ? { providerError } : {}),
+    ...(request ? { request } : {}),
+    ...(task.scheduledFor ? { scheduledFor: task.scheduledFor } : {}),
+    ...(taskRun?.startedAt ? { startedAt: taskRun.startedAt } : {}),
+    status: taskRun?.status ?? task.status,
+    taskId: task.id,
+    ...(taskRun?.id ? { taskRunId: taskRun.id } : {}),
+    taskKind: task.kind,
+    ...(typeof (auditPayload?.workflowId ?? task.payload.workflowId) === "string"
+      ? { workflowId: String(auditPayload?.workflowId ?? task.payload.workflowId) }
+      : {}),
+    ...(typeof task.payload.traceId === "string" ? { traceId: task.payload.traceId } : {}),
+  };
+};
+
+export function listLiveIngestionRuns(snapshot: OperationSnapshot): readonly LiveIngestionRunReadModel[] {
+  return sortByIsoDescending(
+    snapshot.tasks.filter(isLiveIngestionTask).map((task) => toLiveIngestionRun(snapshot, task)),
+    (run) => run.finishedAt ?? run.startedAt ?? run.scheduledFor ?? run.taskId,
+  );
+}
+
+export function findLiveIngestionRunByTaskId(
+  snapshot: OperationSnapshot,
+  taskId: string,
+): LiveIngestionRunReadModel | null {
+  return listLiveIngestionRuns(snapshot).find((run) => run.taskId === taskId) ?? null;
+}
+
 export function listTaskRunsByTaskId(
   snapshot: OperationSnapshot,
   taskId: string,
@@ -996,6 +1333,27 @@ const sortByIsoDescending = <T>(items: readonly T[], selector: (item: T) => stri
 };
 
 export function createOperationalSummary(snapshot: OperationSnapshot): OperationalSummary {
+  const observability = createOperationalObservabilitySummary({
+    generatedAt: snapshot.generatedAt,
+    tasks: snapshot.tasks,
+    taskRuns: snapshot.taskRuns,
+    aiRuns: snapshot.aiRuns,
+    rawBatches: snapshot.rawBatches,
+    oddsSnapshots: snapshot.oddsSnapshots,
+    health: snapshot.health,
+  });
+  const policy = evaluateOperationalPolicy({
+    health: snapshot.health,
+    retries: {
+      retrying: observability.retries.retryingNow,
+      failed: observability.retries.failed,
+      quarantined: observability.retries.quarantined,
+      exhausted: observability.retries.exhausted,
+    },
+    backfills: observability.backfills,
+    traceability: observability.traceability,
+  });
+
   return {
     generatedAt: snapshot.generatedAt,
     taskCounts: countTasksByStatus(snapshot.tasks),
@@ -1008,6 +1366,8 @@ export function createOperationalSummary(snapshot: OperationSnapshot): Operation
       latestOddsSnapshot:
         sortByIsoDescending(snapshot.oddsSnapshots, (oddsSnapshot) => oddsSnapshot.capturedAt)[0] ?? null,
     },
+    observability,
+    policy,
     validation: snapshot.validationSummary,
   };
 }
@@ -1432,7 +1792,7 @@ export function createDemoValidations(
 }
 
 export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): Promise<OperationSnapshot> {
-  const client = createPrismaClient(databaseUrl);
+  const client = createVerifiedPrismaClient({ databaseUrl });
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
@@ -1753,6 +2113,15 @@ function matchTaskRunDetailPath(requestPath: string): { taskRunId: string } | nu
   }
 
   return { taskRunId: decodeURIComponent(match[1]) };
+}
+
+function matchLiveIngestionRunDetailPath(requestPath: string): { taskId: string } | null {
+  const match = requestPath.match(/^\/live-ingestion-runs\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { taskId: decodeURIComponent(match[1]) };
 }
 
 function matchAiRunDetailPath(requestPath: string): { aiRunId: string } | null {

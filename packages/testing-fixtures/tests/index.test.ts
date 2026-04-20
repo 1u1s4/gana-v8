@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildReplayTimeline,
+  compareFixturePacks,
   createCronValidationPlan,
+  createGoldenFixturePackFingerprint,
   createSandboxRunManifest,
+  createVirtualClockPlan,
   getSyntheticFixturePack,
   listSandboxProfiles,
   listSyntheticFixturePackIds,
@@ -48,4 +52,39 @@ test("profile catalog keeps isolated sandbox-only profiles", () => {
     "ci-regression",
     "historical-backtest",
   ]);
+});
+
+test("testing fixtures build a deterministic replay timeline and virtual clock plan", () => {
+  const manifest = createSandboxRunManifest({
+    profileName: "historical-backtest",
+    packId: "football-replay-late-swing",
+    gitSha: "abcdef1234567890",
+    now: new Date("2026-08-16T20:30:00.000Z"),
+  });
+
+  const timeline = buildReplayTimeline(manifest);
+  const clock = createVirtualClockPlan(manifest);
+
+  assert.equal(timeline.length, 12);
+  assert.equal(timeline[0]?.offsetMinutes, 0);
+  assert.equal(clock.mode, "virtual");
+  assert.equal(clock.tickCount, 12);
+  assert.equal(clock.startAt, timeline[0]?.scheduledAt);
+  assert.equal(clock.endAt, timeline.at(-1)?.scheduledAt);
+});
+
+test("testing fixtures expose golden fingerprints and stable pack comparisons", () => {
+  const smoke = getSyntheticFixturePack("football-dual-smoke");
+  const replay = getSyntheticFixturePack("football-replay-late-swing");
+
+  const smokeFingerprint = createGoldenFixturePackFingerprint(smoke);
+  const replayFingerprint = createGoldenFixturePackFingerprint(replay);
+  const diff = compareFixturePacks(smoke, replay);
+
+  assert.equal(typeof smokeFingerprint.fingerprint, "string");
+  assert.equal(typeof replayFingerprint.fingerprint, "string");
+  assert.equal(diff.changed, true);
+  assert.equal(diff.fixtureDelta, 1);
+  assert.equal(diff.replayEventDelta, 8);
+  assert.ok(diff.changedFixtureIds.length >= 1);
 });

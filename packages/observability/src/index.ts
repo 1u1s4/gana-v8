@@ -296,3 +296,264 @@ export const createObservabilityKit = (input?: { readonly context?: Partial<Tele
     },
   };
 };
+
+export interface ObservabilityRawBatchInput {
+  readonly id: string;
+  readonly endpointFamily: string;
+  readonly providerCode: string;
+  readonly extractionStatus: string;
+  readonly extractionTime: string;
+  readonly recordCount: number;
+}
+
+export interface ObservabilityOddsSnapshotInput {
+  readonly id: string;
+  readonly marketKey: string;
+  readonly capturedAt: string;
+  readonly selectionCount: number;
+}
+
+export interface ObservabilityHealthCheckInput {
+  readonly name: string;
+  readonly status: "pass" | "warn";
+  readonly detail: string;
+}
+
+export interface ObservabilityHealthInput {
+  readonly status: "ok" | "degraded";
+  readonly checks: readonly ObservabilityHealthCheckInput[];
+}
+
+export interface WorkerMetricReadModel {
+  readonly worker: string;
+  readonly taskKinds: readonly string[];
+  readonly totalRuns: number;
+  readonly runningRuns: number;
+  readonly failedRuns: number;
+  readonly succeededRuns: number;
+  readonly cancelledRuns: number;
+  readonly latestRunAt?: string;
+}
+
+export interface ProviderMetricReadModel {
+  readonly provider: string;
+  readonly aiRunCount: number;
+  readonly failedAiRunCount: number;
+  readonly rawBatchCount: number;
+  readonly latestActivityAt?: string;
+  readonly latestError?: string;
+}
+
+export interface RetryPressureSummary {
+  readonly queuedWithRetryHistory: number;
+  readonly retryingNow: number;
+  readonly failed: number;
+  readonly quarantined: number;
+  readonly exhausted: number;
+}
+
+export interface BackfillNeedReadModel {
+  readonly area: "fixtures" | "odds" | "validation";
+  readonly status: "ok" | "needed";
+  readonly detail: string;
+}
+
+export interface TraceabilityCoverageSummary {
+  readonly tasksWithTraceId: number;
+  readonly tasksWithoutTraceId: number;
+  readonly taskTraceCoverageRate: number;
+  readonly aiRunsWithProviderRequestId: number;
+  readonly aiRunsWithoutProviderRequestId: number;
+  readonly aiRunRequestCoverageRate: number;
+}
+
+export interface OperationalObservabilitySummary {
+  readonly generatedAt: string;
+  readonly workers: readonly WorkerMetricReadModel[];
+  readonly providers: readonly ProviderMetricReadModel[];
+  readonly retries: RetryPressureSummary;
+  readonly backfills: readonly BackfillNeedReadModel[];
+  readonly traceability: TraceabilityCoverageSummary;
+  readonly alerts: readonly string[];
+}
+
+interface ObservabilityTaskInput {
+  readonly id: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly payload: Record<string, unknown>;
+  readonly attempts: readonly { readonly startedAt: string; readonly finishedAt?: string }[];
+  readonly maxAttempts: number;
+}
+
+interface ObservabilityTaskRunEntity {
+  readonly id: string;
+  readonly taskId: string;
+  readonly status: string;
+  readonly workerName?: string;
+  readonly startedAt: string;
+  readonly finishedAt?: string;
+}
+
+interface ObservabilityAiRunEntity {
+  readonly provider: string;
+  readonly status: string;
+  readonly providerRequestId?: string;
+  readonly error?: string;
+  readonly updatedAt: string;
+}
+
+const safeIsoMax = (...values: readonly (string | undefined)[]): string | undefined => {
+  return values
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .sort((left, right) => right.localeCompare(left))[0];
+};
+
+const asTaskPayload = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const calculateCoverageRate = (covered: number, total: number): number =>
+  total === 0 ? 1 : Number((covered / total).toFixed(4));
+
+export const createOperationalObservabilitySummary = (input: {
+  readonly generatedAt: string;
+  readonly tasks: readonly ObservabilityTaskInput[];
+  readonly taskRuns: readonly ObservabilityTaskRunEntity[];
+  readonly aiRuns: readonly ObservabilityAiRunEntity[];
+  readonly rawBatches: readonly ObservabilityRawBatchInput[];
+  readonly oddsSnapshots: readonly ObservabilityOddsSnapshotInput[];
+  readonly health: ObservabilityHealthInput;
+}): OperationalObservabilitySummary => {
+  const tasksById = new Map(input.tasks.map((task) => [task.id, task] as const));
+
+  const workers = [...input.taskRuns.reduce<Map<string, WorkerMetricReadModel>>((map, taskRun) => {
+    const worker = taskRun.workerName ?? tasksById.get(taskRun.taskId)?.kind ?? "unknown";
+    const current = map.get(worker) ?? {
+      worker,
+      taskKinds: [],
+      totalRuns: 0,
+      runningRuns: 0,
+      failedRuns: 0,
+      succeededRuns: 0,
+      cancelledRuns: 0,
+    };
+    const taskKind = tasksById.get(taskRun.taskId)?.kind ?? "unknown";
+    const latestRunAt = safeIsoMax(current.latestRunAt, taskRun.finishedAt, taskRun.startedAt);
+    const next: WorkerMetricReadModel = {
+      ...current,
+      taskKinds: [...new Set([...current.taskKinds, taskKind])],
+      totalRuns: current.totalRuns + 1,
+      runningRuns: current.runningRuns + (taskRun.status === "running" ? 1 : 0),
+      failedRuns: current.failedRuns + (taskRun.status === "failed" ? 1 : 0),
+      succeededRuns: current.succeededRuns + (taskRun.status === "succeeded" ? 1 : 0),
+      cancelledRuns: current.cancelledRuns + (taskRun.status === "cancelled" ? 1 : 0),
+      ...(latestRunAt ? { latestRunAt } : {}),
+    };
+    map.set(worker, next);
+    return map;
+  }, new Map()).values()].sort((left, right) => left.worker.localeCompare(right.worker));
+
+  const providers = [
+    ...new Set([...input.aiRuns.map((aiRun) => aiRun.provider), ...input.rawBatches.map((batch) => batch.providerCode)]),
+  ]
+    .sort((left, right) => left.localeCompare(right))
+    .map<ProviderMetricReadModel>((provider) => {
+      const aiRuns = input.aiRuns.filter((aiRun) => aiRun.provider === provider);
+      const rawBatches = input.rawBatches.filter((batch) => batch.providerCode === provider);
+      const latestFailedAiRun = aiRuns
+        .filter((aiRun) => aiRun.status === "failed" && aiRun.error)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      const latestActivityAt = safeIsoMax(
+        ...aiRuns.map((aiRun) => aiRun.updatedAt),
+        ...rawBatches.map((batch) => batch.extractionTime),
+      );
+      return {
+        provider,
+        aiRunCount: aiRuns.length,
+        failedAiRunCount: aiRuns.filter((aiRun) => aiRun.status === "failed").length,
+        rawBatchCount: rawBatches.length,
+        ...(latestActivityAt ? { latestActivityAt } : {}),
+        ...(latestFailedAiRun?.error ? { latestError: latestFailedAiRun.error } : {}),
+      };
+    });
+
+  const retries: RetryPressureSummary = {
+    queuedWithRetryHistory: input.tasks.filter((task) => task.status === "queued" && task.attempts.length > 0).length,
+    retryingNow: input.tasks.filter((task) => task.status === "running" && task.attempts.length > 1).length,
+    failed: input.tasks.filter((task) => task.status === "failed").length,
+    quarantined: input.tasks.filter((task) => task.status === "quarantined").length,
+    exhausted: input.tasks.filter(
+      (task) => (task.status === "failed" || task.status === "quarantined") && task.attempts.length >= task.maxAttempts,
+    ).length,
+  };
+
+  const backfills: BackfillNeedReadModel[] = [
+    {
+      area: "fixtures",
+      status: input.health.checks.some((check) => check.name === "live-fixtures-freshness" && check.status === "warn")
+        ? "needed"
+        : "ok",
+      detail:
+        input.health.checks.find((check) => check.name === "live-fixtures-freshness")?.detail ??
+        "No fixture freshness signal available",
+    },
+    {
+      area: "odds",
+      status: input.health.checks.some((check) => check.name === "live-odds-freshness" && check.status === "warn")
+        ? "needed"
+        : "ok",
+      detail:
+        input.health.checks.find((check) => check.name === "live-odds-freshness")?.detail ??
+        "No odds freshness signal available",
+    },
+    {
+      area: "validation",
+      status: input.health.checks.some((check) => check.name === "validations" && check.status === "warn")
+        ? "needed"
+        : "ok",
+      detail:
+        input.health.checks.find((check) => check.name === "validations")?.detail ??
+        "No validation signal available",
+    },
+  ];
+
+  const tasksWithTraceId = input.tasks.filter((task) => {
+    const payload = asTaskPayload(task.payload);
+    return typeof payload.traceId === "string" && payload.traceId.length > 0;
+  }).length;
+  const aiRunsWithProviderRequestId = input.aiRuns.filter(
+    (aiRun) => typeof aiRun.providerRequestId === "string" && aiRun.providerRequestId.length > 0,
+  ).length;
+  const traceability: TraceabilityCoverageSummary = {
+    tasksWithTraceId,
+    tasksWithoutTraceId: Math.max(input.tasks.length - tasksWithTraceId, 0),
+    taskTraceCoverageRate: calculateCoverageRate(tasksWithTraceId, input.tasks.length),
+    aiRunsWithProviderRequestId,
+    aiRunsWithoutProviderRequestId: Math.max(input.aiRuns.length - aiRunsWithProviderRequestId, 0),
+    aiRunRequestCoverageRate: calculateCoverageRate(aiRunsWithProviderRequestId, input.aiRuns.length),
+  };
+
+  const alerts = [
+    ...backfills
+      .filter((backfill) => backfill.status === "needed")
+      .map((backfill) => `backfill ${backfill.area}: ${backfill.detail}`),
+    ...(retries.exhausted > 0 ? [`retry pressure: ${retries.exhausted} exhausted task(s)`] : []),
+    ...(retries.quarantined > 0 ? [`retry pressure: ${retries.quarantined} quarantined task(s)`] : []),
+    ...providers
+      .filter((provider) => provider.failedAiRunCount > 0)
+      .map((provider) => `${provider.provider}: ${provider.failedAiRunCount} failed ai run(s)`),
+    ...(traceability.taskTraceCoverageRate < 0.8
+      ? [`traceability: only ${Math.round(traceability.taskTraceCoverageRate * 100)}% of tasks carry traceId`]
+      : []),
+  ];
+
+  return {
+    generatedAt: input.generatedAt,
+    workers,
+    providers,
+    retries,
+    backfills,
+    traceability,
+    alerts,
+  };
+};

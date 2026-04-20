@@ -23,6 +23,43 @@ export interface ApiFootballHttpClientOptions {
   readonly timeoutMs?: number;
 }
 
+export type ApiFootballProviderErrorCategory = "http" | "provider-envelope" | "timeout";
+
+export class ApiFootballProviderError extends Error {
+  readonly provider: string;
+  readonly endpoint: string;
+  readonly url: string;
+  readonly category: ApiFootballProviderErrorCategory;
+  readonly retriable: boolean;
+  readonly httpStatus?: number;
+  readonly providerErrors?: Record<string, unknown> | readonly unknown[];
+
+  constructor(input: {
+    endpoint: string;
+    url: string;
+    category: ApiFootballProviderErrorCategory;
+    retriable: boolean;
+    message: string;
+    httpStatus?: number;
+    providerErrors?: Record<string, unknown> | readonly unknown[];
+    provider?: string;
+  }) {
+    super(input.message);
+    this.name = "ApiFootballProviderError";
+    this.provider = input.provider ?? defaultProviderCode;
+    this.endpoint = input.endpoint;
+    this.url = input.url;
+    this.category = input.category;
+    this.retriable = input.retriable;
+    if (input.httpStatus !== undefined) {
+      this.httpStatus = input.httpStatus;
+    }
+    if (input.providerErrors !== undefined) {
+      this.providerErrors = input.providerErrors;
+    }
+  }
+}
+
 interface ApiFootballEnvelope<TResponse> {
   readonly errors?: Record<string, unknown> | readonly unknown[];
   readonly get?: string;
@@ -301,6 +338,7 @@ export class ApiFootballHttpClient implements FootballApiClient {
       ? await this.request<ApiFootballFixtureResponse>("fixtures", {
           from: toDateOnly(input.window.start),
           league: input.league,
+          ...(input.season !== undefined ? { season: String(input.season) } : {}),
           timezone: "UTC",
           to: toDateOnly(input.window.end),
         })
@@ -422,16 +460,46 @@ export class ApiFootballHttpClient implements FootballApiClient {
       });
 
       if (!response.ok) {
-        throw new Error(`API-Football request failed with status ${response.status} for ${url}`);
+        throw new ApiFootballProviderError({
+          category: "http",
+          endpoint: path,
+          httpStatus: response.status,
+          message: `API-Football request failed with status ${response.status} for ${url}`,
+          retriable: response.status >= 500 || response.status === 429,
+          url,
+        });
       }
 
       const body = (await response.json()) as ApiFootballEnvelope<TResponse>;
       const errors = body.errors;
       if (errors && ((Array.isArray(errors) && errors.length > 0) || Object.keys(errors).length > 0)) {
-        throw new Error(`API-Football returned errors for ${url}: ${JSON.stringify(errors)}`);
+        throw new ApiFootballProviderError({
+          category: "provider-envelope",
+          endpoint: path,
+          message: `API-Football returned errors for ${url}: ${JSON.stringify(errors)}`,
+          providerErrors: errors,
+          retriable: false,
+          url,
+        });
       }
 
       return ensureArray(body.response);
+    } catch (error) {
+      if (error instanceof ApiFootballProviderError) {
+        throw error;
+      }
+
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new ApiFootballProviderError({
+          category: "timeout",
+          endpoint: path,
+          message: `API-Football request timed out after ${this.timeoutMs}ms for ${url}`,
+          retriable: true,
+          url,
+        });
+      }
+
+      throw error;
     } finally {
       clearTimeout(timeout);
     }

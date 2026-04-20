@@ -1,6 +1,10 @@
 import {
+  buildReplayTimeline,
+  compareFixturePacks,
   createCronValidationPlan,
+  createGoldenFixturePackFingerprint,
   createSandboxRunManifest,
+  createVirtualClockPlan,
   describeWorkspace as describeFixtureWorkspace,
   getSyntheticFixturePack,
   listSandboxProfiles,
@@ -53,6 +57,32 @@ export interface SandboxRunSummary {
     readonly replayChannels: readonly string[];
     readonly cronJobsValidated: number;
   };
+  readonly clock: {
+    readonly mode: "real" | "virtual";
+    readonly startAt: string;
+    readonly endAt: string;
+    readonly tickCount: number;
+  };
+  readonly replayTimeline: readonly {
+    readonly id: string;
+    readonly fixtureId: string;
+    readonly channel: string;
+    readonly offsetMinutes: number;
+    readonly scheduledAt: string;
+  }[];
+  readonly golden: {
+    readonly packId: string;
+    readonly version: string;
+    readonly fingerprint: string;
+  };
+  readonly comparison: {
+    readonly baselinePackId: string;
+    readonly candidatePackId: string;
+    readonly changed: boolean;
+    readonly fixtureDelta: number;
+    readonly replayEventDelta: number;
+    readonly changedFixtureIds: readonly string[];
+  };
   readonly safety: {
     readonly publishEnabled: false;
     readonly allowedHosts: readonly string[];
@@ -96,6 +126,10 @@ const createSummary = (
 ): SandboxRunSummary => {
   const cronPlan = createCronValidationPlan(manifest);
   const replayChannels = [...new Set(manifest.fixturePack.replayEvents.map((event) => event.channel))].sort();
+  const timeline = buildReplayTimeline(manifest);
+  const clock = createVirtualClockPlan(manifest);
+  const golden = createGoldenFixturePackFingerprint(manifest.fixturePack);
+  const comparison = compareFixturePacks(manifest.fixturePack, manifest.fixturePack);
 
   return {
     mode,
@@ -113,6 +147,32 @@ const createSummary = (
       replayChannels,
       cronJobsValidated: cronPlan.length,
     },
+    clock: {
+      mode: clock.mode,
+      startAt: clock.startAt,
+      endAt: clock.endAt,
+      tickCount: clock.tickCount,
+    },
+    replayTimeline: timeline.map((entry) => ({
+      id: entry.id,
+      fixtureId: entry.fixtureId,
+      channel: entry.channel,
+      offsetMinutes: entry.offsetMinutes,
+      scheduledAt: entry.scheduledAt,
+    })),
+    golden: {
+      packId: golden.packId,
+      version: golden.version,
+      fingerprint: golden.fingerprint,
+    },
+    comparison: {
+      baselinePackId: comparison.baselineFingerprint.packId,
+      candidatePackId: comparison.candidateFingerprint.packId,
+      changed: comparison.changed,
+      fixtureDelta: comparison.fixtureDelta,
+      replayEventDelta: comparison.replayEventDelta,
+      changedFixtureIds: comparison.changedFixtureIds,
+    },
     safety: {
       publishEnabled: manifest.profile.isolation.publishEnabled,
       allowedHosts: manifest.profile.isolation.allowedHosts,
@@ -120,6 +180,17 @@ const createSummary = (
     },
   };
 };
+
+export interface SandboxReleaseComparisonResult {
+  readonly baselineGitSha: string;
+  readonly candidateGitSha: string;
+  readonly packId: string;
+  readonly changed: boolean;
+  readonly fingerprintChanged: boolean;
+  readonly fixtureDelta: number;
+  readonly replayEventDelta: number;
+  readonly changedFixtureIds: readonly string[];
+}
 
 export const prepareSandboxRun = (options: SandboxRunnerOptions): SandboxRunManifest => {
   const fixturePack = getSyntheticFixturePack(options.packId);
@@ -203,6 +274,40 @@ export const materializeSandboxRun = async (
     summary: createSummary(manifest, options.mode),
     persistedNamespaceCount: persistedNamespaceIds.length,
     persistedNamespaceIds,
+  };
+};
+
+export const compareSandboxReleases = (input: {
+  readonly profileName: SandboxProfileName;
+  readonly packId: string;
+  readonly baselineGitSha: string;
+  readonly candidateGitSha: string;
+  readonly now?: Date;
+}): SandboxReleaseComparisonResult => {
+  const baselineManifest = createSandboxRunManifest({
+    profileName: input.profileName,
+    packId: input.packId,
+    gitSha: input.baselineGitSha,
+    ...(input.now ? { now: input.now } : {}),
+  });
+  const candidateManifest = createSandboxRunManifest({
+    profileName: input.profileName,
+    packId: input.packId,
+    gitSha: input.candidateGitSha,
+    ...(input.now ? { now: input.now } : {}),
+  });
+  const comparison = compareFixturePacks(baselineManifest.fixturePack, candidateManifest.fixturePack);
+
+  return {
+    baselineGitSha: input.baselineGitSha,
+    candidateGitSha: input.candidateGitSha,
+    packId: input.packId,
+    changed: comparison.changed,
+    fingerprintChanged:
+      comparison.baselineFingerprint.fingerprint !== comparison.candidateFingerprint.fingerprint,
+    fixtureDelta: comparison.fixtureDelta,
+    replayEventDelta: comparison.replayEventDelta,
+    changedFixtureIds: comparison.changedFixtureIds,
   };
 };
 

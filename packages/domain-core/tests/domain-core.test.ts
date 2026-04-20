@@ -7,6 +7,8 @@ import {
   createAuditEvent,
   createFixture,
   createFixtureWorkflow,
+  createOpaqueTaskId,
+  createOpaqueTaskRunId,
   createPrediction,
   createSandboxNamespace,
   createTaskRun,
@@ -81,6 +83,16 @@ test("task runs and audit events get default timestamps", () => {
   assert.equal(taskRun.taskId, "task-1");
   assert.equal(auditEvent.aggregateId, "task-1");
   assert.ok(auditEvent.occurredAt);
+});
+
+test("opaque task ids stay stable and use tsk/trn prefixes", () => {
+  const taskId = createOpaqueTaskId("scoring-worker:fx-1");
+  const sameTaskId = createOpaqueTaskId("scoring-worker:fx-1");
+  const taskRunId = createOpaqueTaskRunId(taskId, 1);
+
+  assert.equal(taskId, sameTaskId);
+  assert.match(taskId, /^tsk_[a-f0-9]{16}$/);
+  assert.match(taskRunId, /^trn_[a-f0-9]{16}$/);
 });
 
 test("fixture workflow tracks stage state, timestamps, and errors", () => {

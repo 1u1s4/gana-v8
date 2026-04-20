@@ -21,6 +21,8 @@ import {
   findFixtureOpsById,
   loadOperationSnapshotFromDatabase,
   type FixtureOpsDetailReadModel,
+  type LiveIngestionRunReadModel,
+  listLiveIngestionRuns,
 } from "@gana-v8/public-api";
 import {
   loadEligibleFixturesForScoring,
@@ -31,7 +33,7 @@ import {
   createPrismaTaskQueueAdapter,
   type TaskQueueAdapter,
 } from "@gana-v8/queue-adapters";
-import { createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
+import { createPrismaClient, createPrismaUnitOfWork, createVerifiedPrismaClient } from "@gana-v8/storage-adapters";
 import { type TaskEntity, type TaskKind, createTaskRun, type TaskRunEntity } from "@gana-v8/domain-core";
 import {
   FakeFootballApiClient,
@@ -118,6 +120,7 @@ export interface EnqueuePersistedTaskInput {
   readonly payload: Record<string, unknown>;
   readonly priority?: number;
   readonly scheduledFor?: Date;
+  readonly maxAttempts?: number;
   readonly now?: Date;
 }
 
@@ -179,6 +182,11 @@ export interface AutomationOpsFixtureSummary {
 export interface AutomationOpsSummary {
   readonly generatedAt: string;
   readonly fixtures: readonly AutomationOpsFixtureSummary[];
+}
+
+export interface LiveIngestionOpsSummary {
+  readonly generatedAt: string;
+  readonly runs: readonly LiveIngestionRunReadModel[];
 }
 
 export interface RunAutomationCycleOptions {
@@ -376,7 +384,7 @@ const loadPersistedTaskById = async (
   databaseUrl: string,
   taskId: string,
 ): Promise<TaskEntity | null> => {
-  const client = createPrismaClient(databaseUrl);
+  const client = createVerifiedPrismaClient({ databaseUrl });
 
   try {
     return createPrismaUnitOfWork(client).tasks.getById(taskId);
@@ -406,6 +414,7 @@ export const enqueuePersistedTask = async (
       payload: input.payload,
       priority: input.priority ?? 0,
       ...(input.scheduledFor ? { scheduledFor: input.scheduledFor } : {}),
+      ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
       ...(input.now ? { now: input.now } : {}),
     })) as TaskEntity;
   } finally {
@@ -432,7 +441,7 @@ export interface PersistedTaskQueue extends TaskQueueAdapter {
 }
 
 export const createPersistedTaskQueue = (databaseUrl: string): PersistedTaskQueue => {
-  const client = createPrismaClient(databaseUrl);
+  const client = createVerifiedPrismaClient({ databaseUrl });
   const unitOfWork = createPrismaUnitOfWork(client);
   const adapter = createPrismaTaskQueueAdapter(client, unitOfWork, {
     createTransactionalUnitOfWork: (transactionClient) => createPrismaUnitOfWork(transactionClient as never),
@@ -471,7 +480,7 @@ export const runNextPersistedTask = async (
     return null;
   }
 
-  const client = createPrismaClient(databaseUrl);
+  const client = createVerifiedPrismaClient({ databaseUrl });
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
@@ -618,6 +627,20 @@ export const loadAutomationOpsSummary = async (
         recentAuditEvents: fixtureOps.recentAuditEvents,
       }];
     }),
+  };
+};
+
+export const loadLiveIngestionOpsSummary = async (
+  databaseUrl: string,
+  options: { readonly taskIds?: readonly string[] } = {},
+): Promise<LiveIngestionOpsSummary> => {
+  const snapshot = await loadOperationSnapshotFromDatabase(databaseUrl);
+  const runs = listLiveIngestionRuns(snapshot);
+  const taskIds = options.taskIds;
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    runs: taskIds ? runs.filter((run) => taskIds.includes(run.taskId)) : runs,
   };
 };
 

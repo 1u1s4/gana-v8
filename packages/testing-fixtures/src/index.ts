@@ -153,6 +153,46 @@ export interface SandboxRunManifest {
   readonly assertionsPack: readonly string[];
 }
 
+export interface ReplayTimelineEntry {
+  readonly id: string;
+  readonly fixtureId: string;
+  readonly channel: ReplayEvent["channel"];
+  readonly offsetMinutes: number;
+  readonly scheduledAt: string;
+  readonly payloadFingerprint: string;
+}
+
+export interface VirtualClockTick {
+  readonly at: string;
+  readonly label: string;
+  readonly offsetMinutes: number;
+}
+
+export interface VirtualClockPlan {
+  readonly mode: SandboxProfileConfig["clockMode"];
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly tickCount: number;
+  readonly ticks: readonly VirtualClockTick[];
+}
+
+export interface GoldenFixturePackFingerprint {
+  readonly packId: string;
+  readonly version: string;
+  readonly fixtureCount: number;
+  readonly replayEventCount: number;
+  readonly fingerprint: string;
+}
+
+export interface FixturePackComparison {
+  readonly baselineFingerprint: GoldenFixturePackFingerprint;
+  readonly candidateFingerprint: GoldenFixturePackFingerprint;
+  readonly changed: boolean;
+  readonly fixtureDelta: number;
+  readonly replayEventDelta: number;
+  readonly changedFixtureIds: readonly string[];
+}
+
 const baseTimestamp = "2026-08-16T18:00:00.000Z";
 const defaultForbiddenPrefix = "prod://";
 
@@ -522,3 +562,96 @@ export const createCronValidationPlan = (
     dryRun: job.dryRun,
     writesAllowed: job.writesAllowed,
   }));
+
+const stableFingerprint = (value: unknown): string => JSON.stringify(value);
+
+export const buildReplayTimeline = (manifest: SandboxRunManifest): readonly ReplayTimelineEntry[] =>
+  [...manifest.fixturePack.replayEvents]
+    .sort((left, right) => {
+      if (left.offsetMinutes !== right.offsetMinutes) {
+        return left.offsetMinutes - right.offsetMinutes;
+      }
+
+      return left.id.localeCompare(right.id);
+    })
+    .map((event) => ({
+      id: event.id,
+      fixtureId: event.fixtureId,
+      channel: event.channel,
+      offsetMinutes: event.offsetMinutes,
+      scheduledAt: new Date(Date.parse(baseTimestamp) + event.offsetMinutes * 60_000).toISOString(),
+      payloadFingerprint: stableFingerprint(event.payload),
+    }));
+
+export const createVirtualClockPlan = (manifest: SandboxRunManifest): VirtualClockPlan => {
+  const timeline = buildReplayTimeline(manifest);
+  const ticks: VirtualClockTick[] = timeline.map((entry) => ({
+    at: entry.scheduledAt,
+    label: `${entry.channel}:${entry.id}`,
+    offsetMinutes: entry.offsetMinutes,
+  }));
+  const startAt = ticks[0]?.at ?? baseTimestamp;
+  const endAt = ticks.at(-1)?.at ?? startAt;
+
+  return {
+    mode: manifest.profile.clockMode,
+    startAt,
+    endAt,
+    tickCount: ticks.length,
+    ticks,
+  };
+};
+
+export const createGoldenFixturePackFingerprint = (
+  pack: SyntheticFixturePack,
+): GoldenFixturePackFingerprint => ({
+  packId: pack.id,
+  version: pack.version,
+  fixtureCount: pack.fixtures.length,
+  replayEventCount: pack.replayEvents.length,
+  fingerprint: stableFingerprint({
+    id: pack.id,
+    version: pack.version,
+    fixtures: pack.fixtures.map((fixture) => ({
+      id: fixture.id,
+      status: fixture.status,
+      scheduledAt: fixture.scheduledAt,
+      homeTeam: fixture.homeTeam,
+      awayTeam: fixture.awayTeam,
+      metadata: fixture.metadata,
+    })),
+    replayEvents: pack.replayEvents.map((event) => ({
+      id: event.id,
+      fixtureId: event.fixtureId,
+      offsetMinutes: event.offsetMinutes,
+      channel: event.channel,
+      payload: event.payload,
+    })),
+  }),
+});
+
+export const compareFixturePacks = (
+  baseline: SyntheticFixturePack,
+  candidate: SyntheticFixturePack,
+): FixturePackComparison => {
+  const baselineFingerprint = createGoldenFixturePackFingerprint(baseline);
+  const candidateFingerprint = createGoldenFixturePackFingerprint(candidate);
+  const baselineFixtures = new Map(
+    baseline.fixtures.map((fixture) => [fixture.id, stableFingerprint({ status: fixture.status, scheduledAt: fixture.scheduledAt, metadata: fixture.metadata })]),
+  );
+  const candidateFixtures = new Map(
+    candidate.fixtures.map((fixture) => [fixture.id, stableFingerprint({ status: fixture.status, scheduledAt: fixture.scheduledAt, metadata: fixture.metadata })]),
+  );
+  const changedFixtureIds = [...new Set([...baselineFixtures.keys(), ...candidateFixtures.keys()])]
+    .filter((fixtureId) => baselineFixtures.get(fixtureId) !== candidateFixtures.get(fixtureId))
+    .sort();
+
+  return {
+    baselineFingerprint,
+    candidateFingerprint,
+    changed: baselineFingerprint.fingerprint !== candidateFingerprint.fingerprint,
+    fixtureDelta: candidate.fixtures.length - baseline.fixtures.length,
+    replayEventDelta: candidate.replayEvents.length - baseline.replayEvents.length,
+    changedFixtureIds,
+  };
+};

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   CanonicalPipeline,
   type CanonicalMatchSnapshot,
@@ -26,6 +28,7 @@ import {
 } from "@gana-v8/orchestration-sdk";
 import {
   ApiFootballHttpClient,
+  ApiFootballProviderError,
   buildChecksum,
   FakeFootballApiClient,
   FootballApiFacade,
@@ -38,6 +41,7 @@ import {
   type FootballApiClient,
   type RawFixtureRecord,
   type RawOddsMarketRecord,
+  type SourceCoverageWindow,
 } from "@gana-v8/source-connectors";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
@@ -59,6 +63,9 @@ export const workspaceInfo = {
     { name: "@gana-v8/source-connectors", category: "workspace" },
   ],
 } as const;
+
+const computeOpaqueTaskRunId = (taskId: string, attemptNumber: number, startedAt: string): string =>
+  `trn_${createHash("sha256").update(`${taskId}:${attemptNumber}:${startedAt}`).digest("hex").slice(0, 16)}`;
 
 export function describeWorkspace() {
   return `${workspaceInfo.workspaceName} (${workspaceInfo.category})`;
@@ -94,6 +101,72 @@ export interface IngestionWorkerTaskOutput {
   readonly upsertedMarkets: number;
 }
 
+export interface IngestionExecutionManifest {
+  readonly taskId: string;
+  readonly intent: IngestionWorkerIntent;
+  readonly workflowId: string;
+  readonly traceId: string;
+  readonly startedAt: string;
+  readonly finishedAt: string;
+  readonly status: TaskExecutionResult["status"];
+  readonly provider: {
+    readonly providerSource: RuntimeConfig["provider"]["source"];
+    readonly providerBaseUrl: string;
+    readonly endpointFamily: "fixtures" | "odds";
+    readonly requestKind: "live-runner" | "runtime";
+  };
+  readonly request?: {
+    readonly window: SourceCoverageWindow;
+    readonly league?: string;
+    readonly season?: number;
+    readonly fixtureIds?: readonly string[];
+    readonly marketKeys?: readonly string[];
+    readonly quirksApplied: readonly string[];
+  };
+  readonly batch?: {
+    readonly batchId: string;
+    readonly checksum: string;
+    readonly observedRecords: number;
+    readonly rawRefs: readonly string[];
+    readonly warnings: readonly string[];
+    readonly snapshotId: string;
+  };
+  readonly providerError?: {
+    readonly category: string;
+    readonly provider: string;
+    readonly endpoint: string;
+    readonly url: string;
+    readonly retriable: boolean;
+    readonly httpStatus?: number;
+    readonly providerErrors?: Record<string, unknown> | readonly unknown[];
+    readonly message: string;
+  };
+}
+
+export interface LiveIngestionProviderOverrides {
+  readonly source?: RuntimeConfig["provider"]["source"];
+  readonly baseUrl?: string;
+  readonly host?: string;
+  readonly timeoutMs?: number;
+}
+
+export interface LiveIngestionRunResult {
+  readonly mode: "fixtures" | "odds";
+  readonly status: "succeeded" | "failed" | "cancelled" | "skipped";
+  readonly manifest: IngestionExecutionManifest;
+  readonly output?: IngestionWorkerTaskOutput;
+  readonly error?: string;
+  readonly fixtureCount?: number;
+  readonly reason?: string;
+}
+
+export interface LiveIngestionRunSummary {
+  readonly mode: "fixtures" | "odds" | "both";
+  readonly ranAt: string;
+  readonly runtime: IngestionWorkerRuntimeSummary;
+  readonly results: readonly LiveIngestionRunResult[];
+}
+
 export interface IngestionWorkerDrainItem {
   readonly envelope: TaskEnvelope;
   readonly execution: TaskExecutionResult<IngestionWorkerTaskOutput>;
@@ -121,6 +194,17 @@ export interface IngestionWorkerRuntimeOptions {
   readonly prismaClient?: PrismaClient;
   readonly queue?: InMemoryQueueAdapter;
   readonly unitOfWork?: StorageUnitOfWork;
+}
+
+export interface RunLiveIngestionOptions extends IngestionWorkerRuntimeOptions {
+  readonly mode?: "fixtures" | "odds" | "both";
+  readonly league?: string;
+  readonly season?: number;
+  readonly fixturesWindow?: SourceCoverageWindow;
+  readonly oddsWindow?: SourceCoverageWindow;
+  readonly provider?: LiveIngestionProviderOverrides;
+  readonly oddsFixtureIds?: readonly string[];
+  readonly marketKeys?: readonly string[];
 }
 
 interface IngestionWorkerPersistenceContext {
@@ -177,11 +261,89 @@ const toRuntimeSummary = (
   providerSource: runtimeConfig.provider.source,
 });
 
+const toEndpointFamily = (intent: IngestionWorkerIntent): "fixtures" | "odds" =>
+  intent === "ingest-odds" ? "odds" : "fixtures";
+
+const toProviderErrorManifest = (
+  execution: TaskExecutionResult<IngestionWorkerTaskOutput>,
+): IngestionExecutionManifest["providerError"] | undefined => {
+  const details = execution.errorDetails;
+  if (!details) {
+    return undefined;
+  }
+
+  const category = typeof details.category === "string" ? details.category : undefined;
+  const provider = typeof details.provider === "string" ? details.provider : undefined;
+  const endpoint = typeof details.endpoint === "string" ? details.endpoint : undefined;
+  const url = typeof details.url === "string" ? details.url : undefined;
+  const retriable = typeof details.retriable === "boolean" ? details.retriable : undefined;
+  if (!category || !provider || !endpoint || !url || retriable === undefined) {
+    return undefined;
+  }
+
+  return {
+    category,
+    endpoint,
+    message: execution.error ?? "provider_error",
+    provider,
+    ...(typeof details.httpStatus === "number" ? { httpStatus: details.httpStatus } : {}),
+    ...(details.providerErrors !== undefined
+      ? { providerErrors: details.providerErrors as Record<string, unknown> | readonly unknown[] }
+      : {}),
+    retriable,
+    url,
+  };
+};
+
+const createExecutionManifest = (
+  envelope: TaskEnvelope<Record<string, unknown>>,
+  execution: TaskExecutionResult<IngestionWorkerTaskOutput>,
+  runtimeConfig: RuntimeConfig,
+  startedAt: string,
+  requestKind: IngestionExecutionManifest["provider"]["requestKind"] = "runtime",
+  request?: IngestionExecutionManifest["request"],
+): IngestionExecutionManifest => {
+  const providerError = toProviderErrorManifest(execution);
+
+  return {
+    finishedAt: execution.finishedAt,
+    intent: envelope.intent as IngestionWorkerIntent,
+    provider: {
+      endpointFamily: toEndpointFamily(envelope.intent as IngestionWorkerIntent),
+      providerBaseUrl: runtimeConfig.provider.baseUrl,
+      providerSource: runtimeConfig.provider.source,
+      requestKind,
+    },
+    ...(providerError ? { providerError } : {}),
+    ...(request ? { request } : {}),
+    ...(execution.output
+      ? {
+          batch: {
+            batchId: execution.output.batchId,
+            checksum: execution.output.checksum,
+            observedRecords: execution.output.observedRecords,
+            rawRefs: execution.output.rawRefs,
+            snapshotId: execution.output.snapshotId,
+            warnings: execution.output.warnings,
+          },
+        }
+      : {}),
+    startedAt,
+    status: execution.status,
+    taskId: envelope.id,
+    traceId: envelope.traceId,
+    workflowId: envelope.workflowId,
+  };
+};
+
 const toSourceName = (runtimeConfig: RuntimeConfig): string =>
   `${runtimeConfig.provider.source}:${runtimeConfig.provider.baseUrl}`;
 
 const firstDefined = (...values: readonly (string | undefined)[]): string | undefined =>
   values.find((value) => value !== undefined && value.trim().length > 0);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const resolveApiFootballConfig = (
   runtimeConfig: RuntimeConfig,
@@ -529,6 +691,7 @@ const persistFixtures = async (
 
 const persistTaskExecution = async (
   unitOfWork: StorageUnitOfWork | undefined,
+  runtimeConfig: RuntimeConfig,
   envelope: TaskEnvelope<Record<string, unknown>>,
   execution: TaskExecutionResult<IngestionWorkerTaskOutput>,
   startedAt: string,
@@ -562,10 +725,15 @@ const persistTaskExecution = async (
     updatedAt: finishedAt,
   });
 
+  const computedTaskRunId = computeOpaqueTaskRunId(envelope.id, 1, startedAt);
+
   await unitOfWork.tasks.save(task);
-  await unitOfWork.taskRuns.save(
+
+  const existingTaskRun = (await unitOfWork.taskRuns.findByTaskId(envelope.id))
+    .find((taskRun) => taskRun.attemptNumber === 1);
+  const persistedTaskRun = existingTaskRun ?? await unitOfWork.taskRuns.save(
     createTaskRun({
-      id: `${envelope.id}:attempt:1`,
+      id: computedTaskRunId,
       taskId: envelope.id,
       attemptNumber: 1,
       status: execution.status,
@@ -576,8 +744,33 @@ const persistTaskExecution = async (
       updatedAt: finishedAt,
     }),
   );
+  const taskRunId = persistedTaskRun.id;
 
   const output = execution.output;
+  const payloadWindow = isRecord(envelope.payload.window) ? envelope.payload.window : undefined;
+  const request = payloadWindow &&
+    typeof payloadWindow.start === "string" &&
+    typeof payloadWindow.end === "string" &&
+    (payloadWindow.granularity === "daily" || payloadWindow.granularity === "intraday")
+    ? {
+        window: {
+          start: payloadWindow.start,
+          end: payloadWindow.end,
+          granularity: payloadWindow.granularity,
+        },
+        ...(typeof envelope.payload.league === "string" ? { league: envelope.payload.league } : {}),
+        ...(typeof envelope.payload.season === "number" ? { season: envelope.payload.season } : {}),
+        ...(Array.isArray(envelope.payload.fixtureIds)
+          ? { fixtureIds: envelope.payload.fixtureIds.filter((value): value is string => typeof value === "string") }
+          : {}),
+        ...(Array.isArray(envelope.payload.marketKeys)
+          ? { marketKeys: envelope.payload.marketKeys.filter((value): value is string => typeof value === "string") }
+          : {}),
+        ...(Array.isArray(envelope.payload.quirksApplied)
+          ? { quirksApplied: envelope.payload.quirksApplied.filter((value): value is string => typeof value === "string") }
+          : { quirksApplied: [] }),
+      }
+    : undefined;
   await unitOfWork.auditEvents.save(
     createAuditEvent({
       id: `${envelope.id}:audit:${finishedAt}`,
@@ -592,14 +785,22 @@ const persistTaskExecution = async (
         canonicalMatches: output?.canonicalMatches ?? null,
         checksum: output?.checksum ?? null,
         error: execution.error ?? null,
+        errorDetails: execution.errorDetails ?? null,
         intent: envelope.intent,
         observedRecords: output?.observedRecords ?? null,
+        ...(request ? { request } : {}),
         rawRefs: output?.rawRefs ?? [],
         snapshotId: output?.snapshotId ?? null,
         status: execution.status,
-        taskRunId: `${envelope.id}:attempt:1`,
+        taskRunId,
         warnings: output?.warnings ?? [],
         workflowId: envelope.workflowId,
+        provider: {
+          endpointFamily: envelope.intent === "ingest-odds" ? "odds" : "fixtures",
+          providerBaseUrl: runtimeConfig.provider.baseUrl,
+          providerSource: runtimeConfig.provider.source,
+          requestKind: envelope.metadata.source === "ingestion-worker/live-runner" ? "live-runner" : "runtime",
+        },
       },
       occurredAt: finishedAt,
       createdAt: finishedAt,
@@ -650,6 +851,7 @@ const toFixturesPayload = (payload: Record<string, unknown>): FetchFixturesWindo
 
   return {
     ...(input.league ? { league: input.league } : {}),
+    ...(input.season !== undefined ? { season: input.season } : {}),
     window: input.window,
   };
 };
@@ -733,7 +935,7 @@ export const createIngestionWorkerRuntime = (
     startedAt: string,
   ): Promise<TaskExecutionResult<IngestionWorkerTaskOutput>> => {
     const execution = await router.dispatch(envelope) as TaskExecutionResult<IngestionWorkerTaskOutput>;
-    await persistTaskExecution(persistence.unitOfWork, envelope, execution, startedAt);
+    await persistTaskExecution(persistence.unitOfWork, config, envelope, execution, startedAt);
     return execution;
   };
 
@@ -865,6 +1067,221 @@ const buildDemoTaskEnvelopes = (
       workflowId: "ingestion-worker-demo-odds",
     }),
   ];
+};
+
+const inferLiveSeason = (nowDate: Date): number =>
+  nowDate.getUTCMonth() >= 6 ? nowDate.getUTCFullYear() : nowDate.getUTCFullYear() - 1;
+
+const toDefaultFixturesWindow = (nowDate: Date): SourceCoverageWindow => ({
+  end: new Date(nowDate.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+  granularity: "daily",
+  start: nowDate.toISOString(),
+});
+
+const toDefaultOddsWindow = (nowDate: Date): SourceCoverageWindow => ({
+  end: new Date(nowDate.getTime() + 60 * 60 * 1000).toISOString(),
+  granularity: "intraday",
+  start: new Date(nowDate.getTime() - 15 * 60 * 1000).toISOString(),
+});
+
+const buildLiveRuntimeEnv = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  provider: LiveIngestionProviderOverrides | undefined = undefined,
+): Readonly<Record<string, string | undefined>> => ({
+  ...env,
+  ...(provider?.source ? { GANA_PROVIDER_SOURCE: provider.source } : {}),
+  ...(provider?.baseUrl ? { GANA_PROVIDER_BASE_URL: provider.baseUrl } : {}),
+  ...(provider?.host ? { GANA_API_FOOTBALL_HOST: provider.host } : {}),
+  ...(provider?.timeoutMs !== undefined ? { GANA_API_FOOTBALL_TIMEOUT_MS: String(provider.timeoutMs) } : {}),
+});
+
+const buildLiveFixturesEnvelope = (
+  nowDate: Date,
+  options: RunLiveIngestionOptions,
+): {
+  readonly envelope: TaskEnvelope<Record<string, unknown>>;
+  readonly request: NonNullable<IngestionExecutionManifest["request"]>;
+} => {
+  const nowIso = nowDate.toISOString();
+  const inferredSeason = options.season === undefined;
+  const request = {
+    league: options.league ?? "39",
+    quirksApplied: inferredSeason ? ["api-football-season-inferred"] : [],
+    season: options.season ?? inferLiveSeason(nowDate),
+    window: options.fixturesWindow ?? toDefaultFixturesWindow(nowDate),
+  } as const;
+
+  return {
+    envelope: createTaskEnvelope({
+      createdAt: nowIso,
+      intent: "ingest-fixtures",
+      metadata: {
+        labels: ["official", "live", "fixtures"],
+        source: "ingestion-worker/live-runner",
+      },
+      payload: {
+        league: request.league,
+        quirksApplied: request.quirksApplied,
+        season: request.season,
+        window: request.window,
+      },
+      priority: 80,
+      scheduledFor: nowIso,
+      taskKind: "fixture-ingestion",
+      traceId: `live:fixtures:${nowIso}`,
+      workflowId: "ingestion-worker-live-fixtures",
+    }),
+    request,
+  };
+};
+
+const listProviderFixtureIdsForUpcomingScheduledFixtures = async (
+  prismaClient: PrismaClient,
+  nowDate: Date,
+): Promise<readonly string[]> => {
+  const fixtures = await prismaClient.fixture.findMany({
+    where: {
+      status: "scheduled",
+      scheduledAt: {
+        gte: new Date(nowDate.getTime() - 2 * 60 * 60 * 1000),
+        lte: new Date(nowDate.getTime() + 24 * 60 * 60 * 1000),
+      },
+    },
+    orderBy: { scheduledAt: "asc" },
+    select: { id: true },
+    take: 200,
+  });
+
+  return fixtures
+    .map((fixture) => fixture.id.match(/^fixture:[^:]+:(.+)$/)?.[1] ?? null)
+    .filter((fixtureId): fixtureId is string => fixtureId !== null);
+};
+
+const buildLiveOddsEnvelope = (
+  nowDate: Date,
+  fixtureIds: readonly string[],
+  options: RunLiveIngestionOptions,
+): {
+  readonly envelope: TaskEnvelope<Record<string, unknown>>;
+  readonly request: NonNullable<IngestionExecutionManifest["request"]>;
+} => {
+  const nowIso = nowDate.toISOString();
+  const request = {
+    fixtureIds,
+    marketKeys: options.marketKeys ?? ["h2h"],
+    quirksApplied: [
+      ...(options.oddsFixtureIds === undefined ? ["odds-fixture-ids-loaded-from-db"] : []),
+      ...(options.marketKeys === undefined ? ["default-market-keys-h2h"] : []),
+      ...(options.oddsWindow === undefined ? ["default-odds-window-intraday"] : []),
+    ],
+    window: options.oddsWindow ?? toDefaultOddsWindow(nowDate),
+  } as const;
+
+  return {
+    envelope: createTaskEnvelope({
+      createdAt: nowIso,
+      intent: "ingest-odds",
+      metadata: {
+        labels: ["official", "live", "odds"],
+        source: "ingestion-worker/live-runner",
+      },
+      payload: {
+        fixtureIds: request.fixtureIds,
+        marketKeys: request.marketKeys,
+        quirksApplied: request.quirksApplied,
+        window: request.window,
+      },
+      priority: 90,
+      scheduledFor: nowIso,
+      taskKind: "odds-ingestion",
+      traceId: `live:odds:${nowIso}`,
+      workflowId: "ingestion-worker-live-odds",
+    }),
+    request,
+  };
+};
+
+export const runLiveIngestion = async (
+  options: RunLiveIngestionOptions = {},
+): Promise<LiveIngestionRunSummary> => {
+  const mode = options.mode ?? "both";
+  const nowDate = options.now ? options.now() : new Date();
+  const runtimeEnv = buildLiveRuntimeEnv(options.env ?? process.env, options.provider);
+  const runtime = createIngestionWorkerRuntime({
+    ...options,
+    env: runtimeEnv,
+  });
+  const results: LiveIngestionRunResult[] = [];
+
+  try {
+    if (mode === "fixtures" || mode === "both") {
+      const { envelope, request } = buildLiveFixturesEnvelope(nowDate, options);
+      const execution = await runtime.dispatch(envelope);
+      results.push({
+        ...(execution.error ? { error: execution.error } : {}),
+        manifest: createExecutionManifest(
+          envelope,
+          execution,
+          runtime.config,
+          nowDate.toISOString(),
+          "live-runner",
+          request,
+        ),
+        mode: "fixtures",
+        ...(execution.output ? { output: execution.output } : {}),
+        status: execution.status,
+      });
+    }
+
+    if (mode === "odds" || mode === "both") {
+      const fixtureIds = options.oddsFixtureIds ??
+        (options.prismaClient ? await listProviderFixtureIdsForUpcomingScheduledFixtures(options.prismaClient, nowDate) : []);
+
+      if (fixtureIds.length === 0) {
+        const { envelope, request } = buildLiveOddsEnvelope(nowDate, [], options);
+        results.push({
+          manifest: createExecutionManifest(
+            envelope,
+            { finishedAt: nowDate.toISOString(), status: "cancelled" },
+            runtime.config,
+            nowDate.toISOString(),
+            "live-runner",
+            request,
+          ),
+          mode: "odds",
+          reason: "No scheduled fixtures found for live odds window",
+          status: "skipped",
+        });
+      } else {
+        const { envelope, request } = buildLiveOddsEnvelope(nowDate, fixtureIds, options);
+        const execution = await runtime.dispatch(envelope);
+        results.push({
+          ...(execution.error ? { error: execution.error } : {}),
+          fixtureCount: fixtureIds.length,
+          manifest: createExecutionManifest(
+            envelope,
+            execution,
+            runtime.config,
+            nowDate.toISOString(),
+            "live-runner",
+            request,
+          ),
+          mode: "odds",
+          ...(execution.output ? { output: execution.output } : {}),
+          status: execution.status,
+        });
+      }
+    }
+
+    return {
+      mode,
+      ranAt: nowDate.toISOString(),
+      results,
+      runtime: toRuntimeSummary(runtime.config, runtime.persistenceMode),
+    };
+  } finally {
+    await runtime.close();
+  }
 };
 
 export const runDemoIngestionWorker = async (
