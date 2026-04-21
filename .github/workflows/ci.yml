@@ -59,3 +59,71 @@ jobs:
             **/.turbo/**
             pnpm-debug.log
             **/pnpm-debug.log
+
+  e2e-smoke:
+    name: Hermes E2E Smoke
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 30
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: gana_v8_ci
+          MYSQL_ROOT_HOST: "%"
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      APP_TIMEZONE: America/Guatemala
+      DATABASE_ADMIN_URL: mysql://root:root@127.0.0.1:3306/mysql
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/gana_v8_ci
+      GANA_RUNTIME_PROFILE: ci-smoke
+      NODE_ENV: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Push schema to MySQL service
+        run: pnpm db:push
+
+      - name: Run Hermes smoke E2E
+        run: pnpm test:e2e:hermes-smoke
+
+      - name: Upload E2E diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-e2e-diagnostics
+          if-no-files-found: ignore
+          path: |
+            .turbo/**
+            **/.turbo/**
+            pnpm-debug.log
+            **/pnpm-debug.log

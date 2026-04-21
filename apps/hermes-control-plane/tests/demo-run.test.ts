@@ -1277,7 +1277,7 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
       providerFixtureId: providerFixtureIds[1],
       providerCode: "api-football",
       status: "scheduled",
-      scheduledAt: "2099-01-03T18:00:00.000Z",
+      scheduledAt: "2099-01-02T22:00:00.000Z",
       competition: {
         providerCompetitionId: coverageKeys.leagueKey,
         name: "Premier League",
@@ -1567,9 +1567,11 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
         validationTaskId: `${prefix}-validation-task`,
       });
 
+      assert.equal(summary.enqueuedResearch.enqueuedCount, 2);
+      assert.equal(summary.enqueuedResearch.skippedCount, 1);
+      assert.equal(summary.enqueuedResearch.skippedFixtures[0]?.fixtureId, blockedFixture.fixtureId);
       assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
-      assert.equal(summary.enqueuedPredictions.skippedCount, 1);
-      assert.equal(summary.enqueuedPredictions.skippedFixtures[0]?.fixtureId, blockedFixture.fixtureId);
+      assert.equal(summary.enqueuedPredictions.skippedCount, 0);
       assert.equal(summary.parlayResult.status, "persisted");
       assert.deepEqual(
         summary.parlayResult.parlay?.legs.map((leg) => leg.fixtureId).sort(),
