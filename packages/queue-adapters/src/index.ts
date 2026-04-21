@@ -135,6 +135,7 @@ export interface PrismaQueueClientLike {
 
 export interface TaskQueueAdapter {
   enqueue(input: EnqueueQueueTaskInput): Promise<QueueTaskEntity>;
+  claim(taskId: string, now?: Date): Promise<QueueTaskClaim | null>;
   claimNext(kind?: QueueTaskKind, now?: Date): Promise<QueueTaskClaim | null>;
   renewLease(taskId: string, taskRunId: string, now?: Date, leaseMs?: number): Promise<QueueTaskClaim>;
   complete(taskId: string, taskRunId: string, now?: Date): Promise<QueueTaskClaim>;
@@ -192,6 +193,9 @@ const compareQueuedReadyTasks = (left: QueueTaskEntity, right: QueueTaskEntity):
 
   return left.createdAt.localeCompare(right.createdAt);
 };
+
+const isTaskReady = (task: QueueTaskEntity, nowIso: string): boolean =>
+  !task.scheduledFor || task.scheduledFor <= nowIso;
 
 const computeOpaqueId = (prefix: string, seed: string): string => {
   const digest = createHash("sha256").update(seed).digest("hex");
@@ -371,7 +375,7 @@ const nextReadyTask = (
         return false;
       }
 
-      return !candidate.scheduledFor || candidate.scheduledFor <= nowIso;
+      return isTaskReady(candidate, nowIso);
     })
     .sort(compareQueuedReadyTasks)[0] ?? null;
 
@@ -462,6 +466,41 @@ export const createInMemoryTaskQueueAdapter = (unitOfWork: QueueUnitOfWorkLike):
         }),
       );
 
+
+      return { task: claimedTask, taskRun };
+    });
+  },
+
+  async claim(taskId, now = new Date()) {
+    return runInMemoryQueueMutation(unitOfWork, async () => {
+      const nowIso = now.toISOString();
+      const runningTasks = await unitOfWork.tasks.findByStatus("running");
+      for (const runningTask of runningTasks) {
+        if (hasExpiredLease(runningTask, nowIso)) {
+          await unitOfWork.tasks.save(recycleExpiredLeaseTask(runningTask, nowIso));
+        }
+      }
+
+      const task = await unitOfWork.tasks.getById(taskId);
+      if (!task || task.status !== "queued" || !isTaskReady(task, nowIso)) {
+        return null;
+      }
+
+      const claimedTask = await unitOfWork.tasks.save(
+        startTask(task, nowIso, DEFAULT_LEASE_OWNER, inputLeaseMs(task.kind)),
+      );
+      const attemptNumber = claimedTask.attempts.length;
+      const taskRun = await unitOfWork.taskRuns.save(
+        createTaskRun({
+          id: computeOpaqueId("trn", `${claimedTask.id}:${attemptNumber}:${nowIso}`),
+          taskId: claimedTask.id,
+          attemptNumber,
+          status: "running",
+          startedAt: nowIso,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        }),
+      );
 
       return { task: claimedTask, taskRun };
     });
@@ -681,6 +720,73 @@ export const createPrismaTaskQueueAdapter = (
       }
 
       return null;
+    });
+  },
+
+  async claim(taskId, now = new Date()) {
+    return client.$transaction(async (transactionClient) => {
+      const transactionalUnitOfWork = options.createTransactionalUnitOfWork(transactionClient);
+      const nowIso = now.toISOString();
+      const runningTasks = await transactionalUnitOfWork.tasks.findByStatus("running");
+      for (const runningTask of runningTasks) {
+        if (!hasExpiredLease(runningTask, nowIso)) {
+          continue;
+        }
+
+        const recycledTask = recycleExpiredLeaseTask(runningTask, nowIso);
+        const recycleResult = await (transactionClient as { task: PrismaTaskClientLike }).task.updateMany({
+          where: { id: runningTask.id, status: "running" },
+          data: {
+            status: "queued",
+            updatedAt: new Date(nowIso),
+            triggerKind: recycledTask.triggerKind,
+            scheduledFor: recycledTask.scheduledFor ? new Date(recycledTask.scheduledFor) : null,
+            lastErrorMessage: recycledTask.lastErrorMessage ?? null,
+          },
+        });
+        if (recycleResult.count > 0) {
+          await transactionalUnitOfWork.tasks.save(recycledTask);
+        }
+      }
+
+      const task = await transactionalUnitOfWork.tasks.getById(taskId);
+      if (!task || task.status !== "queued" || !isTaskReady(task, nowIso)) {
+        return null;
+      }
+
+      const claimResult = await (transactionClient as { task: PrismaTaskClientLike }).task.updateMany({
+        where: { id: task.id, status: "queued" },
+        data: { status: "running", updatedAt: new Date(nowIso) },
+      });
+      if (claimResult.count === 0) {
+        return null;
+      }
+
+      const existingTaskRuns = await transactionalUnitOfWork.taskRuns.findByTaskId(task.id);
+      const attemptNumber =
+        existingTaskRuns.reduce(
+          (maxAttemptNumber, existingTaskRun) =>
+            Math.max(maxAttemptNumber, existingTaskRun.attemptNumber),
+          0,
+        ) + 1;
+      await transactionalUnitOfWork.tasks.save(startTask(task, nowIso));
+      const taskRun = await transactionalUnitOfWork.taskRuns.save(
+        createTaskRun({
+          id: computeOpaqueId("trn", `${task.id}:${attemptNumber}:${nowIso}`),
+          taskId: task.id,
+          attemptNumber,
+          status: "running",
+          workerName: "queue-adapter",
+          startedAt: nowIso,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        }),
+      );
+
+      return {
+        task: ensureTask(await transactionalUnitOfWork.tasks.getById(task.id), task.id),
+        taskRun: ensureTaskRun(await transactionalUnitOfWork.taskRuns.getById(taskRun.id), taskRun.id),
+      };
     });
   },
 

@@ -37,6 +37,35 @@ test("in-memory queue adapter enqueues, claims, completes and summarizes tasks",
   assert.equal(summary.latestTasks[0]?.id, enqueued.id);
 });
 
+test("in-memory queue adapter can claim a specific ready task by id without consuming neighbors", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const queue = createInMemoryTaskQueueAdapter(unitOfWork);
+
+  await queue.enqueue({
+    id: "queue:test:claim-target",
+    kind: "prediction",
+    payload: { fixtureId: "fx-target" },
+    now: new Date("2026-04-17T18:10:00.000Z"),
+    priority: 1,
+  });
+  await queue.enqueue({
+    id: "queue:test:claim-neighbor",
+    kind: "prediction",
+    payload: { fixtureId: "fx-neighbor" },
+    now: new Date("2026-04-17T18:11:00.000Z"),
+    priority: 10,
+  });
+
+  const targetedClaim = await queue.claim("queue:test:claim-target", new Date("2026-04-17T18:12:00.000Z"));
+  assert.ok(targetedClaim);
+  assert.equal(targetedClaim.task.id, "queue:test:claim-target");
+  assert.equal(targetedClaim.taskRun.attemptNumber, 1);
+
+  const nextClaim = await queue.claimNext(undefined, new Date("2026-04-17T18:13:00.000Z"));
+  assert.ok(nextClaim);
+  assert.equal(nextClaim.task.id, "queue:test:claim-neighbor");
+});
+
 test("in-memory queue adapter auto-retries failed tasks with backoff and a new attempt", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   const queue = createInMemoryTaskQueueAdapter(unitOfWork);
