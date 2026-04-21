@@ -7,7 +7,8 @@
     "paths": {
       "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
       "@gana-v8/observability": ["../../packages/observability/dist/index.d.ts"],
-      "@gana-v8/policy-engine": ["../../packages/policy-engine/dist/index.d.ts"]
+      "@gana-v8/policy-engine": ["../../packages/policy-engine/dist/index.d.ts"],
+      "@gana-v8/storage-adapters": ["../../packages/storage-adapters/dist/src/index.d.ts"]
     },
     "types": ["node"]
   },
