@@ -1,6 +1,9 @@
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createAiRun, createFixture, createTask, createTaskRun } from "@gana-v8/domain-core";
 import {
@@ -18,6 +21,93 @@ import {
   renderOperatorConsole,
   renderSnapshotConsole,
 } from "../src/index.js";
+
+const createSandboxCertificationFixture = async (): Promise<{
+  readonly goldensRoot: string;
+  readonly artifactsRoot: string;
+}> => {
+  const root = await mkdtemp(join(tmpdir(), "gana-v8-operator-console-cert-"));
+  const goldensRoot = join(root, "goldens");
+  const artifactsRoot = join(root, "artifacts");
+  await mkdir(join(goldensRoot, "ci-smoke"), { recursive: true });
+  await mkdir(join(artifactsRoot, "ci-smoke"), { recursive: true });
+
+  const goldenSnapshot = {
+    schemaVersion: "sandbox-golden-v1",
+    mode: "smoke",
+    fixturePackId: "football-dual-smoke",
+    profileName: "ci-smoke",
+    assertions: ["namespace-isolation", "smoke-health"],
+    providerModes: {
+      fixtures_api: "replay",
+      odds_api: "replay",
+    },
+    stats: {
+      fixtureCount: 2,
+      completedFixtures: 1,
+      replayEventCount: 4,
+      replayChannels: ["fixtures", "odds"],
+      cronJobsValidated: 1,
+    },
+    clock: {
+      mode: "virtual",
+      startAt: "2026-08-16T18:00:00.000Z",
+      endAt: "2026-08-16T18:13:00.000Z",
+      tickCount: 4,
+    },
+    replayTimeline: [
+      {
+        id: "evt-1",
+        fixtureId: "fx-1",
+        channel: "fixtures",
+        offsetMinutes: 0,
+        scheduledAt: "2026-08-16T18:00:00.000Z",
+      },
+    ],
+    golden: {
+      packId: "football-dual-smoke",
+      version: "2026.08.16",
+      fingerprint: "golden-fingerprint-1",
+    },
+    comparison: {
+      baselinePackId: "football-dual-smoke",
+      candidatePackId: "football-dual-smoke",
+      changed: false,
+      fixtureDelta: 0,
+      replayEventDelta: 0,
+      changedFixtureIds: [],
+    },
+    safety: {
+      publishEnabled: false,
+      allowedHosts: ["sandbox-ci.local"],
+      cronDryRunOnly: true,
+    },
+  };
+
+  await writeFile(
+    join(goldensRoot, "ci-smoke", "football-dual-smoke.json"),
+    `${JSON.stringify(goldenSnapshot, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(artifactsRoot, "ci-smoke", "football-dual-smoke.evidence.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: "sandbox-certification-v1",
+        generatedAt: "2026-08-16T20:30:00.000Z",
+        summary: {
+          fixturePackId: "football-dual-smoke",
+        },
+        goldenSnapshot,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  return { goldensRoot, artifactsRoot };
+};
 
 const createOperationLikeSnapshot = (overrides: Record<string, unknown> = {}) => ({
   generatedAt: "2026-04-15T01:00:00.000Z",
@@ -199,7 +289,7 @@ test("operator console builds panels and alerts from the snapshot", () => {
   const snapshot = createOperatorConsoleSnapshot();
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 17);
+  assert.equal(model.panels.length, 18);
   assert.equal(model.health.status, "ok");
   assert.equal(model.validationSummary.partial, 1);
   assert.equal(model.alerts.length, 0);
@@ -207,9 +297,10 @@ test("operator console builds panels and alerts from the snapshot", () => {
   assert.equal(model.panels[2]?.title, "Task queue");
   assert.equal(model.panels[3]?.title, "Operational log");
   assert.equal(model.panels[4]?.title, "AI & providers");
-  assert.equal(model.panels[5]?.title, "Observability");
-  assert.equal(model.panels[6]?.title, "Policy");
-  assert.equal(model.panels[7]?.title, "Traceability");
+  assert.equal(model.panels[5]?.title, "Sandbox certification");
+  assert.equal(model.panels[6]?.title, "Observability");
+  assert.equal(model.panels[7]?.title, "Policy");
+  assert.equal(model.panels[8]?.title, "Traceability");
 });
 
 test("operator console derives an ops-focused snapshot from public-api operation data", () => {
@@ -553,11 +644,16 @@ test("operator console renderer prints a useful CLI view", () => {
 });
 
 test("operator console can load a web payload from public-api snapshots", async () => {
+  const { goldensRoot, artifactsRoot } = await createSandboxCertificationFixture();
   const authentication = createPublicApiTokenAuthentication({
     viewerToken: "viewer-token",
   });
   const publicApiServer = createPublicApiServer({
     snapshot: createOperationLikeSnapshot() as never,
+    sandboxCertification: {
+      goldensRoot,
+      artifactsRoot,
+    },
     ...(authentication ? { auth: authentication } : {}),
   });
 
@@ -572,8 +668,11 @@ test("operator console can load a web payload from public-api snapshots", async 
     });
 
     assert.equal(payload.snapshot.fixtures.length, 1);
+    assert.equal(payload.certification.length, 1);
+    assert.equal(payload.snapshot.sandboxCertification[0]?.status, "passed");
     assert.equal(payload.model.health.status, "ok");
     assert.ok(payload.model.panels.some((panel) => panel.title === "Task queue"));
+    assert.ok(payload.model.panels.some((panel) => panel.title === "Sandbox certification"));
   } finally {
     await new Promise<void>((resolve, reject) =>
       publicApiServer.close((error) => (error ? reject(error) : resolve())),
@@ -582,6 +681,7 @@ test("operator console can load a web payload from public-api snapshots", async 
 });
 
 test("operator console web server serves dashboard assets and proxies fixture actions through public-api", async () => {
+  const { goldensRoot, artifactsRoot } = await createSandboxCertificationFixture();
   const unitOfWork = createInMemoryUnitOfWork();
   const fixture = createFixture({
     id: "fixture:web-console:1",
@@ -648,6 +748,10 @@ test("operator console web server serves dashboard assets and proxies fixture ac
   });
   const publicApiServer = createPublicApiServer({
     unitOfWork,
+    sandboxCertification: {
+      goldensRoot,
+      artifactsRoot,
+    },
     ...(authentication ? { auth: authentication } : {}),
   });
   await new Promise<void>((resolve) => publicApiServer.listen(0, "127.0.0.1", () => resolve()));
@@ -679,10 +783,20 @@ test("operator console web server serves dashboard assets and proxies fixture ac
     assert.equal(payloadResponse.status, 200);
     const payloadJson = (await payloadResponse.json()) as {
       snapshot: { fixtures: Array<{ id: string }> };
+      certification: Array<{ packId: string; status: string }>;
       model: { panels: Array<{ title: string }> };
     };
     assert.equal(payloadJson.snapshot.fixtures[0]?.id, fixture.id);
+    assert.equal(payloadJson.certification[0]?.packId, "football-dual-smoke");
+    assert.equal(payloadJson.certification[0]?.status, "passed");
     assert.ok(payloadJson.model.panels.some((panel) => panel.title === "Fixture ops"));
+    assert.ok(payloadJson.model.panels.some((panel) => panel.title === "Sandbox certification"));
+
+    const certificationDetailResponse = await fetch(
+      `${baseUrl}/api/public/sandbox-certification/ci-smoke/football-dual-smoke`,
+    );
+    assert.equal(certificationDetailResponse.status, 200);
+    assert.equal(((await certificationDetailResponse.json()) as { status: string }).status, "passed");
 
     const aiRunResponse = await fetch(`${baseUrl}/api/public/ai-runs/${encodeURIComponent("airun:web-console:1")}`);
     assert.equal(aiRunResponse.status, 200);

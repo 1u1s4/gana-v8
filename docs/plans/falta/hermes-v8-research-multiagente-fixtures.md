@@ -1,5 +1,8 @@
 # Arquitectura multiagente de research para V8 Hermes
 
+> Estado actual: `FALTA`.
+> Pendiente principal: hoy existe un research determinístico con apoyo AI opcional, pero todavía no está materializado el `ResearchBundle` multiagente con claims, fuentes, conflictos y subtareas especializadas.
+
 ## 1. Objetivo
 
 Diseñar la capa de research de V8 Hermes para enriquecer cada fixture con señales web externas verificables, frescas y trazables, de forma que el sistema pueda:

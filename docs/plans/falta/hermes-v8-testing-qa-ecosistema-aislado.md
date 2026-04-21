@@ -1,5 +1,8 @@
 # gana-v8 — slice de testing, QA y ecosistema aislado
 
+> Estado actual: `FALTA`.
+> Pendiente principal: ya hay CI, replay y perfiles base de sandbox, pero faltan perfiles adicionales y varias superficies de testing dedicadas que este slice proponía.
+
 ## 1. Objetivo
 
 Definir un slice accionable para que Hermes pueda probar gana-v8 de punta a punta sin tocar producción, complementando el master plan v8 y reutilizando lo ya validado en `v0-v7`.

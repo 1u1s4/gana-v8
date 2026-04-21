@@ -1,5 +1,8 @@
 # V8 Hermes — diseño de ETL/ELT y modelo de datos para predicción diaria de partidos
 
+> Estado actual: `FALTA`.
+> Pendiente principal: ya existen piezas de ingestión raw, canonicalización y feature snapshots, pero faltan tablas y modelos más ricos de raw/canonical que este diseño proponía como núcleo.
+
 ## 1. Alcance
 
 Este diseño cubre únicamente la capa de datos e ingestión para V8 Hermes:

@@ -84,6 +84,8 @@ La consola web de operación corre separada y consume solo `public-api`:
 pnpm --filter @gana-v8/operator-console serve:web
 ```
 
+La consola ahora también muestra el estado de `sandbox certification` y puede inspeccionar el diff por golden usando `public-api`.
+
 Variables clave:
 
 - `GANA_OPERATOR_CONSOLE_PUBLIC_API_URL`

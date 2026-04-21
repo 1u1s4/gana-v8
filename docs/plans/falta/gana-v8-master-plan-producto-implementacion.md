@@ -1,5 +1,8 @@
 # Master plan de producto e implementación — gana-v8
 
+> Estado actual: `FALTA`.
+> Pendiente principal: la base del producto ya está arrancada, pero todavía no está cerrada la visión completa del plan maestro, especialmente en research multiagente y cobertura integral de sandbox/QA.
+
 ## 1. Propósito
 
 Definir un plan maestro para gana-v8 que combine visión de producto, alcance, arquitectura, hitos de implementación, entregables, criterios de aceptación, riesgos y orden recomendado de ejecución.

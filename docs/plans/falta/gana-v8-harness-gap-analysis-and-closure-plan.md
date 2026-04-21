@@ -1,5 +1,8 @@
 # Gana-v8 harness gap analysis and closure plan
 
+> Estado actual: `FALTA`.
+> Pendiente principal: el repo ya cubre buena parte de la superficie v8, pero todavía aparecen señales de scaffold y placeholders operativos, sobre todo en desarrollo local y publicación.
+
 > For Hermes: use `subagent-driven-development` to execute this plan by slices, with spec review and code review after each slice
 
 **Goal:** cerrar las brechas entre el estado actual de `gana-v8` y la visión de v8 como harness/plataforma genética completa, operable, auditable, aislada y promovible a producción

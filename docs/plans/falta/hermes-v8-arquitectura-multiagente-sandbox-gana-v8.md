@@ -1,5 +1,8 @@
 # Arquitectura Hermes-native multiagente y sandbox de prueba para gana-v8
 
+> Estado actual: `FALTA`.
+> Pendiente principal: ya existe la base de control plane, workers y sandbox, pero faltan contratos y estados operativos clave del diseño multiagente propuesto.
+
 ## 1. Objetivo
 
 Definir una propuesta completa y operable para gana-v8 donde Hermes sea el control plane real del ecosistema: scheduler, routing, subagentes, skills, workers, policies, approvals, observabilidad y sandbox aislado para replay y validación end-to-end.

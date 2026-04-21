@@ -1537,11 +1537,14 @@ const state = {
   payload: null,
   selectedTaskId: null,
   selectedAiRunId: null,
+  selectedCertificationId: null,
   taskDetail: null,
   taskRuns: [],
   aiRunDetail: null,
+  certificationDetail: null,
   taskInspectorError: null,
   aiRunInspectorError: null,
+  certificationInspectorError: null,
 };
 
 const escapeHtml = (value) =>
@@ -1704,6 +1707,25 @@ const renderAiRuns = (snapshot) => {
   ).join('') + '</div>';
 };
 
+const renderCertificationList = (payload) => {
+  const certifications = Array.isArray(payload.certification) ? payload.certification : [];
+  if (certifications.length === 0) {
+    return '<div class="empty-state">No sandbox certification evidence available.</div>';
+  }
+
+  return '<div class="list">' + certifications.map((certification) =>
+    '<article class="list-item' + (state.selectedCertificationId === certification.id ? ' is-selected' : '') + '">' +
+      '<strong>' + escapeHtml(certification.profileName) + ' / ' + escapeHtml(certification.packId) + '</strong>' +
+      '<div>' + formatBadge(certification.status) + '</div>' +
+      '<div class="subtle">Mode ' + escapeHtml(certification.mode) + ' | replay ' + escapeHtml(certification.replayEventCount) + ' | fixtures ' + escapeHtml(certification.fixtureCount) + '</div>' +
+      '<div class="subtle">Generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + ' | diff ' + escapeHtml(certification.diffEntryCount) + '</div>' +
+      '<div class="list-actions">' +
+        '<button class="fixture-action" type="button" data-console-action="inspect-certification" data-certification-profile="' + escapeHtml(certification.profileName) + '" data-certification-pack="' + escapeHtml(certification.packId) + '" data-tone="neutral">Inspect</button>' +
+      '</div>' +
+    '</article>'
+  ).join('') + '</div>';
+};
+
 const renderLogs = (model) => {
   if (!model.operationalLogs || model.operationalLogs.length === 0) {
     return '<div class="empty-state">No operational logs available.</div>';
@@ -1824,6 +1846,45 @@ const renderAiRunInspector = () => {
   '</div>';
 };
 
+const renderCertificationInspector = () => {
+  if (state.certificationInspectorError) {
+    return '<div class="empty-state">' + escapeHtml(state.certificationInspectorError) + '</div>';
+  }
+
+  if (!state.certificationDetail) {
+    return '<div class="empty-state">Select a sandbox certification to inspect drift, evidence generation time, and safety rails.</div>';
+  }
+
+  const certification = state.certificationDetail;
+  const diffEntries = Array.isArray(certification.diffEntries) ? certification.diffEntries : [];
+  const assertions = Array.isArray(certification.assertions) ? certification.assertions : [];
+  const allowedHosts = Array.isArray(certification.allowedHosts) ? certification.allowedHosts : [];
+
+  return '<div class="list">' +
+    '<article class="list-item is-selected">' +
+      '<strong>' + escapeHtml(certification.profileName) + ' / ' + escapeHtml(certification.packId) + '</strong>' +
+      '<div>' + formatBadge(certification.status) + '</div>' +
+      '<div class="subtle">Mode ' + escapeHtml(certification.mode) + ' | generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + '</div>' +
+      '<div class="subtle">Golden ' + escapeHtml(certification.goldenPath) + '</div>' +
+      '<div class="subtle">Artifact ' + escapeHtml(certification.artifactPath || 'missing') + '</div>' +
+      '<div class="subtle">Replay ' + escapeHtml(certification.replayEventCount) + ' | fixtures ' + escapeHtml(certification.fixtureCount) + ' | diff entries ' + escapeHtml(certification.diffEntryCount) + '</div>' +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Safety & assertions</strong>' +
+      '<div class="panel-line">Allowed hosts: ' + escapeHtml(allowedHosts.join(', ') || 'none') + '</div>' +
+      '<div class="panel-line">Assertions: ' + escapeHtml(assertions.join(', ') || 'none') + '</div>' +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Diff entries</strong>' +
+      (diffEntries.length === 0
+        ? '<div class="empty-state">No golden drift detected.</div>'
+        : diffEntries.map((entry) =>
+            '<div class="panel-line">' + escapeHtml(entry.kind.toUpperCase()) + ' ' + escapeHtml(entry.path) + ' | expected ' + escapeHtml(JSON.stringify(entry.expected)) + ' | actual ' + escapeHtml(JSON.stringify(entry.actual)) + '</div>'
+          ).join('')) +
+    '</article>' +
+  '</div>';
+};
+
 const renderDashboard = (payload) => {
   const snapshot = payload.snapshot;
   const model = payload.model;
@@ -1849,6 +1910,10 @@ const renderDashboard = (payload) => {
     '<section class="panel-grid">' +
       '<section class="surface"><div class="surface-header"><h2>Task Inspector</h2><span class="subtle">Queue state, payload, retry and quarantine controls</span></div><div class="surface-body">' + renderTaskInspector() + '</div></section>' +
       '<section class="surface"><div class="surface-header"><h2>AI Run Inspector</h2><span class="subtle">Provider request ids, prompt versions, linked predictions and parlays</span></div><div class="surface-body">' + renderAiRunInspector() + '</div></section>' +
+    '</section>' +
+    '<section class="panel-grid">' +
+      '<section class="surface"><div class="surface-header"><h2>Sandbox Certification</h2><span class="subtle">Latest golden status by profile and fixture pack</span></div><div class="surface-body">' + renderCertificationList(payload) + '</div></section>' +
+      '<section class="surface"><div class="surface-header"><h2>Certification Inspector</h2><span class="subtle">Golden diff, evidence timing, and safety rails</span></div><div class="surface-body">' + renderCertificationInspector() + '</div></section>' +
     '</section>' +
     '<section class="surface"><div class="surface-header"><h2>Operational Log</h2></div><div class="surface-body">' + renderLogs(model) + '</div></section>' +
     '<section class="surface"><div class="surface-header"><h2>Ops Panels</h2><span class="subtle">Derived from public-api snapshots</span></div><div class="surface-body">' + renderPanels(model) + '</div></section>';
@@ -1905,12 +1970,32 @@ const loadAiRunInspector = async (aiRunId) => {
   }
 };
 
+const loadCertificationInspector = async (profileName, packId) => {
+  state.selectedCertificationId = profileName && packId ? profileName + ':' + packId : null;
+  state.certificationDetail = null;
+  state.certificationInspectorError = null;
+  if (!profileName || !packId) {
+    return;
+  }
+
+  try {
+    state.certificationDetail = await requestJson(
+      '/api/public/sandbox-certification/' + encodeURIComponent(profileName) + '/' + encodeURIComponent(packId),
+    );
+  } catch (error) {
+    state.certificationInspectorError = error.message || 'Unable to load certification inspector';
+  }
+};
+
 const syncInspectors = async (payload) => {
   const nextTaskId = resolveSelectedId(payload.snapshot.tasks || [], state.selectedTaskId);
   const nextAiRunId = resolveSelectedId(payload.snapshot.aiRuns || [], state.selectedAiRunId);
+  const nextCertificationId = resolveSelectedId(payload.certification || [], state.selectedCertificationId);
+  const [nextCertificationProfile, nextCertificationPack] = nextCertificationId ? nextCertificationId.split(':', 2) : [null, null];
   await Promise.all([
     loadTaskInspector(nextTaskId),
     loadAiRunInspector(nextAiRunId),
+    loadCertificationInspector(nextCertificationProfile, nextCertificationPack),
   ]);
 };
 
@@ -2012,6 +2097,15 @@ const selectAiRun = async (aiRunId) => {
   renderDashboard(state.payload);
 };
 
+const selectCertification = async (profileName, packId) => {
+  if (!state.payload) {
+    return;
+  }
+
+  await loadCertificationInspector(profileName, packId);
+  renderDashboard(state.payload);
+};
+
 refreshButton.addEventListener('click', () => {
   void loadConsole();
 });
@@ -2044,6 +2138,15 @@ document.addEventListener('click', async (event) => {
 
     if (consoleAction === 'inspect-ai-run' && target.dataset.aiRunId) {
       await selectAiRun(target.dataset.aiRunId);
+      return;
+    }
+
+    if (
+      consoleAction === 'inspect-certification' &&
+      target.dataset.certificationProfile &&
+      target.dataset.certificationPack
+    ) {
+      await selectCertification(target.dataset.certificationProfile, target.dataset.certificationPack);
       return;
     }
 
@@ -2113,7 +2216,7 @@ export const createOperatorConsoleWebServer = (
         ]);
         if (!snapshotResponse.ok) {
           const failure = await readJsonResponse<Record<string, unknown>>(snapshotResponse);
-          writeJsonResponse(response, upstreamResponse.status, failure);
+          writeJsonResponse(response, snapshotResponse.status, failure);
           return;
         }
 

@@ -1,5 +1,8 @@
 # V8 Hermes — arquitectura de sandbox y test harness para predicción deportiva
 
+> Estado actual: `FALTA`.
+> Pendiente principal: ya hay sandbox runner y certificación, pero todavía faltan perfiles importantes del harness, el modo `hybrid` y una versión más completa del ecosistema aislado descrito aquí.
+
 ## 1. Objetivo
 
 Diseñar un entorno de sandbox que permita ejecutar el ecosistema completo de V8 Hermes sin tocar producción, cubriendo:
