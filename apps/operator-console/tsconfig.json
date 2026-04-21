@@ -5,7 +5,9 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@gana-v8/public-api": ["../public-api/dist/src/index.d.ts"]
+      "@gana-v8/domain-core": ["../../packages/domain-core/dist/src/index.d.ts"],
+      "@gana-v8/public-api": ["../public-api/dist/src/index.d.ts"],
+      "@gana-v8/storage-adapters": ["../../packages/storage-adapters/dist/src/index.d.ts"]
     },
     "types": ["node"]
   },

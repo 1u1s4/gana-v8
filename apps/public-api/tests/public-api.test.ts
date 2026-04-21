@@ -21,6 +21,7 @@ import { createInMemoryUnitOfWork, createPrismaClient, createPrismaUnitOfWork } 
 import {
   applyFixtureManualSelection,
   applyFixtureSelectionOverride,
+  createPublicApiTokenAuthentication,
   createOperationSnapshot,
   createPublicApiHandlers,
   createPublicApiServer,
@@ -1095,6 +1096,40 @@ test("public api server exposes http endpoints for fixtures, predictions, parlay
   }
 });
 
+test("public api server enforces bearer tokens for reads when auth is configured", async () => {
+  const snapshot = createOperationSnapshot();
+  const authentication = createPublicApiTokenAuthentication({
+    viewerToken: "viewer-token",
+    operatorToken: "operator-token",
+  });
+  const server = createPublicApiServer({
+    snapshot,
+    ...(authentication ? { auth: authentication } : {}),
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const unauthorizedResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.health}`);
+    assert.equal(unauthorizedResponse.status, 401);
+    assert.match(unauthorizedResponse.headers.get("www-authenticate") ?? "", /Bearer/i);
+
+    const viewerResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.health}`, {
+      headers: { authorization: "Bearer viewer-token" },
+    });
+    assert.equal(viewerResponse.status, 200);
+    assert.deepEqual(await viewerResponse.json(), snapshot.health);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 test("public api server accepts POST fixture ops actions when backed by a unit of work", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   const fixture = createFixture({
@@ -1158,6 +1193,61 @@ test("public api server accepts POST fixture ops actions when backed by a unit o
     assert.equal(fixtureOpsJson.workflow.manualSelectionStatus, "selected");
     assert.equal(fixtureOpsJson.workflow.selectionOverride, "force-include");
     assert.equal(fixtureOpsJson.scoringEligibility.eligible, true);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api server rejects fixture ops writes without workflow override capability", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const fixture = createFixture({
+    id: "fx-server-authz-1",
+    sport: "football",
+    competition: "Liga Nacional",
+    homeTeam: "Municipal",
+    awayTeam: "Comunicaciones",
+    scheduledAt: "2026-04-22T05:00:00.000Z",
+    status: "scheduled",
+    metadata: {},
+  });
+
+  await unitOfWork.fixtures.save(fixture);
+  const authentication = createPublicApiTokenAuthentication({
+    viewerToken: "viewer-token",
+    operatorToken: "operator-token",
+  });
+  const server = createPublicApiServer({
+    unitOfWork,
+    ...(authentication ? { auth: authentication } : {}),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const viewerResponse = await fetch(`${baseUrl}/fixtures/${fixture.id}/manual-selection`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer viewer-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ status: "selected", selectedBy: "viewer" }),
+    });
+    assert.equal(viewerResponse.status, 403);
+
+    const operatorResponse = await fetch(`${baseUrl}/fixtures/${fixture.id}/manual-selection`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer operator-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ status: "selected", selectedBy: "operator" }),
+    });
+    assert.equal(operatorResponse.status, 200);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -1383,4 +1473,3 @@ test("loadOperationSnapshotFromUnitOfWork preserves research metadata and ai-run
     ]);
   }
 });
-

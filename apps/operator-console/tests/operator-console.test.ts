@@ -1,10 +1,20 @@
+import type { AddressInfo } from "node:net";
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createFixture } from "@gana-v8/domain-core";
+import {
+  createPublicApiServer,
+  createPublicApiTokenAuthentication,
+} from "@gana-v8/public-api";
+import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
+
 import {
   buildOperatorConsoleModel,
+  createOperatorConsoleWebServer,
   createOperatorConsoleSnapshot,
   createOperatorConsoleSnapshotFromOperation,
+  loadOperatorConsoleWebPayload,
   renderOperatorConsole,
   renderSnapshotConsole,
 } from "../src/index.js";
@@ -540,4 +550,111 @@ test("operator console renderer prints a useful CLI view", () => {
   assert.match(output, /Operational log/);
   assert.match(output, /ETL/);
   assert.match(renderSnapshotConsole(snapshot), /Health: OK/);
+});
+
+test("operator console can load a web payload from public-api snapshots", async () => {
+  const authentication = createPublicApiTokenAuthentication({
+    viewerToken: "viewer-token",
+  });
+  const publicApiServer = createPublicApiServer({
+    snapshot: createOperationLikeSnapshot() as never,
+    ...(authentication ? { auth: authentication } : {}),
+  });
+
+  await new Promise<void>((resolve) => publicApiServer.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = publicApiServer.address();
+    assert.ok(address && typeof address !== "string");
+    const payload = await loadOperatorConsoleWebPayload({
+      publicApiBaseUrl: `http://127.0.0.1:${(address as AddressInfo).port}`,
+      publicApiToken: "viewer-token",
+    });
+
+    assert.equal(payload.snapshot.fixtures.length, 1);
+    assert.equal(payload.model.health.status, "ok");
+    assert.ok(payload.model.panels.some((panel) => panel.title === "Task queue"));
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      publicApiServer.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("operator console web server serves dashboard assets and proxies fixture actions through public-api", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const fixture = createFixture({
+    id: "fixture:web-console:1",
+    sport: "football",
+    competition: "Liga Nacional",
+    homeTeam: "Xelajú",
+    awayTeam: "Antigua",
+    scheduledAt: "2026-04-22T03:00:00.000Z",
+    status: "scheduled",
+    metadata: {},
+  });
+
+  await unitOfWork.fixtures.save(fixture);
+  const authentication = createPublicApiTokenAuthentication({
+    viewerToken: "viewer-token",
+    operatorToken: "operator-token",
+  });
+  const publicApiServer = createPublicApiServer({
+    unitOfWork,
+    ...(authentication ? { auth: authentication } : {}),
+  });
+  await new Promise<void>((resolve) => publicApiServer.listen(0, "127.0.0.1", () => resolve()));
+
+  const publicApiAddress = publicApiServer.address();
+  assert.ok(publicApiAddress && typeof publicApiAddress !== "string");
+  const operatorConsoleServer = createOperatorConsoleWebServer({
+    publicApiBaseUrl: `http://127.0.0.1:${(publicApiAddress as AddressInfo).port}`,
+    publicApiToken: "operator-token",
+  });
+  await new Promise<void>((resolve) => operatorConsoleServer.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const operatorConsoleAddress = operatorConsoleServer.address();
+    assert.ok(operatorConsoleAddress && typeof operatorConsoleAddress !== "string");
+    const baseUrl = `http://127.0.0.1:${(operatorConsoleAddress as AddressInfo).port}`;
+
+    const htmlResponse = await fetch(`${baseUrl}/`);
+    assert.equal(htmlResponse.status, 200);
+    assert.match(await htmlResponse.text(), /Harness Control Surface/);
+
+    const payloadResponse = await fetch(`${baseUrl}/api/console`);
+    assert.equal(payloadResponse.status, 200);
+    const payloadJson = (await payloadResponse.json()) as {
+      snapshot: { fixtures: Array<{ id: string }> };
+      model: { panels: Array<{ title: string }> };
+    };
+    assert.equal(payloadJson.snapshot.fixtures[0]?.id, fixture.id);
+    assert.ok(payloadJson.model.panels.some((panel) => panel.title === "Fixture ops"));
+
+    const actionResponse = await fetch(`${baseUrl}/api/public/fixtures/${encodeURIComponent(fixture.id)}/manual-selection`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        status: "selected",
+        selectedBy: "web-console",
+        reason: "TV slot",
+      }),
+    });
+    assert.equal(actionResponse.status, 200);
+
+    const fixtureOpsResponse = await fetch(`${baseUrl}/api/public/fixtures/${encodeURIComponent(fixture.id)}/ops`);
+    assert.equal(fixtureOpsResponse.status, 200);
+    const fixtureOpsJson = (await fixtureOpsResponse.json()) as {
+      workflow?: { manualSelectionStatus: string; manualSelectionBy?: string };
+    };
+    assert.equal(fixtureOpsJson.workflow?.manualSelectionStatus, "selected");
+    assert.equal(fixtureOpsJson.workflow?.manualSelectionBy, "web-console");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      operatorConsoleServer.close((error) => (error ? reject(error) : resolve())),
+    );
+    await new Promise<void>((resolve, reject) =>
+      publicApiServer.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });

@@ -1,3 +1,10 @@
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+
 import { createOperationalSummary, type
   AiRunReadModel,
   type CoverageDailyScopeReadModel,
@@ -11,6 +18,7 @@ import { createOperationalSummary, type
   type RawIngestionBatchReadModel,
   type ValidationSummary,
   type OddsSnapshotReadModel,
+  publicApiEndpointPaths,
 } from "@gana-v8/public-api";
 
 export interface OperatorConsoleFixture {
@@ -121,6 +129,22 @@ export interface OperatorConsoleModel {
   readonly alerts: readonly string[];
   readonly panels: readonly OperatorConsolePanel[];
   readonly operationalLogs: readonly OperationalLogEntry[];
+}
+
+export interface OperatorConsoleRemoteOptions {
+  readonly publicApiBaseUrl: string;
+  readonly publicApiToken?: string;
+  readonly fetchImpl?: typeof fetch;
+}
+
+export interface OperatorConsoleWebPayload {
+  readonly generatedAt: string;
+  readonly snapshot: OperatorConsoleSnapshot;
+  readonly model: OperatorConsoleModel;
+}
+
+export interface OperatorConsoleWebServerOptions extends OperatorConsoleRemoteOptions {
+  readonly title?: string;
 }
 
 export const workspaceInfo = {
@@ -977,4 +1001,889 @@ export function renderSnapshotConsole(
   snapshot: OperatorConsoleSnapshot = createOperatorConsoleSnapshot(),
 ): string {
   return renderOperatorConsole(buildOperatorConsoleModel(snapshot));
+}
+
+const normalizePublicApiBaseUrl = (baseUrl: string): string => baseUrl.replace(/\/+$/, "");
+
+const getFetchImplementation = (fetchImpl?: typeof fetch): typeof fetch => {
+  if (fetchImpl) {
+    return fetchImpl;
+  }
+
+  if (typeof fetch !== "function") {
+    throw new Error("A fetch implementation is required to use the operator console web server.");
+  }
+
+  return fetch;
+};
+
+const readRequestBody = async (request: IncomingMessage): Promise<string> => {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : "";
+};
+
+const writeJsonResponse = (
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {},
+): void => {
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    ...headers,
+  });
+  response.end(JSON.stringify(body, null, 2));
+};
+
+const writeTextResponse = (
+  response: ServerResponse,
+  status: number,
+  body: string,
+  contentType: string,
+): void => {
+  response.writeHead(status, {
+    "content-type": contentType,
+    "cache-control": contentType.includes("javascript") || contentType.includes("css")
+      ? "public, max-age=60"
+      : "no-store",
+  });
+  response.end(body);
+};
+
+const buildPublicApiHeaders = (
+  token: string | undefined,
+  requestHeaders: Readonly<Record<string, string | undefined>> = {},
+): Headers => {
+  const headers = new Headers();
+  headers.set("accept", "application/json");
+
+  if (token) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+
+  for (const [key, value] of Object.entries(requestHeaders)) {
+    if (value !== undefined) {
+      headers.set(key, value);
+    }
+  }
+
+  return headers;
+};
+
+const requestPublicApi = async (
+  options: OperatorConsoleRemoteOptions,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> => {
+  const fetchImpl = getFetchImplementation(options.fetchImpl);
+  const url = `${normalizePublicApiBaseUrl(options.publicApiBaseUrl)}${path.startsWith("/") ? path : `/${path}`}`;
+  const headers = buildPublicApiHeaders(options.publicApiToken, init.headers && !(init.headers instanceof Headers)
+    ? Object.fromEntries(Object.entries(init.headers as Record<string, string>).map(([key, value]) => [key, value]))
+    : {});
+
+  if (init.headers instanceof Headers) {
+    init.headers.forEach((value, key) => headers.set(key, value));
+  }
+
+  return fetchImpl(url, {
+    ...init,
+    headers,
+  });
+};
+
+const readJsonResponse = async <T>(response: Response): Promise<T> => {
+  const text = await response.text();
+  return (text.length > 0 ? JSON.parse(text) : null) as T;
+};
+
+export const loadOperatorConsoleWebPayload = async (
+  options: OperatorConsoleRemoteOptions,
+): Promise<OperatorConsoleWebPayload> => {
+  const response = await requestPublicApi(options, publicApiEndpointPaths.snapshot);
+  if (!response.ok) {
+    const failure = await readJsonResponse<Record<string, unknown>>(response);
+    throw new Error(
+      `Unable to load operator console snapshot (${response.status}): ${JSON.stringify(failure)}`,
+    );
+  }
+
+  const operationSnapshot = await readJsonResponse<OperationSnapshot>(response);
+  const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot);
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    snapshot,
+    model: buildOperatorConsoleModel(snapshot),
+  };
+};
+
+const OPERATOR_CONSOLE_TITLE = "Gana V8 Operator Console";
+
+const renderOperatorConsoleWebHtml = (title: string): string => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Harness Control Surface</p>
+          <h1>${title}</h1>
+          <p class="lede">Fixtures, queue health, AI traceability, ETL pressure, and workflow overrides in one place.</p>
+        </div>
+        <div class="hero-actions">
+          <span class="connection-pill" data-status>Connecting...</span>
+          <button class="primary-button" type="button" data-refresh>Refresh</button>
+        </div>
+      </header>
+      <main class="dashboard-root" data-app></main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
+`;
+
+const OPERATOR_CONSOLE_WEB_STYLES = `
+:root {
+  --bg: #f4efe7;
+  --bg-accent: #efe0cc;
+  --surface: rgba(255, 252, 247, 0.86);
+  --surface-strong: #fffdf8;
+  --line: rgba(37, 50, 61, 0.12);
+  --text: #23323d;
+  --muted: #62727f;
+  --success: #1f7a54;
+  --warn: #b76b1c;
+  --danger: #a73929;
+  --accent: #bf4f2c;
+  --accent-strong: #8b3217;
+  --shadow: 0 18px 50px rgba(35, 50, 61, 0.08);
+  --radius: 22px;
+  --font-sans: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(191, 79, 44, 0.16), transparent 30%),
+    radial-gradient(circle at top right, rgba(51, 120, 94, 0.12), transparent 34%),
+    linear-gradient(180deg, #f7f1e8 0%, #f1e7d8 100%);
+  font-family: var(--font-sans);
+}
+
+.app-shell {
+  width: min(1400px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 0 48px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: end;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background: linear-gradient(135deg, rgba(255, 253, 248, 0.96), rgba(244, 231, 216, 0.92));
+  box-shadow: var(--shadow);
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.6rem);
+  line-height: 0.95;
+}
+
+.lede {
+  margin: 12px 0 0;
+  max-width: 720px;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.hero-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: end;
+}
+
+.connection-pill,
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.badge-ok {
+  color: var(--success);
+}
+
+.badge-warn {
+  color: var(--warn);
+}
+
+.badge-error {
+  color: var(--danger);
+}
+
+.primary-button,
+.ghost-button,
+.fixture-action {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.primary-button {
+  padding: 11px 18px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff8f3;
+  box-shadow: 0 12px 26px rgba(191, 79, 44, 0.24);
+}
+
+.primary-button:hover {
+  background: var(--accent-strong);
+}
+
+.dashboard-root {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.surface {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
+.surface-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 0;
+}
+
+.surface-header h2,
+.surface-header h3 {
+  margin: 0;
+}
+
+.surface-body {
+  padding: 18px 20px 20px;
+}
+
+.metric-grid,
+.panel-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.metric-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.panel-grid {
+  grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr);
+  align-items: start;
+}
+
+.card-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.metric-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-strong);
+}
+
+.metric-card .label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.metric-card .value {
+  font-size: 1.9rem;
+  font-weight: 700;
+}
+
+.alert-list {
+  display: grid;
+  gap: 10px;
+}
+
+.alert-item {
+  padding: 12px 14px;
+  border-left: 4px solid var(--warn);
+  border-radius: 14px;
+  background: rgba(255, 250, 244, 0.95);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+}
+
+th {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+td strong {
+  display: block;
+}
+
+.subtle {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.fixture-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fixture-action {
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--text);
+}
+
+.fixture-action[data-tone="include"] {
+  color: var(--success);
+}
+
+.fixture-action[data-tone="exclude"] {
+  color: var(--danger);
+}
+
+.fixture-action[data-tone="neutral"] {
+  color: var(--accent-strong);
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+}
+
+.list-item {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-strong);
+}
+
+.log-line,
+.panel-line {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.panel-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.panel-card h3 {
+  margin: 0 0 10px;
+}
+
+.empty-state {
+  padding: 26px;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .hero,
+  .surface-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero-actions {
+    align-items: stretch;
+  }
+
+  .panel-grid {
+    grid-template-columns: 1fr;
+  }
+}
+`;
+
+const OPERATOR_CONSOLE_WEB_APP = `
+const root = document.querySelector('[data-app]');
+const statusNode = document.querySelector('[data-status]');
+const refreshButton = document.querySelector('[data-refresh]');
+const pollIntervalMs = 30000;
+
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const formatBadge = (status) => {
+  const normalized = String(status || '').toLowerCase();
+  const tone = normalized === 'ok' || normalized === 'published' || normalized === 'succeeded' || normalized === 'completed'
+    ? 'badge-ok'
+    : normalized === 'warn' || normalized === 'partial' || normalized === 'pending' || normalized === 'queued' || normalized === 'running'
+      ? 'badge-warn'
+      : 'badge-error';
+  return '<span class="badge ' + tone + '">' + escapeHtml(status) + '</span>';
+};
+
+const renderMetricCard = (label, value, detail) =>
+  '<article class="metric-card">' +
+    '<span class="label">' + escapeHtml(label) + '</span>' +
+    '<div class="value">' + escapeHtml(value) + '</div>' +
+    (detail ? '<div class="subtle">' + escapeHtml(detail) + '</div>' : '') +
+  '</article>';
+
+const renderAlerts = (model) => {
+  if (!model.alerts || model.alerts.length === 0) {
+    return '<div class="empty-state">No active alerts.</div>';
+  }
+
+  return '<div class="alert-list">' + model.alerts.map((alert) =>
+    '<div class="alert-item">' + escapeHtml(alert) + '</div>'
+  ).join('') + '</div>';
+};
+
+const renderFixtureActions = (fixtureId) => {
+  const actions = [
+    ['manual-select', 'Select', 'neutral'],
+    ['manual-reject', 'Reject', 'exclude'],
+    ['force-include', 'Force Include', 'include'],
+    ['force-exclude', 'Force Exclude', 'exclude'],
+    ['clear-manual', 'Clear Manual', 'neutral'],
+    ['clear-override', 'Clear Override', 'neutral'],
+  ];
+
+  return '<div class="fixture-actions">' + actions.map(([action, label, tone]) =>
+    '<button class="fixture-action" type="button" data-fixture-id="' + escapeHtml(fixtureId) + '" data-fixture-action="' + escapeHtml(action) + '" data-tone="' + escapeHtml(tone) + '">' +
+      escapeHtml(label) +
+    '</button>'
+  ).join('') + '</div>';
+};
+
+const renderFixturesTable = (snapshot) => {
+  if (!snapshot.fixtures || snapshot.fixtures.length === 0) {
+    return '<div class="empty-state">No fixtures available.</div>';
+  }
+
+  return '<div class="table-wrap"><table><thead><tr>' +
+    '<th>Fixture</th><th>Status</th><th>Research</th><th>Workflow</th><th>Scoring</th><th>Actions</th>' +
+    '</tr></thead><tbody>' +
+    snapshot.fixtures.map((fixture) =>
+      '<tr>' +
+        '<td><strong>' + escapeHtml(fixture.homeTeam) + ' vs ' + escapeHtml(fixture.awayTeam) + '</strong><span class="subtle">' + escapeHtml(fixture.competition) + '<br />' + escapeHtml(fixture.id) + '</span></td>' +
+        '<td>' + formatBadge(fixture.status) + '</td>' +
+        '<td><strong>' + escapeHtml(fixture.researchRecommendedLean || 'n/a') + '</strong><span class="subtle">Generated: ' + escapeHtml(fixture.researchGeneratedAt || 'n/a') + '</span></td>' +
+        '<td><span class="subtle">Manual: ' + escapeHtml(fixture.manualSelectionStatus || 'none') + ' by ' + escapeHtml(fixture.manualSelectionBy || 'n/a') + '</span><br /><span class="subtle">Override: ' + escapeHtml(fixture.selectionOverride || 'none') + '</span></td>' +
+        '<td><span class="subtle">' + escapeHtml(fixture.scoringEligibilityReason || 'n/a') + '</span></td>' +
+        '<td>' + renderFixtureActions(fixture.id) + '</td>' +
+      '</tr>'
+    ).join('') +
+    '</tbody></table></div>';
+};
+
+const renderTaskList = (snapshot) => {
+  if (!snapshot.tasks || snapshot.tasks.length === 0) {
+    return '<div class="empty-state">No tasks available.</div>';
+  }
+
+  return '<div class="list">' + snapshot.tasks.slice(0, 8).map((task) =>
+    '<article class="list-item">' +
+      '<strong>' + escapeHtml(task.kind) + '</strong>' +
+      '<div class="subtle">' + escapeHtml(task.id) + '</div>' +
+      '<div>' + formatBadge(task.status) + '</div>' +
+      '<div class="subtle">Priority ' + escapeHtml(task.priority) + ' | attempts ' + escapeHtml(task.attempts) + '</div>' +
+    '</article>'
+  ).join('') + '</div>';
+};
+
+const renderAiRuns = (snapshot) => {
+  if (!snapshot.aiRuns || snapshot.aiRuns.length === 0) {
+    return '<div class="empty-state">No AI runs available.</div>';
+  }
+
+  return '<div class="list">' + snapshot.aiRuns.slice(0, 6).map((aiRun) =>
+    '<article class="list-item">' +
+      '<strong>' + escapeHtml(aiRun.provider) + ' / ' + escapeHtml(aiRun.model) + '</strong>' +
+      '<div>' + formatBadge(aiRun.status) + '</div>' +
+      '<div class="subtle">Prompt ' + escapeHtml(aiRun.latestPromptVersion || aiRun.promptVersion) + '</div>' +
+      '<div class="subtle">Request ' + escapeHtml(aiRun.providerRequestId || 'n/a') + '</div>' +
+    '</article>'
+  ).join('') + '</div>';
+};
+
+const renderLogs = (model) => {
+  if (!model.operationalLogs || model.operationalLogs.length === 0) {
+    return '<div class="empty-state">No operational logs available.</div>';
+  }
+
+  return '<div class="list">' + model.operationalLogs.slice(0, 10).map((log) =>
+    '<article class="list-item">' +
+      '<div><strong>' + escapeHtml(log.level) + '</strong> ' + escapeHtml(log.taskKind) + '</div>' +
+      '<div class="subtle">' + escapeHtml(log.timestamp) + '</div>' +
+      '<div class="log-line">' + escapeHtml(log.message) + '</div>' +
+    '</article>'
+  ).join('') + '</div>';
+};
+
+const renderPanels = (model) => {
+  return '<div class="metric-grid">' + model.panels.map((panel) =>
+    '<section class="panel-card">' +
+      '<h3>' + escapeHtml(panel.title) + '</h3>' +
+      (panel.lines && panel.lines.length > 0
+        ? panel.lines.map((line) => '<div class="panel-line">' + escapeHtml(line) + '</div>').join('')
+        : '<div class="empty-state">No data.</div>') +
+    '</section>'
+  ).join('') + '</div>';
+};
+
+const renderDashboard = (payload) => {
+  const snapshot = payload.snapshot;
+  const model = payload.model;
+  const metrics = [
+    renderMetricCard('Health', snapshot.health.status, 'Generated ' + snapshot.generatedAt),
+    renderMetricCard('Fixtures', snapshot.fixtures.length, 'Tracked in console'),
+    renderMetricCard('Tasks', snapshot.tasks.length, 'Queue + automation'),
+    renderMetricCard('Predictions', snapshot.predictions.length, 'Published + pending'),
+    renderMetricCard('Parlays', snapshot.parlays.length, 'Current publication set'),
+    renderMetricCard('Validation', snapshot.validationSummary.total, 'Pending ' + snapshot.validationSummary.pending),
+  ].join('');
+
+  root.innerHTML =
+    '<section class="surface"><div class="surface-body"><div class="metric-grid">' + metrics + '</div></div></section>' +
+    '<section class="surface"><div class="surface-header"><h2>Alerts</h2><div>' + formatBadge(snapshot.health.status) + '</div></div><div class="surface-body">' + renderAlerts(model) + '</div></section>' +
+    '<section class="panel-grid">' +
+      '<section class="surface"><div class="surface-header"><h2>Fixture Workbench</h2><span class="subtle">Manual selection and scoring gates</span></div><div class="surface-body">' + renderFixturesTable(snapshot) + '</div></section>' +
+      '<div class="card-stack">' +
+        '<section class="surface"><div class="surface-header"><h3>Task Queue</h3></div><div class="surface-body">' + renderTaskList(snapshot) + '</div></section>' +
+        '<section class="surface"><div class="surface-header"><h3>AI Runs</h3></div><div class="surface-body">' + renderAiRuns(snapshot) + '</div></section>' +
+      '</div>' +
+    '</section>' +
+    '<section class="surface"><div class="surface-header"><h2>Operational Log</h2></div><div class="surface-body">' + renderLogs(model) + '</div></section>' +
+    '<section class="surface"><div class="surface-header"><h2>Ops Panels</h2><span class="subtle">Derived from public-api snapshots</span></div><div class="surface-body">' + renderPanels(model) + '</div></section>';
+};
+
+const setStatus = (text, tone) => {
+  statusNode.textContent = text;
+  statusNode.className = 'connection-pill ' + (tone || '');
+};
+
+const loadConsole = async () => {
+  setStatus('Refreshing...', 'badge-warn');
+  refreshButton.disabled = true;
+
+  try {
+    const response = await fetch('/api/console', {
+      headers: { accept: 'application/json' },
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message || 'Unable to load operator console payload');
+    }
+
+    renderDashboard(payload);
+    setStatus('Live data connected', 'badge-ok');
+  } catch (error) {
+    root.innerHTML = '<section class="surface"><div class="surface-body"><div class="empty-state">' + escapeHtml(error.message || 'Unexpected console error') + '</div></div></section>';
+    setStatus('Connection degraded', 'badge-error');
+  } finally {
+    refreshButton.disabled = false;
+  }
+};
+
+const submitFixtureAction = async (fixtureId, action) => {
+  const encodedFixtureId = encodeURIComponent(fixtureId);
+  let path = '';
+  let body = {};
+
+  if (action === 'manual-select') {
+    path = '/api/public/fixtures/' + encodedFixtureId + '/manual-selection';
+    body = { status: 'selected', selectedBy: 'operator-console', reason: window.prompt('Reason for manual selection:', 'Selected from operator console') || undefined };
+  } else if (action === 'manual-reject') {
+    path = '/api/public/fixtures/' + encodedFixtureId + '/manual-selection';
+    body = { status: 'rejected', selectedBy: 'operator-console', reason: window.prompt('Reason for rejection:', 'Rejected from operator console') || undefined };
+  } else if (action === 'force-include') {
+    path = '/api/public/fixtures/' + encodedFixtureId + '/selection-override';
+    body = { mode: 'force-include', reason: window.prompt('Reason for force include:', 'Force include from operator console') || undefined };
+  } else if (action === 'force-exclude') {
+    path = '/api/public/fixtures/' + encodedFixtureId + '/selection-override';
+    body = { mode: 'force-exclude', reason: window.prompt('Reason for force exclude:', 'Force exclude from operator console') || undefined };
+  } else if (action === 'clear-manual') {
+    path = '/api/public/fixtures/' + encodedFixtureId + '/manual-selection/reset';
+    body = { reason: window.prompt('Reason to clear manual state:', 'Clear manual selection') || undefined };
+  } else if (action === 'clear-override') {
+    path = '/api/public/fixtures/' + encodedFixtureId + '/selection-override/reset';
+    body = { reason: window.prompt('Reason to clear override:', 'Clear selection override') || undefined };
+  } else {
+    return;
+  }
+
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.message || 'Fixture action failed');
+  }
+};
+
+refreshButton.addEventListener('click', () => {
+  void loadConsole();
+});
+
+document.addEventListener('click', async (event) => {
+  const target = event.target instanceof HTMLElement ? event.target.closest('[data-fixture-action]') : null;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const fixtureId = target.dataset.fixtureId;
+  const action = target.dataset.fixtureAction;
+  if (!fixtureId || !action) {
+    return;
+  }
+
+  target.setAttribute('disabled', 'true');
+  try {
+    await submitFixtureAction(fixtureId, action);
+    await loadConsole();
+  } catch (error) {
+    window.alert(error.message || 'Unable to apply fixture action');
+  } finally {
+    target.removeAttribute('disabled');
+  }
+});
+
+void loadConsole();
+window.setInterval(() => {
+  void loadConsole();
+}, pollIntervalMs);
+`;
+
+const getOperatorConsoleProxyPath = (requestPath: string): string | null => {
+  if (!requestPath.startsWith("/api/public")) {
+    return null;
+  }
+
+  const stripped = requestPath.slice("/api/public".length);
+  return stripped.length > 0 ? stripped : "/";
+};
+
+export const createOperatorConsoleWebServer = (
+  options: OperatorConsoleWebServerOptions,
+): Server =>
+  createServer((request, response) => {
+    void (async () => {
+      const method = request.method ?? "GET";
+      const requestPath = request.url ?? "/";
+      const requestUrl = new URL(requestPath, "http://operator-console.local");
+
+      if (method === "GET" && requestUrl.pathname === "/") {
+        writeTextResponse(
+          response,
+          200,
+          renderOperatorConsoleWebHtml(options.title ?? OPERATOR_CONSOLE_TITLE),
+          "text/html; charset=utf-8",
+        );
+        return;
+      }
+
+      if (method === "GET" && requestUrl.pathname === "/styles.css") {
+        writeTextResponse(response, 200, OPERATOR_CONSOLE_WEB_STYLES, "text/css; charset=utf-8");
+        return;
+      }
+
+      if (method === "GET" && requestUrl.pathname === "/app.js") {
+        writeTextResponse(response, 200, OPERATOR_CONSOLE_WEB_APP, "text/javascript; charset=utf-8");
+        return;
+      }
+
+      if (method === "GET" && requestUrl.pathname === "/api/console") {
+        const upstreamResponse = await requestPublicApi(options, publicApiEndpointPaths.snapshot);
+        if (!upstreamResponse.ok) {
+          const failure = await readJsonResponse<Record<string, unknown>>(upstreamResponse);
+          writeJsonResponse(response, upstreamResponse.status, failure);
+          return;
+        }
+
+        const operationSnapshot = await readJsonResponse<OperationSnapshot>(upstreamResponse);
+        const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot);
+        const payload: OperatorConsoleWebPayload = {
+          generatedAt: snapshot.generatedAt,
+          snapshot,
+          model: buildOperatorConsoleModel(snapshot),
+        };
+        writeJsonResponse(response, 200, payload);
+        return;
+      }
+
+      const publicApiPath = getOperatorConsoleProxyPath(requestUrl.pathname);
+      if (publicApiPath) {
+        const body = method === "GET" || method === "HEAD" ? undefined : await readRequestBody(request);
+        const upstreamResponse = await requestPublicApi(
+          options,
+          `${publicApiPath}${requestUrl.search}`,
+          {
+            method,
+            ...(body !== undefined ? { body } : {}),
+            headers: {
+              ...(request.headers["content-type"]
+                ? { "content-type": Array.isArray(request.headers["content-type"]) ? request.headers["content-type"][0] : request.headers["content-type"] }
+                : {}),
+            },
+          },
+        );
+        const contentType = upstreamResponse.headers.get("content-type") ?? "application/json; charset=utf-8";
+        const text = await upstreamResponse.text();
+        writeTextResponse(response, upstreamResponse.status, text, contentType);
+        return;
+      }
+
+      writeJsonResponse(response, 404, {
+        error: "not_found",
+        message: `Unknown operator console route: ${requestPath}`,
+      });
+    })().catch((error: unknown) => {
+      writeJsonResponse(response, 500, {
+        error: "internal_error",
+        message: error instanceof Error ? error.message : "Unexpected operator console error",
+      });
+    });
+  });
+
+export interface StartOperatorConsoleWebServerOptions extends OperatorConsoleWebServerOptions {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly host?: string;
+  readonly port?: number;
+}
+
+const parsePort = (rawValue: string | undefined, fallback: number): number => {
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+export const startOperatorConsoleWebServer = async (
+  options: StartOperatorConsoleWebServerOptions,
+): Promise<Server> => {
+  const env = options.env ?? process.env;
+  const host = options.host ?? env.GANA_OPERATOR_CONSOLE_HOST ?? "127.0.0.1";
+  const port = options.port ?? parsePort(env.GANA_OPERATOR_CONSOLE_PORT, 3200);
+  const server = createOperatorConsoleWebServer({
+    publicApiBaseUrl: options.publicApiBaseUrl,
+    ...(options.publicApiToken ? { publicApiToken: options.publicApiToken } : {}),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.title ? { title: options.title } : {}),
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  return server;
+};
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const env = process.env;
+  const publicApiBaseUrl =
+    env.GANA_OPERATOR_CONSOLE_PUBLIC_API_URL ??
+    `http://127.0.0.1:${env.GANA_PUBLIC_API_PORT ?? "3100"}`;
+  const publicApiToken =
+    env.GANA_OPERATOR_CONSOLE_PUBLIC_API_TOKEN ??
+    env.GANA_PUBLIC_API_OPERATOR_TOKEN ??
+    env.GANA_PUBLIC_API_VIEWER_TOKEN;
+  const server = await startOperatorConsoleWebServer({
+    publicApiBaseUrl,
+    ...(publicApiToken ? { publicApiToken } : {}),
+    env,
+  });
+  const address = server.address();
+  if (address && typeof address !== "string") {
+    console.log(`operator-console listening on http://${address.address}:${address.port}`);
+  } else {
+    console.log("operator-console listening");
+  }
 }

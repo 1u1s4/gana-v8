@@ -50,6 +50,11 @@ import {
   type ValidationEntity,
 } from "@gana-v8/domain-core";
 import {
+  createAuthorizationActor,
+  hasCapability,
+  type AuthorizationActor,
+} from "@gana-v8/authz";
+import {
   createPrismaClient,
   createPrismaUnitOfWork,
   createVerifiedPrismaClient,
@@ -292,6 +297,17 @@ export interface PublicApiHandlers {
 export interface PublicApiHttpOptions {
   readonly snapshot?: OperationSnapshot;
   readonly unitOfWork?: StorageUnitOfWork;
+  readonly auth?: PublicApiAuthenticationOptions;
+}
+
+export interface PublicApiTokenCredential {
+  readonly token: string;
+  readonly actor: AuthorizationActor;
+}
+
+export interface PublicApiAuthenticationOptions {
+  readonly credentials: readonly PublicApiTokenCredential[];
+  readonly realm?: string;
 }
 
 export interface FixtureManualSelectionActionInput extends FixtureWorkflowManualSelectionInput {}
@@ -855,6 +871,171 @@ export function routePublicApiRequest(
   }
 }
 
+const PUBLIC_API_DEFAULT_REALM = "gana-v8-public-api";
+
+interface PublicApiAuthorizationOutcome {
+  readonly actor?: AuthorizationActor;
+  readonly denied?: PublicApiResponse;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+const firstDefinedValue = (...values: readonly (string | undefined)[]): string | undefined =>
+  values.find((value) => value !== undefined && value.trim().length > 0);
+
+const getSingleHeaderValue = (value: string | readonly string[] | undefined): string | undefined => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  return undefined;
+};
+
+const readPublicApiAccessToken = (request: IncomingMessage): string | undefined => {
+  const authorizationHeader = getSingleHeaderValue(request.headers.authorization);
+  if (authorizationHeader) {
+    const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return firstDefinedValue(
+    getSingleHeaderValue(request.headers["x-gana-api-token"]),
+    getSingleHeaderValue(request.headers["x-operator-token"]),
+  );
+};
+
+const createPublicApiUnauthorizedResponse = (
+  realm: string,
+  detail: string,
+): Pick<PublicApiAuthorizationOutcome, "denied" | "headers"> => ({
+  denied: {
+    status: 401,
+    body: {
+      error: "unauthorized",
+      message: detail,
+    },
+  },
+  headers: {
+    "www-authenticate": `Bearer realm="${realm}"`,
+  },
+});
+
+export const createPublicApiTokenAuthentication = (input: {
+  readonly viewerToken?: string;
+  readonly operatorToken?: string;
+  readonly automationToken?: string;
+  readonly systemToken?: string;
+  readonly realm?: string;
+}): PublicApiAuthenticationOptions | undefined => {
+  const credentials: PublicApiTokenCredential[] = [];
+
+  if (input.viewerToken?.trim()) {
+    credentials.push({
+      token: input.viewerToken.trim(),
+      actor: createAuthorizationActor({
+        id: "public-api:viewer",
+        role: "viewer",
+        displayName: "Public API Viewer",
+      }),
+    });
+  }
+
+  if (input.operatorToken?.trim()) {
+    credentials.push({
+      token: input.operatorToken.trim(),
+      actor: createAuthorizationActor({
+        id: "public-api:operator",
+        role: "operator",
+        displayName: "Public API Operator",
+      }),
+    });
+  }
+
+  if (input.automationToken?.trim()) {
+    credentials.push({
+      token: input.automationToken.trim(),
+      actor: createAuthorizationActor({
+        id: "public-api:automation",
+        role: "automation",
+        displayName: "Public API Automation",
+      }),
+    });
+  }
+
+  if (input.systemToken?.trim()) {
+    credentials.push({
+      token: input.systemToken.trim(),
+      actor: createAuthorizationActor({
+        id: "public-api:system",
+        role: "system",
+        displayName: "Public API System",
+      }),
+    });
+  }
+
+  if (credentials.length === 0) {
+    return undefined;
+  }
+
+  return {
+    credentials,
+    realm: input.realm ?? PUBLIC_API_DEFAULT_REALM,
+  };
+};
+
+export const loadPublicApiTokenAuthenticationFromEnv = (
+  options: { readonly env?: Readonly<Record<string, string | undefined>> } = {},
+): PublicApiAuthenticationOptions | undefined => {
+  const env = options.env ?? process.env;
+  return createPublicApiTokenAuthentication({
+    ...(env.GANA_PUBLIC_API_VIEWER_TOKEN ? { viewerToken: env.GANA_PUBLIC_API_VIEWER_TOKEN } : {}),
+    ...(env.GANA_PUBLIC_API_OPERATOR_TOKEN ? { operatorToken: env.GANA_PUBLIC_API_OPERATOR_TOKEN } : {}),
+    ...(env.GANA_PUBLIC_API_AUTOMATION_TOKEN ? { automationToken: env.GANA_PUBLIC_API_AUTOMATION_TOKEN } : {}),
+    ...(env.GANA_PUBLIC_API_SYSTEM_TOKEN ? { systemToken: env.GANA_PUBLIC_API_SYSTEM_TOKEN } : {}),
+    ...(env.GANA_PUBLIC_API_AUTH_REALM ? { realm: env.GANA_PUBLIC_API_AUTH_REALM } : {}),
+  });
+};
+
+export const authorizePublicApiRequest = (
+  request: IncomingMessage,
+  method: string,
+  authentication?: PublicApiAuthenticationOptions,
+): PublicApiAuthorizationOutcome => {
+  if (!authentication || authentication.credentials.length === 0) {
+    return {};
+  }
+
+  const token = readPublicApiAccessToken(request);
+  const realm = authentication.realm ?? PUBLIC_API_DEFAULT_REALM;
+  if (!token) {
+    return createPublicApiUnauthorizedResponse(realm, "A bearer token is required for this public API.");
+  }
+
+  const credential = authentication.credentials.find((candidate) => candidate.token === token);
+  if (!credential) {
+    return createPublicApiUnauthorizedResponse(realm, "The provided token is not authorized for this public API.");
+  }
+
+  if (method !== "GET" && method !== "HEAD" && !hasCapability(credential.actor, "workflow:override")) {
+    return {
+      denied: {
+        status: 403,
+        body: {
+          error: "forbidden",
+          message: `Actor ${credential.actor.id} lacks capability workflow:override`,
+        },
+      },
+    };
+  }
+
+  return { actor: credential.actor };
+};
+
 export function createPublicApiServer(
   options: PublicApiHttpOptions = {},
 ): Server {
@@ -863,12 +1044,13 @@ export function createPublicApiServer(
     : createPublicApiHandlers(options.snapshot ?? createOperationSnapshot());
 
   return createServer((request, response) => {
-    void handlePublicApiRequest(request, response, {
-      ...(staticHandlers ? { handlers: staticHandlers } : {}),
-      ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
-    }).catch((error: unknown) => {
-      writeJsonResponse(response, 500, {
-        error: "internal_error",
+      void handlePublicApiRequest(request, response, {
+        ...(staticHandlers ? { handlers: staticHandlers } : {}),
+        ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
+        ...(options.auth ? { auth: options.auth } : {}),
+      }).catch((error: unknown) => {
+        writeJsonResponse(response, 500, {
+          error: "internal_error",
         message: error instanceof Error ? error.message : "Unexpected public API error",
       });
     });
@@ -881,10 +1063,17 @@ export async function handlePublicApiRequest(
   options: {
     readonly handlers?: PublicApiHandlers;
     readonly unitOfWork?: StorageUnitOfWork;
+    readonly auth?: PublicApiAuthenticationOptions;
   } = {},
 ): Promise<void> {
   const method = request.method ?? "GET";
   const requestPath = request.url ?? "/";
+  const authorization = authorizePublicApiRequest(request, method, options.auth);
+
+  if (authorization.denied) {
+    writeJsonResponse(response, authorization.denied.status, authorization.denied.body, authorization.headers);
+    return;
+  }
 
   if (method === "GET") {
     const handlers = options.unitOfWork
@@ -951,6 +1140,60 @@ export async function handlePublicApiRequest(
     allowedMethods: options.unitOfWork ? ["GET", "POST"] : ["GET"],
   });
 }
+
+export interface StartPublicApiServerOptions extends PublicApiHttpOptions {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly host?: string;
+  readonly port?: number;
+}
+
+const parseServerPort = (rawValue: string | undefined, fallback: number): number => {
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+export const startPublicApiServer = async (
+  options: StartPublicApiServerOptions = {},
+): Promise<Server> => {
+  const env = options.env ?? process.env;
+  const host = options.host ?? env.GANA_PUBLIC_API_HOST ?? "127.0.0.1";
+  const port = options.port ?? parseServerPort(env.GANA_PUBLIC_API_PORT, 3100);
+  const authentication = options.auth ?? loadPublicApiTokenAuthenticationFromEnv({ env });
+  const databaseUrl = firstDefinedValue(env.GANA_DATABASE_URL, env.DATABASE_URL);
+  const prismaClient =
+    !options.snapshot && !options.unitOfWork && databaseUrl
+      ? createVerifiedPrismaClient({ databaseUrl })
+      : null;
+  const server = createPublicApiServer({
+    ...(options.snapshot ? { snapshot: options.snapshot } : {}),
+    ...(options.unitOfWork
+      ? { unitOfWork: options.unitOfWork }
+      : prismaClient
+        ? { unitOfWork: createPrismaUnitOfWork(prismaClient) }
+        : {}),
+    ...(authentication ? { auth: authentication } : {}),
+  });
+
+  if (prismaClient) {
+    server.on("close", () => {
+      void prismaClient.$disconnect();
+    });
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  return server;
+};
 
 export function listFixtures(snapshot: OperationSnapshot): readonly FixtureEntity[] {
   return snapshot.fixtures;
@@ -2338,11 +2581,23 @@ function writeJsonResponse(
   response: ServerResponse,
   status: number,
   body: unknown,
+  headers: Readonly<Record<string, string>> = {},
 ): void {
   const payload = JSON.stringify(body, null, 2);
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    ...headers,
   });
   response.end(payload);
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const server = await startPublicApiServer();
+  const address = server.address();
+  if (address && typeof address !== "string") {
+    console.log(`public-api listening on http://${address.address}:${address.port}`);
+  } else {
+    console.log("public-api listening");
+  }
 }

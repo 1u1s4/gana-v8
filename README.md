@@ -67,6 +67,29 @@ pnpm test
 pnpm build
 ```
 
+## Superficies operativas
+
+`public-api` puede correrse como servicio HTTP interno:
+
+```bash
+pnpm --filter @gana-v8/public-api serve
+```
+
+Si definís `GANA_PUBLIC_API_VIEWER_TOKEN` y/o `GANA_PUBLIC_API_OPERATOR_TOKEN`, el servicio exige `Authorization: Bearer ...`.
+
+La consola web de operación corre separada y consume solo `public-api`:
+
+```bash
+pnpm --filter @gana-v8/operator-console serve:web
+```
+
+Variables clave:
+
+- `GANA_OPERATOR_CONSOLE_PUBLIC_API_URL`
+- `GANA_OPERATOR_CONSOLE_PUBLIC_API_TOKEN`
+- `GANA_PUBLIC_API_PORT`
+- `GANA_OPERATOR_CONSOLE_PORT`
+
 ## Base de datos por defecto
 
 - Prisma y el runtime quedan orientados a MySQL como default de desarrollo.
