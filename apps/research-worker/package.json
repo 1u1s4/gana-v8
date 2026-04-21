@@ -13,7 +13,7 @@
     }
   },
   "files": [
-    "dist/src"
+    "dist"
   ],
   "scripts": {
     "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/model-registry build && pnpm --filter @gana-v8/ai-runtime build && pnpm --filter @gana-v8/research-engine build && pnpm --filter @gana-v8/feature-store build && tsc -p tsconfig.build.json",
