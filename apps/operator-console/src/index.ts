@@ -1,5 +1,8 @@
 import { createOperationalSummary, type
   AiRunReadModel,
+  type CoverageDailyScopeReadModel,
+  getDailyAutomationPolicy,
+  listCoverageDailyScope,
   type OperationSnapshot,
   type OperationalLogEntry,
   type OperationalSummary,
@@ -74,6 +77,13 @@ export interface OperatorConsoleEtlSummary {
   readonly endpointCounts: Readonly<Record<string, number>>;
 }
 
+export interface OperatorConsoleCoveragePolicy {
+  readonly id: string;
+  readonly label: string;
+  readonly enabled: boolean;
+  readonly priority: number;
+}
+
 export interface OperatorConsoleSnapshot {
   readonly generatedAt: string;
   readonly fixtures: readonly OperatorConsoleFixture[];
@@ -88,6 +98,15 @@ export interface OperatorConsoleSnapshot {
   readonly operationalLogs: readonly OperationalLogEntry[];
   readonly validationSummary: ValidationSummary;
   readonly health: PublicApiHealth;
+  readonly leagueCoveragePolicies: readonly OperatorConsoleCoveragePolicy[];
+  readonly teamCoveragePolicies: readonly OperatorConsoleCoveragePolicy[];
+  readonly dailyAutomationPolicy: {
+    readonly policyName: string;
+    readonly timezone: string;
+    readonly minAllowedOdd: number;
+    readonly requireTrackedLeagueOrTeam: boolean;
+  } | null;
+  readonly coverageDailyScope: readonly CoverageDailyScopeReadModel[];
 }
 
 export interface OperatorConsolePanel {
@@ -217,6 +236,8 @@ export function createOperatorConsoleSnapshotFromOperation(
   const latestOddsSnapshot =
     sortByNewest(operationSnapshot.oddsSnapshots, (snapshot) => snapshot.capturedAt)[0] ?? null;
   const fixtureWorkflows = operationSnapshot.fixtureWorkflows ?? [];
+  const coverageDailyScope = listCoverageDailyScope(operationSnapshot);
+  const dailyAutomationPolicy = getDailyAutomationPolicy(operationSnapshot);
 
   return {
     generatedAt: operationSnapshot.generatedAt,
@@ -332,6 +353,27 @@ export function createOperatorConsoleSnapshotFromOperation(
     }),
     validationSummary: operationSnapshot.validationSummary,
     health: operationSnapshot.health,
+    leagueCoveragePolicies: (operationSnapshot.leagueCoveragePolicies ?? []).map((policy) => ({
+      id: policy.id,
+      label: `${policy.leagueName} (${policy.leagueKey})`,
+      enabled: policy.enabled,
+      priority: policy.priority,
+    })),
+    teamCoveragePolicies: (operationSnapshot.teamCoveragePolicies ?? []).map((policy) => ({
+      id: policy.id,
+      label: `${policy.teamName} (${policy.teamKey})`,
+      enabled: policy.enabled,
+      priority: policy.priority,
+    })),
+    dailyAutomationPolicy: dailyAutomationPolicy
+      ? {
+          policyName: dailyAutomationPolicy.policyName,
+          timezone: dailyAutomationPolicy.timezone,
+          minAllowedOdd: dailyAutomationPolicy.minAllowedOdd,
+          requireTrackedLeagueOrTeam: dailyAutomationPolicy.requireTrackedLeagueOrTeam,
+        }
+      : null,
+    coverageDailyScope,
   };
 }
 
@@ -656,6 +698,10 @@ export function createOperatorConsoleSnapshot(
           },
         ],
       },
+    leagueCoveragePolicies: input.leagueCoveragePolicies ?? [],
+    teamCoveragePolicies: input.teamCoveragePolicies ?? [],
+    dailyAutomationPolicy: input.dailyAutomationPolicy ?? null,
+    coverageDailyScope: input.coverageDailyScope ?? [],
   };
 }
 
@@ -837,6 +883,29 @@ export function buildOperatorConsoleModel(
         const reasons = fixture.featureReadinessReasons ?? "none";
         return `${fixture.homeTeam} vs ${fixture.awayTeam} | lean ${lean} | ${readiness} | researchGeneratedAt ${generatedAt} | reasons ${reasons}`;
       }),
+    },
+    {
+      title: "Coverage registry",
+      lines: [
+        `Leagues: ${snapshot.leagueCoveragePolicies.length}`,
+        `Teams: ${snapshot.teamCoveragePolicies.length}`,
+        `Min allowed odd: ${snapshot.dailyAutomationPolicy ? snapshot.dailyAutomationPolicy.minAllowedOdd.toFixed(2) : "n/a"}`,
+        `Timezone: ${snapshot.dailyAutomationPolicy?.timezone ?? "n/a"}`,
+        `Tracked league/team required: ${snapshot.dailyAutomationPolicy?.requireTrackedLeagueOrTeam ? "yes" : "no"}`,
+        ...snapshot.leagueCoveragePolicies.slice(0, 3).map((policy) => `league ${policy.label} | priority ${policy.priority} | ${policy.enabled ? "enabled" : "disabled"}`),
+        ...snapshot.teamCoveragePolicies.slice(0, 3).map((policy) => `team ${policy.label} | priority ${policy.priority} | ${policy.enabled ? "enabled" : "disabled"}`),
+      ],
+    },
+    {
+      title: "Daily scope",
+      lines: snapshot.coverageDailyScope.length > 0
+        ? snapshot.coverageDailyScope.map((entry) => {
+            const reasons = entry.excludedBy.length > 0
+              ? entry.excludedBy.map((reason) => reason.code).join(",")
+              : entry.includedBy.map((reason) => reason.code).join(",");
+            return `${entry.fixtureId} | included ${entry.included ? "yes" : "no"} | scoring ${entry.eligibleForScoring ? "yes" : "no"} | parlay ${entry.eligibleForParlay ? "yes" : "no"} | reasons ${reasons || "none"}`;
+          })
+        : ["none"],
     },
     {
       title: "Fixtures",

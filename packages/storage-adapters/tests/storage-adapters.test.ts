@@ -5,13 +5,16 @@ import test from "node:test";
 import {
   createAiRun,
   createAuditEvent,
+  createDailyAutomationPolicy,
   createFixture,
   createFixtureWorkflow,
+  createLeagueCoveragePolicy,
   createParlay,
   createPrediction,
   createSandboxNamespace,
   createTask,
   createTaskRun,
+  createTeamCoveragePolicy,
   createValidation,
 } from "@gana-v8/domain-core";
 
@@ -123,6 +126,44 @@ test("in-memory repositories store and query core aggregates", async () => {
     metadata: { owner: "tests" },
   });
 
+  const leaguePolicy = createLeagueCoveragePolicy({
+    id: "lcp-epl-2026",
+    provider: "api-football",
+    leagueKey: "39",
+    leagueName: "Premier League",
+    season: 2026,
+    enabled: true,
+    alwaysOn: true,
+    priority: 100,
+    marketsAllowed: ["moneyline", "totals"],
+  });
+
+  const teamPolicy = createTeamCoveragePolicy({
+    id: "tcp-liverpool",
+    provider: "api-football",
+    teamKey: "40",
+    teamName: "Liverpool",
+    enabled: true,
+    alwaysTrack: true,
+    priority: 95,
+    followHome: true,
+    followAway: true,
+    forceResearch: true,
+  });
+
+  const dailyPolicy = createDailyAutomationPolicy({
+    id: "dap-default",
+    policyName: "default-football-daily",
+    enabled: true,
+    timezone: "America/Guatemala",
+    minAllowedOdd: 1.2,
+    defaultMaxFixturesPerRun: 30,
+    defaultLookaheadHours: 24,
+    defaultLookbackHours: 6,
+    requireTrackedLeagueOrTeam: true,
+    allowManualInclusionBypass: true,
+  });
+
   await uow.fixtures.save(fixture);
   await uow.predictions.save(prediction);
   await uow.parlays.save(parlay);
@@ -155,6 +196,9 @@ test("in-memory repositories store and query core aggregates", async () => {
   await uow.taskRuns.save(taskRun);
   await uow.sandboxNamespaces.save(sandbox);
   await uow.fixtureWorkflows.save(workflow);
+  await uow.leagueCoveragePolicies.save(leaguePolicy);
+  await uow.teamCoveragePolicies.save(teamPolicy);
+  await uow.dailyAutomationPolicies.save(dailyPolicy);
 
   assert.equal(
     (await uow.fixtures.findByCompetition("Premier League")).length,
@@ -178,6 +222,10 @@ test("in-memory repositories store and query core aggregates", async () => {
     research: { lean: "home" },
     notes: ["derby", "premium-slate"],
   });
+  assert.equal((await uow.leagueCoveragePolicies.findEnabled()).length, 1);
+  assert.equal((await uow.teamCoveragePolicies.findEnabled()).length, 1);
+  assert.equal((await uow.dailyAutomationPolicies.findEnabled()).length, 1);
+  assert.equal((await uow.dailyAutomationPolicies.getById(dailyPolicy.id))?.minAllowedOdd, 1.2);
   assert.equal(
     (await uow.sandboxNamespaces.findByEnvironment("sandbox")).length,
     1,

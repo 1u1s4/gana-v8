@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { automationActor, createAuthorizationActor } from "@gana-v8/authz";
-import { createFixture, createFixtureWorkflow, createPrediction } from "@gana-v8/domain-core";
+import {
+  createDailyAutomationPolicy,
+  createFixture,
+  createFixtureWorkflow,
+  createLeagueCoveragePolicy,
+  createPrediction,
+} from "@gana-v8/domain-core";
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
@@ -12,6 +17,34 @@ import {
   type PublishedPredictionRecord,
   type PublisherWorkerPrismaClientLike,
 } from "../src/index.js";
+
+const automationActor = (id = "automation:test", displayName = "Automation Test") => ({
+  id,
+  role: "automation" as const,
+  capabilities: ["publish:preview"] as const,
+  displayName,
+});
+
+const createAuthorizationActor = (input: {
+  readonly id: string;
+  readonly role: "viewer" | "operator" | "automation" | "system";
+  readonly capabilities?: readonly (
+    | "publish:preview"
+    | "publish:parlay-store"
+    | "publish:telegram"
+    | "publish:discord"
+    | "publish:webhook"
+    | "queue:operate"
+    | "workflow:override"
+    | "*"
+  )[];
+  readonly displayName?: string;
+}) => ({
+  id: input.id,
+  role: input.role,
+  capabilities: [...(input.capabilities ?? [])],
+  ...(input.displayName ? { displayName: input.displayName } : {}),
+});
 
 const fixture = (id: string, overrides: Partial<PublishedPredictionRecord["fixture"]> = {}) =>
   createFixture({
@@ -227,6 +260,141 @@ test("publishParlayMvp respects workflow overrides when selecting parlay legs", 
   assert.equal(
     result.skipReasons.some(
       (skip) => skip.predictionId === "pred-force-exclude" && skip.reason === "workflow-excluded",
+    ),
+    true,
+  );
+});
+
+test("publishParlayMvp excludes predictions blocked by coverage policy and records blocked parlay workflow audit", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await unitOfWork.leagueCoveragePolicies.save(
+    createLeagueCoveragePolicy({
+      id: "league-pl",
+      provider: "api-football",
+      leagueKey: "39",
+      leagueName: "Premier League",
+      season: 2026,
+      enabled: true,
+      alwaysOn: true,
+      priority: 10,
+      marketsAllowed: ["moneyline"],
+    }),
+  );
+  await unitOfWork.dailyAutomationPolicies.save(
+    createDailyAutomationPolicy({
+      id: "daily-policy",
+      policyName: "default",
+      timezone: "America/Guatemala",
+      enabled: true,
+      minAllowedOdd: 1.2,
+      defaultMaxFixturesPerRun: 50,
+      defaultLookaheadHours: 24,
+      defaultLookbackHours: 6,
+      requireTrackedLeagueOrTeam: true,
+      allowManualInclusionBypass: true,
+    }),
+  );
+  await unitOfWork.fixtureWorkflows.save(
+    createFixtureWorkflow({
+      fixtureId: "fx-blocked",
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "succeeded",
+      candidateStatus: "succeeded",
+      predictionStatus: "succeeded",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: true,
+      minDetectedOdd: 1.11,
+    }),
+  );
+  await unitOfWork.fixtureWorkflows.save(
+    createFixtureWorkflow({
+      fixtureId: "fx-2",
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "succeeded",
+      candidateStatus: "succeeded",
+      predictionStatus: "succeeded",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: true,
+      minDetectedOdd: 1.5,
+    }),
+  );
+  await unitOfWork.fixtureWorkflows.save(
+    createFixtureWorkflow({
+      fixtureId: "fx-3",
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "succeeded",
+      candidateStatus: "succeeded",
+      predictionStatus: "succeeded",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: true,
+      minDetectedOdd: 1.7,
+    }),
+  );
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord("pred-blocked", "fx-blocked", {
+        fixture: fixture("fx-blocked", {
+          metadata: { providerLeagueId: "39" },
+        }),
+        confidence: 0.8,
+        probabilities: { implied: 0.78, model: 0.84, edge: 0.06 },
+      }),
+      predictionRecord("pred-best", "fx-2", {
+        fixture: fixture("fx-2", {
+          metadata: { providerLeagueId: "39" },
+        }),
+        confidence: 0.76,
+        probabilities: { implied: 0.45, model: 0.67, edge: 0.22 },
+      }),
+      predictionRecord("pred-alternate", "fx-3", {
+        fixture: fixture("fx-3", {
+          metadata: { providerLeagueId: "39" },
+        }),
+        confidence: 0.74,
+        probabilities: { implied: 0.47, model: 0.63, edge: 0.16 },
+      }),
+    ]),
+    generatedAt: "2026-04-16T12:40:00.000Z",
+    stake: 10,
+    unitOfWork,
+    maxLegs: 2,
+  });
+
+  const blockedWorkflow = await unitOfWork.fixtureWorkflows.findByFixtureId("fx-blocked");
+  const blockedDiagnostics = blockedWorkflow?.diagnostics as
+    | { coverageDecision?: { excludedBy?: Array<{ code?: string }> } }
+    | undefined;
+  const auditEvents = await unitOfWork.auditEvents.list();
+
+  assert.equal(result.status, "persisted");
+  assert.deepEqual(
+    result.selectedCandidates.map((candidate) => candidate.predictionId),
+    ["pred-best", "pred-alternate"],
+  );
+  assert.equal(
+    result.skipReasons.some(
+      (skip) => skip.predictionId === "pred-blocked" && skip.reason === "coverage-policy-blocked",
+    ),
+    true,
+  );
+  assert.equal(blockedWorkflow?.parlayStatus, "blocked");
+  assert.equal(
+    blockedDiagnostics?.coverageDecision?.excludedBy?.some((reason) => reason.code === "odds-below-min-threshold"),
+    true,
+  );
+  assert.equal(
+    auditEvents.some(
+      (event) =>
+        event.aggregateType === "fixture-workflow" &&
+        event.aggregateId === "fx-blocked" &&
+        event.eventType === "fixture-workflow.coverage-policy.blocked",
     ),
     true,
   );

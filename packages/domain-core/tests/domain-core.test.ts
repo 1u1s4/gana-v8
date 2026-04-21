@@ -5,13 +5,16 @@ import {
   applyFixtureWorkflowManualSelection,
   applyFixtureWorkflowSelectionOverride,
   createAuditEvent,
+  createDailyAutomationPolicy,
   createFixture,
   createFixtureWorkflow,
+  createLeagueCoveragePolicy,
   createOpaqueTaskId,
   createOpaqueTaskRunId,
   createPrediction,
   createSandboxNamespace,
   createTaskRun,
+  createTeamCoveragePolicy,
   publishPrediction,
   transitionFixtureStatus,
   transitionFixtureWorkflowStage,
@@ -175,4 +178,71 @@ test("fixture workflow preserves manual selection and override metadata", () => 
     research: { lean: "home" },
     thresholds: { minOdd: 1.8 },
   });
+});
+
+test("coverage policies preserve watchlist and min-odd invariants", () => {
+  const leaguePolicy = createLeagueCoveragePolicy({
+    id: "lcp-epl-2026",
+    provider: "api-football",
+    leagueKey: "39",
+    leagueName: "Premier League",
+    season: 2026,
+    enabled: true,
+    alwaysOn: true,
+    priority: 100,
+    marketsAllowed: ["moneyline", "totals"],
+    notes: "Tier 1 league",
+  });
+
+  const teamPolicy = createTeamCoveragePolicy({
+    id: "tcp-liverpool",
+    provider: "api-football",
+    teamKey: "40",
+    teamName: "Liverpool",
+    enabled: true,
+    alwaysTrack: true,
+    priority: 95,
+    followHome: true,
+    followAway: true,
+    forceResearch: true,
+    notes: "Always monitor Liverpool",
+  });
+
+  const dailyPolicy = createDailyAutomationPolicy({
+    id: "dap-default",
+    policyName: "default-football-daily",
+    enabled: true,
+    timezone: "America/Guatemala",
+    minAllowedOdd: 1.2,
+    defaultMaxFixturesPerRun: 30,
+    defaultLookaheadHours: 24,
+    defaultLookbackHours: 6,
+    requireTrackedLeagueOrTeam: true,
+    allowManualInclusionBypass: true,
+    notes: "Default autonomous football policy",
+  });
+
+  assert.equal(leaguePolicy.alwaysOn, true);
+  assert.deepEqual(leaguePolicy.marketsAllowed, ["moneyline", "totals"]);
+  assert.equal(teamPolicy.alwaysTrack, true);
+  assert.equal(teamPolicy.forceResearch, true);
+  assert.equal(dailyPolicy.minAllowedOdd, 1.2);
+  assert.equal(dailyPolicy.requireTrackedLeagueOrTeam, true);
+  assert.equal(dailyPolicy.allowManualInclusionBypass, true);
+  assert.throws(
+    () =>
+      createDailyAutomationPolicy({
+        id: "dap-invalid",
+        policyName: "invalid",
+        enabled: true,
+        timezone: "America/Guatemala",
+        minAllowedOdd: 1,
+        defaultMaxFixturesPerRun: 10,
+        defaultLookaheadHours: 24,
+        defaultLookbackHours: 6,
+        requireTrackedLeagueOrTeam: true,
+        allowManualInclusionBypass: true,
+      }),
+    /minAllowedOdd must be greater than 1/i,
+  );
 });

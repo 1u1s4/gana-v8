@@ -1,38 +1,47 @@
 import type {
   AiRunRepository,
   AuditEventRepository,
+  DailyAutomationPolicyRepository,
   FixtureRepository,
   FixtureWorkflowRepository,
+  LeagueCoveragePolicyRepository,
   ParlayRepository,
   PredictionRepository,
   SandboxNamespaceRepository,
   TaskRepository,
   TaskRunRepository,
+  TeamCoveragePolicyRepository,
   ValidationRepository,
 } from "@gana-v8/domain-core";
 
 import {
   InMemoryAiRunRepository,
   InMemoryAuditEventRepository,
+  InMemoryDailyAutomationPolicyRepository,
   InMemoryFixtureRepository,
   InMemoryFixtureWorkflowRepository,
+  InMemoryLeagueCoveragePolicyRepository,
   InMemoryParlayRepository,
   InMemoryPredictionRepository,
   InMemorySandboxNamespaceRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
+  InMemoryTeamCoveragePolicyRepository,
   InMemoryValidationRepository,
 } from "./in-memory.js";
 import {
   PrismaAiRunRepository,
   PrismaAuditEventRepository,
+  PrismaDailyAutomationPolicyRepository,
   PrismaFixtureRepository,
   PrismaFixtureWorkflowRepository,
+  PrismaLeagueCoveragePolicyRepository,
   PrismaParlayRepository,
   PrismaPredictionRepository,
   PrismaSandboxNamespaceRepository,
   PrismaTaskRepository,
   PrismaTaskRunRepository,
+  PrismaTeamCoveragePolicyRepository,
   PrismaValidationRepository,
   type PrismaClientLike,
 } from "./prisma/index.js";
@@ -47,6 +56,9 @@ export interface StorageUnitOfWork {
   parlays: ParlayRepository;
   validations: ValidationRepository;
   auditEvents: AuditEventRepository;
+  leagueCoveragePolicies: LeagueCoveragePolicyRepository;
+  teamCoveragePolicies: TeamCoveragePolicyRepository;
+  dailyAutomationPolicies: DailyAutomationPolicyRepository;
   sandboxNamespaces: SandboxNamespaceRepository;
 }
 
@@ -66,6 +78,9 @@ export const createInMemoryUnitOfWork = (): InMemoryUnitOfWork => ({
   parlays: new InMemoryParlayRepository(),
   validations: new InMemoryValidationRepository(),
   auditEvents: new InMemoryAuditEventRepository(),
+  leagueCoveragePolicies: new InMemoryLeagueCoveragePolicyRepository(),
+  teamCoveragePolicies: new InMemoryTeamCoveragePolicyRepository(),
+  dailyAutomationPolicies: new InMemoryDailyAutomationPolicyRepository(),
   sandboxNamespaces: new InMemorySandboxNamespaceRepository(),
 });
 
@@ -82,5 +97,8 @@ export const createPrismaUnitOfWork = (
   parlays: new PrismaParlayRepository(client),
   validations: new PrismaValidationRepository(client),
   auditEvents: new PrismaAuditEventRepository(client),
+  leagueCoveragePolicies: new PrismaLeagueCoveragePolicyRepository(client),
+  teamCoveragePolicies: new PrismaTeamCoveragePolicyRepository(client),
+  dailyAutomationPolicies: new PrismaDailyAutomationPolicyRepository(client),
   sandboxNamespaces: new PrismaSandboxNamespaceRepository(client),
 });

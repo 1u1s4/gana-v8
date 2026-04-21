@@ -4,11 +4,15 @@ import type {
   AuditEventEntity,
   AuditEventRepository,
   AuditableEntity,
+  DailyAutomationPolicyEntity,
+  DailyAutomationPolicyRepository,
   EntityId,
   FixtureEntity,
   FixtureRepository,
   FixtureWorkflowEntity,
   FixtureWorkflowRepository,
+  LeagueCoveragePolicyEntity,
+  LeagueCoveragePolicyRepository,
   ParlayEntity,
   ParlayRepository,
   PredictionEntity,
@@ -19,6 +23,8 @@ import type {
   TaskRepository,
   TaskRunEntity,
   TaskRunRepository,
+  TeamCoveragePolicyEntity,
+  TeamCoveragePolicyRepository,
   ValidationEntity,
   ValidationRepository,
 } from "@gana-v8/domain-core";
@@ -140,6 +146,36 @@ export class InMemoryAuditEventRepository
       (item) =>
         item.aggregateType === aggregateType && item.aggregateId === aggregateId,
     );
+  }
+}
+
+export class InMemoryLeagueCoveragePolicyRepository
+  extends InMemoryRepository<LeagueCoveragePolicyEntity>
+  implements LeagueCoveragePolicyRepository
+{
+  async findEnabled(): Promise<LeagueCoveragePolicyEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.enabled);
+  }
+}
+
+export class InMemoryTeamCoveragePolicyRepository
+  extends InMemoryRepository<TeamCoveragePolicyEntity>
+  implements TeamCoveragePolicyRepository
+{
+  async findEnabled(): Promise<TeamCoveragePolicyEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.enabled);
+  }
+}
+
+export class InMemoryDailyAutomationPolicyRepository
+  extends InMemoryRepository<DailyAutomationPolicyEntity>
+  implements DailyAutomationPolicyRepository
+{
+  async findEnabled(): Promise<DailyAutomationPolicyEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.enabled);
   }
 }
 

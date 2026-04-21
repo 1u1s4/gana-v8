@@ -1,6 +1,7 @@
 import { loadRuntimeConfig, type RuntimeConfig } from "@gana-v8/config-runtime";
 import {
   createAiRun,
+  createAuditEvent,
   createFixtureWorkflow,
   createOpaqueTaskId,
   createPrediction,
@@ -32,6 +33,7 @@ import {
   createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
+import { evaluateFixtureCoverageScope, type FixtureCoverageScopeDecision } from "@gana-v8/policy-engine";
 import { z } from "zod";
 
 export const workspaceInfo = {
@@ -41,6 +43,7 @@ export const workspaceInfo = {
   description: "Builds deterministic MVP scoring runs from persisted fixtures and h2h odds.",
   dependencies: [
     { name: "@gana-v8/domain-core", category: "workspace" },
+    { name: "@gana-v8/policy-engine", category: "workspace" },
     { name: "@gana-v8/prediction-engine", category: "workspace" },
     { name: "@gana-v8/storage-adapters", category: "workspace" },
   ],
@@ -63,7 +66,7 @@ export interface OddsSnapshotLike {
 
 export interface ScoringWorkerPrismaClientLike {
   readonly fixture: {
-    findMany(args?: { where?: { status?: FixtureEntity["status"] } }): Promise<
+    findMany(args?: { where?: { status?: FixtureEntity["status"]; id?: { in: readonly string[] } } }): Promise<
       Array<FixtureEntity & { scheduledAt: string | Date }>
     >;
     findUnique(args: { where: { id: string } }): Promise<(FixtureEntity & { scheduledAt: string | Date }) | null>;
@@ -105,6 +108,7 @@ export interface EligibleFixtureForScoring {
 
 export interface LoadEligibleFixturesOptions {
   readonly client?: ScoringWorkerPrismaClientLike;
+  readonly fixtureIds?: readonly string[];
   readonly maxFixtures?: number;
 }
 
@@ -140,6 +144,16 @@ export interface RunScoringWorkerSummary {
   readonly scoredCount: number;
   readonly skippedCount: number;
   readonly results: readonly FixtureScoreResult[];
+}
+
+interface ScoringCoveragePolicyContext {
+  readonly leaguePolicies: Awaited<ReturnType<StorageUnitOfWork["leagueCoveragePolicies"]["findEnabled"]>>;
+  readonly teamPolicies: Awaited<ReturnType<StorageUnitOfWork["teamCoveragePolicies"]["findEnabled"]>>;
+  readonly dailyPolicy: {
+    readonly minAllowedOdd: number;
+    readonly requireTrackedLeagueOrTeam: boolean;
+  };
+  readonly hasPersistedPolicy: boolean;
 }
 
 const AI_RUN_PROVIDER = "internal";
@@ -236,6 +250,98 @@ const createScoringTaskId = (fixtureId: string): string =>
 const createAiRunId = (fixtureId: string, generatedAt: string): string => `airun:${fixtureId}:${generatedAt}`;
 const createPredictionId = (fixtureId: string, outcome: string, generatedAt: string): string =>
   `prediction:${fixtureId}:moneyline:${outcome}:${generatedAt}`;
+
+const defaultCoverageDailyPolicy = {
+  minAllowedOdd: 1.2,
+  requireTrackedLeagueOrTeam: false,
+} as const;
+
+const detectMinDetectedOdd = (snapshot: OddsSnapshotLike): number | undefined => {
+  const prices = snapshot.selections
+    .map((selection) => selection.priceDecimal)
+    .filter((price): price is number => Number.isFinite(price) && price > 0);
+  if (prices.length === 0) {
+    return undefined;
+  }
+
+  return Math.min(...prices);
+};
+
+const loadScoringCoveragePolicyContext = async (
+  unitOfWork: StorageUnitOfWork,
+): Promise<ScoringCoveragePolicyContext> => {
+  const [leaguePolicies, teamPolicies, dailyPolicies] = await Promise.all([
+    unitOfWork.leagueCoveragePolicies.findEnabled(),
+    unitOfWork.teamCoveragePolicies.findEnabled(),
+    unitOfWork.dailyAutomationPolicies.findEnabled(),
+  ]);
+
+  return {
+    leaguePolicies,
+    teamPolicies,
+    dailyPolicy: dailyPolicies[0] ?? defaultCoverageDailyPolicy,
+    hasPersistedPolicy: leaguePolicies.length > 0 || teamPolicies.length > 0 || dailyPolicies.length > 0,
+  };
+};
+
+const summarizeCoverageBlock = (excludedBy: readonly { message: string }[]): string =>
+  excludedBy.map((reason) => reason.message).join("; ") || "Fixture was blocked by coverage policy.";
+
+const persistCoverageBlockedWorkflow = async (
+  unitOfWork: StorageUnitOfWork,
+  fixtureId: string,
+  stage: "prediction" | "parlay",
+  generatedAt: string,
+  scopeDecision: FixtureCoverageScopeDecision,
+  actor: string,
+): Promise<void> => {
+  const current =
+    (await unitOfWork.fixtureWorkflows.findByFixtureId(fixtureId)) ??
+    createFixtureWorkflow({
+      fixtureId,
+      ingestionStatus: "pending",
+      oddsStatus: "pending",
+      enrichmentStatus: "pending",
+      candidateStatus: "pending",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: false,
+    });
+
+  const persistedWorkflow = await unitOfWork.fixtureWorkflows.save(
+    transitionFixtureWorkflowStage(current, stage, {
+      status: "blocked",
+      occurredAt: generatedAt,
+      isCandidate: false,
+      ...(scopeDecision.minDetectedOdd !== undefined ? { minDetectedOdd: scopeDecision.minDetectedOdd } : {}),
+      diagnostics: {
+        ...(current.diagnostics ?? {}),
+        coverageDecision: scopeDecision,
+      },
+    }),
+  );
+
+  await unitOfWork.auditEvents.save(
+    createAuditEvent({
+      id: `audit:fixture-workflow:${fixtureId}:coverage-policy-blocked:${stage}:${persistedWorkflow.updatedAt}`,
+      aggregateType: "fixture-workflow",
+      aggregateId: fixtureId,
+      eventType: "fixture-workflow.coverage-policy.blocked",
+      actor,
+      payload: {
+        stage,
+        included: scopeDecision.included,
+        eligibleForScoring: scopeDecision.eligibleForScoring,
+        eligibleForParlay: scopeDecision.eligibleForParlay,
+        appliedMinAllowedOdd: scopeDecision.appliedMinAllowedOdd,
+        minDetectedOdd: scopeDecision.minDetectedOdd ?? null,
+        excludedBy: scopeDecision.excludedBy,
+      },
+      occurredAt: persistedWorkflow.updatedAt,
+    }),
+  );
+};
 
 const persistScoringWorkflow = async (
   unitOfWork: StorageUnitOfWork,
@@ -631,7 +737,10 @@ export const loadEligibleFixturesForScoring = async (
 
   try {
     const fixtures = await runtime.client.fixture.findMany({
-      where: { status: "scheduled" },
+      where: {
+        status: "scheduled",
+        ...(options.fixtureIds ? { id: { in: Array.from(options.fixtureIds) } } : {}),
+      },
     });
 
     const limitedFixtures = [...fixtures]
@@ -780,6 +889,35 @@ export const scoreFixturePrediction = async (
         status: "skipped",
         reason: "No latest h2h odds snapshot found for fixture.",
       };
+    }
+
+    const minDetectedOdd = detectMinDetectedOdd(latestOddsSnapshot);
+    const coverageContext = await loadScoringCoveragePolicyContext(runtime.unitOfWork);
+    if (coverageContext.hasPersistedPolicy) {
+      const coverageDecision = evaluateFixtureCoverageScope({
+        fixture,
+        ...(existingWorkflow ? { workflow: existingWorkflow } : {}),
+        leaguePolicies: coverageContext.leaguePolicies,
+        teamPolicies: coverageContext.teamPolicies,
+        dailyPolicy: coverageContext.dailyPolicy,
+        ...(minDetectedOdd !== undefined ? { minDetectedOdd } : {}),
+        now: generatedAt,
+      });
+      if (!coverageDecision.eligibleForScoring) {
+        await persistCoverageBlockedWorkflow(
+          runtime.unitOfWork,
+          fixture.id,
+          "prediction",
+          generatedAt,
+          coverageDecision,
+          "scoring-worker",
+        );
+        return {
+          fixtureId: fixture.id,
+          status: "skipped",
+          reason: summarizeCoverageBlock(coverageDecision.excludedBy),
+        };
+      }
     }
 
     const impliedProbabilities = deriveImpliedProbabilities(latestOddsSnapshot);

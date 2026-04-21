@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createDailyAutomationPolicy,
   createFixture,
   createFixtureWorkflow,
+  createLeagueCoveragePolicy,
   createTask,
   type AiRunEntity,
   type FixtureEntity,
@@ -350,6 +352,102 @@ test("scoreFixturePrediction skips fixtures that are force-excluded by workflow 
   assert.match(result.reason ?? "", /force-excluded/i);
   assert.equal((await unitOfWork.aiRuns.list()).length, 0);
   assert.equal((await unitOfWork.predictions.list()).length, 0);
+});
+
+test("scoreFixturePrediction blocks direct scoring when coverage policy rejects fixture by min allowed odd and records audit trail", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const baseFixture = fixture({
+    metadata: {
+      providerFixtureId: "provider-1",
+      providerCode: "api-football",
+      providerLeagueId: "39",
+    },
+  });
+
+  await unitOfWork.fixtures.save(baseFixture);
+  await unitOfWork.fixtureWorkflows.save(
+    createFixtureWorkflow({
+      fixtureId: baseFixture.id,
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "succeeded",
+      candidateStatus: "succeeded",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: true,
+    }),
+  );
+  await unitOfWork.leagueCoveragePolicies.save(
+    createLeagueCoveragePolicy({
+      id: "league-pl",
+      provider: "api-football",
+      leagueKey: "39",
+      leagueName: "Premier League",
+      season: 2026,
+      enabled: true,
+      alwaysOn: true,
+      priority: 10,
+      marketsAllowed: ["moneyline"],
+    }),
+  );
+  await unitOfWork.dailyAutomationPolicies.save(
+    createDailyAutomationPolicy({
+      id: "daily-policy",
+      policyName: "default",
+      timezone: "America/Guatemala",
+      enabled: true,
+      minAllowedOdd: 1.2,
+      defaultMaxFixturesPerRun: 50,
+      defaultLookaheadHours: 24,
+      defaultLookbackHours: 6,
+      requireTrackedLeagueOrTeam: true,
+      allowManualInclusionBypass: true,
+    }),
+  );
+
+  const result = await scoreFixturePrediction(undefined, baseFixture.id, undefined, {
+    client: createFakeClient(
+      [baseFixture],
+      [
+        snapshot({
+          selections: [
+            { selectionKey: "home", priceDecimal: 1.12 },
+            { selectionKey: "draw", priceDecimal: 7.1 },
+            { selectionKey: "away", priceDecimal: 16.5 },
+          ],
+        }),
+      ],
+    ) as never,
+    generatedAt: "2026-04-15T12:10:00.000Z",
+    unitOfWork,
+  });
+
+  const workflow = await unitOfWork.fixtureWorkflows.findByFixtureId(baseFixture.id);
+  const auditEvents = await unitOfWork.auditEvents.list();
+  const diagnostics = workflow?.diagnostics as
+    | { coverageDecision?: { excludedBy?: Array<{ code?: string }> } }
+    | undefined;
+
+  assert.equal(result.status, "skipped");
+  assert.match(result.reason ?? "", /below allowed threshold/i);
+  assert.equal((await unitOfWork.aiRuns.list()).length, 0);
+  assert.equal((await unitOfWork.predictions.list()).length, 0);
+  assert.equal(workflow?.predictionStatus, "blocked");
+  assert.equal(workflow?.minDetectedOdd, 1.12);
+  assert.equal(
+    diagnostics?.coverageDecision?.excludedBy?.some((reason) => reason.code === "odds-below-min-threshold"),
+    true,
+  );
+  assert.equal(
+    auditEvents.some(
+      (event) =>
+        event.aggregateType === "fixture-workflow" &&
+        event.aggregateId === baseFixture.id &&
+        event.eventType === "fixture-workflow.coverage-policy.blocked",
+    ),
+    true,
+  );
 });
 
 test("scoreFixturePrediction runs an optional AI-assisted synthesis step without changing deterministic outcome", async () => {

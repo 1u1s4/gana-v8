@@ -1,10 +1,12 @@
 import type {
   AiRunEntity,
   AuditEventEntity,
+  DailyAutomationPolicyEntity,
   FixtureEntity,
   FixtureManualSelectionStatus,
   FixtureSelectionOverride,
   FixtureWorkflowEntity,
+  LeagueCoveragePolicyEntity,
   ParlayEntity,
   ParlayLeg,
   PredictionEntity,
@@ -15,6 +17,7 @@ import type {
   TaskTriggerKind,
   TaskRunEntity,
   TaskRunStatus,
+  TeamCoveragePolicyEntity,
   ValidationCheck,
   ValidationEntity,
   ValidationKind,
@@ -26,11 +29,13 @@ import {
   Prisma,
   type AiRun,
   type AuditEvent,
+  type DailyAutomationPolicy,
   type Environment as PrismaEnvironment,
   type Fixture,
   type FixtureManualSelectionStatus as PrismaFixtureManualSelectionStatus,
   type FixtureSelectionOverride as PrismaFixtureSelectionOverride,
   type FixtureWorkflow,
+  type LeagueCoveragePolicy,
   type Parlay,
   type ParlayLeg as PrismaParlayLeg,
   type Prediction,
@@ -40,6 +45,7 @@ import {
   type TaskKind as PrismaTaskKind,
   type TaskTriggerKind as PrismaTaskTriggerKind,
   type TaskRun,
+  type TeamCoveragePolicy,
   type Validation,
   type ValidationKind as PrismaValidationKind,
   type ValidationTargetType as PrismaValidationTargetType,
@@ -159,6 +165,19 @@ export type ValidationRecord = Prisma.ValidationGetPayload<typeof validationIncl
 
 export const auditEventInclude = Prisma.validator<Prisma.AuditEventDefaultArgs>()({});
 export type AuditEventRecord = Prisma.AuditEventGetPayload<typeof auditEventInclude>;
+
+export const leagueCoveragePolicyInclude = Prisma.validator<Prisma.LeagueCoveragePolicyDefaultArgs>()({});
+export type LeagueCoveragePolicyRecord = Prisma.LeagueCoveragePolicyGetPayload<
+  typeof leagueCoveragePolicyInclude
+>;
+
+export const teamCoveragePolicyInclude = Prisma.validator<Prisma.TeamCoveragePolicyDefaultArgs>()({});
+export type TeamCoveragePolicyRecord = Prisma.TeamCoveragePolicyGetPayload<typeof teamCoveragePolicyInclude>;
+
+export const dailyAutomationPolicyInclude = Prisma.validator<Prisma.DailyAutomationPolicyDefaultArgs>()({});
+export type DailyAutomationPolicyRecord = Prisma.DailyAutomationPolicyGetPayload<
+  typeof dailyAutomationPolicyInclude
+>;
 
 export const sandboxNamespaceInclude = Prisma.validator<Prisma.SandboxNamespaceDefaultArgs>()({});
 export type SandboxNamespaceRecord = Prisma.SandboxNamespaceGetPayload<
@@ -543,6 +562,112 @@ export const auditEventDomainToCreateInput = (
   actor: entity.actor ?? null,
   payload: entity.payload as Prisma.InputJsonValue,
   occurredAt: new Date(entity.occurredAt),
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const leagueCoveragePolicyRecordToDomain = (
+  record: LeagueCoveragePolicy | LeagueCoveragePolicyRecord,
+): LeagueCoveragePolicyEntity => ({
+  id: record.id,
+  provider: record.provider,
+  leagueKey: record.leagueKey,
+  leagueName: record.leagueName,
+  season: record.season,
+  enabled: record.enabled,
+  alwaysOn: record.alwaysOn,
+  priority: record.priority,
+  marketsAllowed: asStringArray(record.marketsAllowed),
+  ...(record.notes ? { notes: record.notes } : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const leagueCoveragePolicyDomainToCreateInput = (
+  entity: LeagueCoveragePolicyEntity,
+): Prisma.LeagueCoveragePolicyUncheckedCreateInput => ({
+  id: entity.id,
+  provider: entity.provider,
+  leagueKey: entity.leagueKey,
+  leagueName: entity.leagueName,
+  season: entity.season,
+  enabled: entity.enabled,
+  alwaysOn: entity.alwaysOn,
+  priority: entity.priority,
+  marketsAllowed: entity.marketsAllowed as Prisma.InputJsonValue,
+  notes: entity.notes ?? null,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const teamCoveragePolicyRecordToDomain = (
+  record: TeamCoveragePolicy | TeamCoveragePolicyRecord,
+): TeamCoveragePolicyEntity => ({
+  id: record.id,
+  provider: record.provider,
+  teamKey: record.teamKey,
+  teamName: record.teamName,
+  enabled: record.enabled,
+  alwaysTrack: record.alwaysTrack,
+  priority: record.priority,
+  followHome: record.followHome,
+  followAway: record.followAway,
+  forceResearch: record.forceResearch,
+  ...(record.notes ? { notes: record.notes } : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const teamCoveragePolicyDomainToCreateInput = (
+  entity: TeamCoveragePolicyEntity,
+): Prisma.TeamCoveragePolicyUncheckedCreateInput => ({
+  id: entity.id,
+  provider: entity.provider,
+  teamKey: entity.teamKey,
+  teamName: entity.teamName,
+  enabled: entity.enabled,
+  alwaysTrack: entity.alwaysTrack,
+  priority: entity.priority,
+  followHome: entity.followHome,
+  followAway: entity.followAway,
+  forceResearch: entity.forceResearch,
+  notes: entity.notes ?? null,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const dailyAutomationPolicyRecordToDomain = (
+  record: DailyAutomationPolicy | DailyAutomationPolicyRecord,
+): DailyAutomationPolicyEntity => ({
+  id: record.id,
+  policyName: record.policyName,
+  enabled: record.enabled,
+  timezone: record.timezone,
+  minAllowedOdd: record.minAllowedOdd,
+  defaultMaxFixturesPerRun: record.defaultMaxFixturesPerRun,
+  defaultLookaheadHours: record.defaultLookaheadHours,
+  defaultLookbackHours: record.defaultLookbackHours,
+  requireTrackedLeagueOrTeam: record.requireTrackedLeagueOrTeam,
+  allowManualInclusionBypass: record.allowManualInclusionBypass,
+  ...(record.notes ? { notes: record.notes } : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const dailyAutomationPolicyDomainToCreateInput = (
+  entity: DailyAutomationPolicyEntity,
+): Prisma.DailyAutomationPolicyUncheckedCreateInput => ({
+  id: entity.id,
+  policyName: entity.policyName,
+  enabled: entity.enabled,
+  timezone: entity.timezone,
+  minAllowedOdd: entity.minAllowedOdd,
+  defaultMaxFixturesPerRun: entity.defaultMaxFixturesPerRun,
+  defaultLookaheadHours: entity.defaultLookaheadHours,
+  defaultLookbackHours: entity.defaultLookbackHours,
+  requireTrackedLeagueOrTeam: entity.requireTrackedLeagueOrTeam,
+  allowManualInclusionBypass: entity.allowManualInclusionBypass,
+  notes: entity.notes ?? null,
   createdAt: new Date(entity.createdAt),
   updatedAt: new Date(entity.updatedAt),
 });

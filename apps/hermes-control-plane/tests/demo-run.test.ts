@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFixture, createFixtureWorkflow, createTaskRun } from "@gana-v8/domain-core";
+import {
+  createDailyAutomationPolicy,
+  createFixture,
+  createFixtureWorkflow,
+  createLeagueCoveragePolicy,
+  createTaskRun,
+  createTeamCoveragePolicy,
+} from "@gana-v8/domain-core";
 import { PrismaClient } from "@prisma/client";
 import { createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
@@ -33,6 +40,17 @@ const createAutomationFixtureWithOdds = async (
   databaseUrl: string,
   prefix: string,
   suffix: string,
+  options: {
+    readonly competition?: string;
+    readonly homeTeam?: string;
+    readonly awayTeam?: string;
+    readonly providerLeagueId?: string;
+    readonly providerHomeTeamId?: string;
+    readonly providerAwayTeamId?: string;
+    readonly homePrice?: number;
+    readonly drawPrice?: number;
+    readonly awayPrice?: number;
+  } = {},
 ): Promise<{ fixtureId: string }> => {
   const prisma = createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
@@ -46,14 +64,17 @@ const createAutomationFixtureWithOdds = async (
       createFixture({
         id: fixtureId,
         sport: "football",
-        competition: "Automation Test League",
-        homeTeam: `Home ${suffix}`,
-        awayTeam: `Away ${suffix}`,
+        competition: options.competition ?? "Automation Test League",
+        homeTeam: options.homeTeam ?? `Home ${suffix}`,
+        awayTeam: options.awayTeam ?? `Away ${suffix}`,
         scheduledAt: `2099-01-0${suffix}T18:00:00.000Z`,
         status: "scheduled",
         metadata: {
           providerCode: "api-football",
           providerFixtureId,
+          providerLeagueId: options.providerLeagueId ?? `${prefix}-league-${suffix}`,
+          providerHomeTeamId: options.providerHomeTeamId ?? `${prefix}-home-${suffix}`,
+          providerAwayTeamId: options.providerAwayTeamId ?? `${prefix}-away-${suffix}`,
         },
         createdAt: "2099-01-01T08:00:00.000Z",
         updatedAt: "2099-01-01T08:00:00.000Z",
@@ -101,21 +122,21 @@ const createAutomationFixtureWithOdds = async (
               index: 0,
               selectionKey: "home",
               label: "home",
-              priceDecimal: 1.8,
+              priceDecimal: options.homePrice ?? 1.8,
             },
             {
               id: `${prefix}-odds-${suffix}-draw`,
               index: 1,
               selectionKey: "draw",
               label: "draw",
-              priceDecimal: 3.7,
+              priceDecimal: options.drawPrice ?? 3.7,
             },
             {
               id: `${prefix}-odds-${suffix}-away`,
               index: 2,
               selectionKey: "away",
               label: "away",
-              priceDecimal: 4.9,
+              priceDecimal: options.awayPrice ?? 4.9,
             },
           ],
         },
@@ -198,6 +219,60 @@ const createAutomationFixtureWorkflowOps = async (
   }
 };
 
+const createAutomationCoveragePolicies = async (
+  databaseUrl: string,
+  prefix: string,
+): Promise<void> => {
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+
+  try {
+    await unitOfWork.leagueCoveragePolicies.save(
+      createLeagueCoveragePolicy({
+        id: `${prefix}-league-policy`,
+        provider: "api-football",
+        leagueKey: "39",
+        leagueName: "Premier League",
+        season: 2099,
+        enabled: true,
+        alwaysOn: true,
+        priority: 90,
+        marketsAllowed: ["moneyline"],
+      }),
+    );
+    await unitOfWork.teamCoveragePolicies.save(
+      createTeamCoveragePolicy({
+        id: `${prefix}-team-policy`,
+        provider: "api-football",
+        teamKey: "40",
+        teamName: "Liverpool",
+        enabled: true,
+        alwaysTrack: true,
+        priority: 95,
+        followHome: true,
+        followAway: true,
+        forceResearch: true,
+      }),
+    );
+    await unitOfWork.dailyAutomationPolicies.save(
+      createDailyAutomationPolicy({
+        id: `${prefix}-daily-policy`,
+        policyName: `${prefix}-default-daily-policy`,
+        enabled: true,
+        timezone: "America/Guatemala",
+        minAllowedOdd: 1.2,
+        defaultMaxFixturesPerRun: 30,
+        defaultLookaheadHours: 24,
+        defaultLookbackHours: 6,
+        requireTrackedLeagueOrTeam: true,
+        allowManualInclusionBypass: true,
+      }),
+    );
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
 const cleanupAutomationArtifacts = async (databaseUrl: string, prefix: string): Promise<void> => {
   const prisma = createPrismaClient(databaseUrl);
 
@@ -268,6 +343,9 @@ const cleanupAutomationArtifacts = async (databaseUrl: string, prefix: string): 
     await prisma.oddsSnapshot.deleteMany({ where: { id: { startsWith: `${prefix}-odds-` } } });
     await prisma.rawIngestionBatch.deleteMany({ where: { id: { startsWith: `${prefix}-batch-` } } });
     await prisma.fixture.deleteMany({ where: { id: { startsWith: `${prefix}-fixture-` } } });
+    await prisma.leagueCoveragePolicy.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.teamCoveragePolicy.deleteMany({ where: { id: { startsWith: prefix } } });
+    await prisma.dailyAutomationPolicy.deleteMany({ where: { id: { startsWith: prefix } } });
   } finally {
     await prisma.$disconnect();
   }
@@ -777,8 +855,29 @@ test("enqueuePredictionForEligibleFixtures creates deterministic persisted scori
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
   try {
-    const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1");
-    const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2");
+    await createAutomationCoveragePolicies(databaseUrl, prefix);
+    const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
+      competition: "Premier League",
+      homeTeam: "Liverpool",
+      awayTeam: "Chelsea",
+      providerLeagueId: "39",
+      providerHomeTeamId: "40",
+      providerAwayTeamId: "49",
+      homePrice: 1.8,
+      drawPrice: 3.7,
+      awayPrice: 4.9,
+    });
+    const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
+      competition: "Premier League",
+      homeTeam: "Liverpool",
+      awayTeam: "Arsenal",
+      providerLeagueId: "39",
+      providerHomeTeamId: "40",
+      providerAwayTeamId: "50",
+      homePrice: 1.9,
+      drawPrice: 3.8,
+      awayPrice: 4.2,
+    });
 
     const firstRun = await enqueuePredictionForEligibleFixtures(databaseUrl, {
       now: new Date("2099-01-01T10:00:00.000Z"),
@@ -799,6 +898,63 @@ test("enqueuePredictionForEligibleFixtures creates deterministic persisted scori
     assert.equal(secondRun.skippedFixtures.length, 2);
     assert.equal(
       secondRun.skippedFixtures.every((fixture) => /already exists/.test(fixture.reason)),
+      true,
+    );
+  } finally {
+    await cleanupAutomationArtifacts(databaseUrl, prefix);
+  }
+});
+
+test("enqueuePredictionForEligibleFixtures applies coverage watchlists and blocks fixtures below min allowed odd", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prefix = `hacov${Date.now().toString(36)}`;
+
+  await cleanupAutomationArtifacts(databaseUrl, prefix);
+
+  try {
+    await createAutomationCoveragePolicies(databaseUrl, prefix);
+    const trackedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
+      competition: "Premier League",
+      homeTeam: "Liverpool",
+      awayTeam: "Chelsea",
+      providerLeagueId: "39",
+      providerHomeTeamId: "40",
+      providerAwayTeamId: "49",
+      homePrice: 1.11,
+      drawPrice: 5.1,
+      awayPrice: 8.2,
+    });
+    const untrackedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
+      competition: "Untracked League",
+      homeTeam: "Home 2",
+      awayTeam: "Away 2",
+      providerLeagueId: "999",
+      providerHomeTeamId: "9991",
+      providerAwayTeamId: "9992",
+      homePrice: 1.8,
+      drawPrice: 3.7,
+      awayPrice: 4.9,
+    });
+
+    const result = await enqueuePredictionForEligibleFixtures(databaseUrl, {
+      now: new Date("2099-01-01T10:00:00.000Z"),
+      fixtureIds: [trackedFixture.fixtureId, untrackedFixture.fixtureId],
+      maxFixtures: 2,
+    });
+
+    assert.equal(result.enqueuedCount, 0);
+    assert.equal(result.eligibleFixtureCount, 0);
+    assert.equal(result.skippedFixtures.length, 2);
+    assert.equal(
+      result.skippedFixtures.some(
+        (fixture) => fixture.fixtureId === trackedFixture.fixtureId && /below allowed threshold/i.test(fixture.reason),
+      ),
+      true,
+    );
+    assert.equal(
+      result.skippedFixtures.some(
+        (fixture) => fixture.fixtureId === untrackedFixture.fixtureId && /tracked league or watched team/i.test(fixture.reason),
+      ),
       true,
     );
   } finally {

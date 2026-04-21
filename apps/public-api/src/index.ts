@@ -15,7 +15,9 @@ import {
   type WorkerMetricReadModel,
 } from "@gana-v8/observability";
 import {
+  evaluateFixtureCoverageScope,
   evaluateOperationalPolicy,
+  type FixtureCoverageScopeDecision,
   type OperationalPolicyReport,
 } from "@gana-v8/policy-engine";
 import {
@@ -32,16 +34,19 @@ import {
   createValidation,
   type AiRunEntity,
   type AuditEventEntity,
+  type DailyAutomationPolicyEntity,
   type FixtureEntity,
   type FixtureSelectionOverride,
   type FixtureWorkflowManualSelectionInput,
   type FixtureWorkflowSelectionOverrideInput,
   type FixtureWorkflowEntity,
+  type LeagueCoveragePolicyEntity,
   type ParlayEntity,
   type PredictionEntity,
   type TaskEntity,
   type TaskRunEntity,
   type TaskStatus,
+  type TeamCoveragePolicyEntity,
   type ValidationEntity,
 } from "@gana-v8/domain-core";
 import {
@@ -211,10 +216,30 @@ export interface ParlayDetailReadModel extends Omit<ParlayEntity, "legs"> {
   readonly validation?: ValidationEntity;
 }
 
+export interface FixtureOpsDetailReadModel {
+  readonly fixture: FixtureEntity;
+  readonly workflow?: FixtureWorkflowEntity;
+  readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
+  readonly scoringEligibility: {
+    readonly eligible: boolean;
+    readonly reason?: string;
+  };
+  readonly recentAuditEvents: readonly AuditEventEntity[];
+  readonly predictions: readonly PredictionEntity[];
+  readonly parlays: readonly ParlayEntity[];
+  readonly validations: readonly ValidationEntity[];
+  readonly recentTaskRuns: readonly TaskRunEntity[];
+}
+
+export interface CoverageDailyScopeReadModel extends FixtureCoverageScopeDecision {}
+
 export interface OperationSnapshot {
   readonly generatedAt: string;
   readonly fixtures: readonly FixtureEntity[];
   readonly fixtureWorkflows: readonly FixtureWorkflowEntity[];
+  readonly leagueCoveragePolicies: readonly LeagueCoveragePolicyEntity[];
+  readonly teamCoveragePolicies: readonly TeamCoveragePolicyEntity[];
+  readonly dailyAutomationPolicies: readonly DailyAutomationPolicyEntity[];
   readonly auditEvents: readonly AuditEventEntity[];
   readonly tasks: readonly TaskEntity[];
   readonly taskRuns: readonly TaskRunEntity[];
@@ -234,6 +259,10 @@ export interface PublicApiHandlers {
   readonly fixtureById: (fixtureId: string) => FixtureEntity | null;
   readonly fixtureOpsById: (fixtureId: string) => FixtureOpsDetailReadModel | null;
   readonly fixtureAuditEventsById: (fixtureId: string) => readonly AuditEventEntity[] | null;
+  readonly leagueCoveragePolicies: () => readonly LeagueCoveragePolicyEntity[];
+  readonly teamCoveragePolicies: () => readonly TeamCoveragePolicyEntity[];
+  readonly dailyAutomationPolicy: () => DailyAutomationPolicyEntity | null;
+  readonly coverageDailyScope: () => readonly CoverageDailyScopeReadModel[];
   readonly tasks: () => readonly TaskEntity[];
   readonly taskById: (taskId: string) => TaskEntity | null;
   readonly taskRuns: () => readonly TaskRunEntity[];
@@ -366,6 +395,10 @@ export const publicApiEndpointPaths = {
   oddsSnapshots: "/odds-snapshots",
   operationalSummary: "/operational-summary",
   operationalLogs: "/operational-logs",
+  coverageLeagues: "/coverage/leagues",
+  coverageTeams: "/coverage/teams",
+  coverageDailyPolicy: "/coverage/daily-policy",
+  coverageDailyScope: "/coverage/daily-scope",
   predictions: "/predictions",
   parlays: "/parlays",
   validations: "/validations",
@@ -523,6 +556,9 @@ export function createOperationSnapshot(input: {
   readonly generatedAt?: string;
   readonly fixtures?: readonly FixtureEntity[];
   readonly fixtureWorkflows?: readonly FixtureWorkflowEntity[];
+  readonly leagueCoveragePolicies?: readonly LeagueCoveragePolicyEntity[];
+  readonly teamCoveragePolicies?: readonly TeamCoveragePolicyEntity[];
+  readonly dailyAutomationPolicies?: readonly DailyAutomationPolicyEntity[];
   readonly auditEvents?: readonly AuditEventEntity[];
   readonly tasks?: readonly TaskEntity[];
   readonly taskRuns?: readonly TaskRunEntity[];
@@ -537,6 +573,9 @@ export function createOperationSnapshot(input: {
   const generatedAt = input.generatedAt ?? "2026-04-15T01:00:00.000Z";
   const fixtures = [...(input.fixtures ?? createDemoFixtures())];
   const fixtureWorkflows = [...(input.fixtureWorkflows ?? createDemoFixtureWorkflows(fixtures))];
+  const leagueCoveragePolicies = [...(input.leagueCoveragePolicies ?? [])];
+  const teamCoveragePolicies = [...(input.teamCoveragePolicies ?? [])];
+  const dailyAutomationPolicies = [...(input.dailyAutomationPolicies ?? [])];
   const auditEvents = [...(input.auditEvents ?? [])];
   const tasks = [...(input.tasks ?? createDemoTasks())];
   const taskRuns = [...(input.taskRuns ?? createDemoTaskRuns(tasks))];
@@ -553,6 +592,9 @@ export function createOperationSnapshot(input: {
     generatedAt,
     fixtures,
     fixtureWorkflows,
+    leagueCoveragePolicies,
+    teamCoveragePolicies,
+    dailyAutomationPolicies,
     auditEvents,
     tasks,
     taskRuns,
@@ -585,6 +627,10 @@ export function createPublicApiHandlers(
     fixtureById: (fixtureId: string) => findFixtureById(snapshot, fixtureId),
     fixtureOpsById: (fixtureId: string) => findFixtureOpsById(snapshot, fixtureId),
     fixtureAuditEventsById: (fixtureId: string) => findFixtureAuditEventsById(snapshot, fixtureId),
+    leagueCoveragePolicies: () => listLeagueCoveragePolicies(snapshot),
+    teamCoveragePolicies: () => listTeamCoveragePolicies(snapshot),
+    dailyAutomationPolicy: () => getDailyAutomationPolicy(snapshot),
+    coverageDailyScope: () => listCoverageDailyScope(snapshot),
     tasks: () => listTasks(snapshot),
     taskById: (taskId: string) => findTaskById(snapshot, taskId),
     taskRuns: () => listTaskRuns(snapshot),
@@ -773,6 +819,18 @@ export function routePublicApiRequest(
       return { status: 200, body: handlers.operationalSummary() };
     case publicApiEndpointPaths.operationalLogs:
       return { status: 200, body: handlers.operationalLogs() };
+    case publicApiEndpointPaths.coverageLeagues:
+      return { status: 200, body: handlers.leagueCoveragePolicies() };
+    case publicApiEndpointPaths.coverageTeams:
+      return { status: 200, body: handlers.teamCoveragePolicies() };
+    case publicApiEndpointPaths.coverageDailyPolicy: {
+      const dailyPolicy = handlers.dailyAutomationPolicy();
+      return dailyPolicy
+        ? { status: 200, body: dailyPolicy }
+        : createResourceNotFoundResponse("daily-automation-policy", "default");
+    }
+    case publicApiEndpointPaths.coverageDailyScope:
+      return { status: 200, body: handlers.coverageDailyScope() };
     case publicApiEndpointPaths.predictions:
       return { status: 200, body: handlers.predictions() };
     case publicApiEndpointPaths.parlays:
@@ -896,6 +954,57 @@ export async function handlePublicApiRequest(
 
 export function listFixtures(snapshot: OperationSnapshot): readonly FixtureEntity[] {
   return snapshot.fixtures;
+}
+
+export function listLeagueCoveragePolicies(
+  snapshot: OperationSnapshot,
+): readonly LeagueCoveragePolicyEntity[] {
+  return snapshot.leagueCoveragePolicies ?? [];
+}
+
+export function listTeamCoveragePolicies(
+  snapshot: OperationSnapshot,
+): readonly TeamCoveragePolicyEntity[] {
+  return snapshot.teamCoveragePolicies ?? [];
+}
+
+export function getDailyAutomationPolicy(
+  snapshot: OperationSnapshot,
+): DailyAutomationPolicyEntity | null {
+  return (snapshot.dailyAutomationPolicies ?? [])[0] ?? null;
+}
+
+export function listCoverageDailyScope(
+  snapshot: OperationSnapshot,
+): readonly CoverageDailyScopeReadModel[] {
+  const dailyPolicy = getDailyAutomationPolicy(snapshot);
+  if (!dailyPolicy) {
+    return snapshot.fixtures.map((fixture) => ({
+      fixtureId: fixture.id,
+      included: true,
+      eligibleForScoring: true,
+      eligibleForParlay: true,
+      visibleInOps: true,
+      includedBy: [],
+      excludedBy: [],
+      appliedMinAllowedOdd: 1.2,
+      matchedTeamPolicyIds: [],
+      priorityScore: 0,
+    }));
+  }
+
+  return snapshot.fixtures.map((fixture) => {
+    const workflow = snapshot.fixtureWorkflows.find((candidate) => candidate.fixtureId === fixture.id);
+    return evaluateFixtureCoverageScope({
+      fixture,
+      ...(workflow ? { workflow } : {}),
+      leaguePolicies: snapshot.leagueCoveragePolicies,
+      teamPolicies: snapshot.teamCoveragePolicies,
+      dailyPolicy,
+      ...(workflow?.minDetectedOdd !== undefined ? { minDetectedOdd: workflow.minDetectedOdd } : {}),
+      now: snapshot.generatedAt,
+    });
+  });
 }
 
 export function findFixtureById(
@@ -1856,6 +1965,9 @@ export async function loadOperationSnapshotFromUnitOfWork(
     StorageUnitOfWork,
     | "fixtures"
     | "fixtureWorkflows"
+    | "leagueCoveragePolicies"
+    | "teamCoveragePolicies"
+    | "dailyAutomationPolicies"
     | "auditEvents"
     | "tasks"
     | "taskRuns"
@@ -1870,9 +1982,25 @@ export async function loadOperationSnapshotFromUnitOfWork(
     readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
   } = {},
 ): Promise<OperationSnapshot> {
-  const [fixtures, fixtureWorkflows, auditEvents, tasks, taskRuns, aiRuns, predictions, parlays, validations] = await Promise.all([
+  const [
+    fixtures,
+    fixtureWorkflows,
+    leagueCoveragePolicies,
+    teamCoveragePolicies,
+    dailyAutomationPolicies,
+    auditEvents,
+    tasks,
+    taskRuns,
+    aiRuns,
+    predictions,
+    parlays,
+    validations,
+  ] = await Promise.all([
     unitOfWork.fixtures.list(),
     unitOfWork.fixtureWorkflows.list(),
+    unitOfWork.leagueCoveragePolicies.list(),
+    unitOfWork.teamCoveragePolicies.list(),
+    unitOfWork.dailyAutomationPolicies.list(),
     unitOfWork.auditEvents.list(),
     unitOfWork.tasks.list(),
     unitOfWork.taskRuns.list(),
@@ -1904,6 +2032,9 @@ export async function loadOperationSnapshotFromUnitOfWork(
   return createOperationSnapshot({
     fixtures,
     fixtureWorkflows,
+    leagueCoveragePolicies,
+    teamCoveragePolicies,
+    dailyAutomationPolicies,
     auditEvents,
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     aiRuns: mappedAiRuns,

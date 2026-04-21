@@ -6,11 +6,14 @@ import {
   createAuditEvent,
   createFixtureWorkflow,
   createAiRun,
+  createDailyAutomationPolicy,
   createFixture,
+  createLeagueCoveragePolicy,
   createParlay,
   createPrediction,
   createTask,
   createTaskRun,
+  createTeamCoveragePolicy,
   createValidation,
 } from "@gana-v8/domain-core";
 import { createInMemoryUnitOfWork, createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
@@ -274,6 +277,117 @@ test("public api exposes persisted live ingestion runs reconstructed from task, 
   assert.deepEqual(detail.request.quirksApplied, ["api-football-season-inferred"]);
   assert.equal(runs[1]?.batch.batchId, "batch-fixtures-1");
   assert.equal(runs[0]?.providerError.category, "provider-envelope");
+});
+
+test("public api exposes coverage policies and daily scope read models", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const trackedFixture = createFixture({
+    id: "fixture:api-football:cov-1",
+    sport: "football",
+    competition: "Premier League",
+    homeTeam: "Liverpool",
+    awayTeam: "Chelsea",
+    scheduledAt: "2099-01-01T18:00:00.000Z",
+    status: "scheduled",
+    metadata: {
+      providerCode: "api-football",
+      providerLeagueId: "39",
+      providerHomeTeamId: "40",
+      providerAwayTeamId: "49",
+    },
+  });
+  const blockedFixture = createFixture({
+    id: "fixture:api-football:cov-2",
+    sport: "football",
+    competition: "Untracked League",
+    homeTeam: "Home",
+    awayTeam: "Away",
+    scheduledAt: "2099-01-01T19:00:00.000Z",
+    status: "scheduled",
+    metadata: {
+      providerCode: "api-football",
+      providerLeagueId: "999",
+      providerHomeTeamId: "9991",
+      providerAwayTeamId: "9992",
+    },
+  });
+  await unitOfWork.fixtures.save(trackedFixture);
+  await unitOfWork.fixtures.save(blockedFixture);
+  await unitOfWork.fixtureWorkflows.save(
+    createFixtureWorkflow({
+      fixtureId: trackedFixture.id,
+      ingestionStatus: "succeeded",
+      oddsStatus: "succeeded",
+      enrichmentStatus: "pending",
+      candidateStatus: "pending",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: false,
+      selectionOverride: "force-include",
+      minDetectedOdd: 1.11,
+    }),
+  );
+  await unitOfWork.leagueCoveragePolicies.save(
+    createLeagueCoveragePolicy({
+      id: "league-policy-epl",
+      provider: "api-football",
+      leagueKey: "39",
+      leagueName: "Premier League",
+      season: 2099,
+      enabled: true,
+      alwaysOn: true,
+      priority: 90,
+      marketsAllowed: ["moneyline"],
+    }),
+  );
+  await unitOfWork.teamCoveragePolicies.save(
+    createTeamCoveragePolicy({
+      id: "team-policy-liverpool",
+      provider: "api-football",
+      teamKey: "40",
+      teamName: "Liverpool",
+      enabled: true,
+      alwaysTrack: true,
+      priority: 95,
+      followHome: true,
+      followAway: true,
+      forceResearch: true,
+    }),
+  );
+  await unitOfWork.dailyAutomationPolicies.save(
+    createDailyAutomationPolicy({
+      id: "daily-policy-default",
+      policyName: "default-football-daily",
+      enabled: true,
+      timezone: "America/Guatemala",
+      minAllowedOdd: 1.2,
+      defaultMaxFixturesPerRun: 30,
+      defaultLookaheadHours: 24,
+      defaultLookbackHours: 6,
+      requireTrackedLeagueOrTeam: true,
+      allowManualInclusionBypass: true,
+    }),
+  );
+
+  const snapshot = await loadOperationSnapshotFromUnitOfWork(unitOfWork);
+  const handlers = createPublicApiHandlers(snapshot);
+  const leaguesResponse = routePublicApiRequest(handlers, "/coverage/leagues");
+  const teamsResponse = routePublicApiRequest(handlers, "/coverage/teams");
+  const dailyPolicyResponse = routePublicApiRequest(handlers, "/coverage/daily-policy");
+  const dailyScopeResponse = routePublicApiRequest(handlers, "/coverage/daily-scope");
+
+  assert.equal(leaguesResponse.status, 200);
+  assert.equal(teamsResponse.status, 200);
+  assert.equal(dailyPolicyResponse.status, 200);
+  assert.equal(dailyScopeResponse.status, 200);
+  assert.equal((leaguesResponse.body as any[]).length, 1);
+  assert.equal((teamsResponse.body as any[]).length, 1);
+  assert.equal((dailyPolicyResponse.body as any).minAllowedOdd, 1.2);
+  assert.equal((dailyScopeResponse.body as any[]).length, 2);
+  assert.equal((dailyScopeResponse.body as any[]).some((entry) => entry.fixtureId === trackedFixture.id && entry.included === true), true);
+  assert.equal((dailyScopeResponse.body as any[]).some((entry) => entry.fixtureId === trackedFixture.id && entry.eligibleForScoring === false), true);
+  assert.equal((dailyScopeResponse.body as any[]).some((entry) => entry.fixtureId === blockedFixture.id && entry.included === false), true);
 });
 
 test("public api health reports live ingestion freshness and recent failures", () => {

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 
-import { automationActor, systemActor, type AuthorizationActor } from "@gana-v8/authz";
 import { loadRuntimeConfig, type RuntimeConfig } from "@gana-v8/config-runtime";
 import type {
   FixtureEntity,
@@ -8,7 +7,7 @@ import type {
   ParlayEntity,
   PredictionEntity,
 } from "@gana-v8/domain-core";
-import { createFixtureWorkflow, transitionFixtureWorkflowStage } from "@gana-v8/domain-core";
+import { createAuditEvent, createFixtureWorkflow, transitionFixtureWorkflowStage } from "@gana-v8/domain-core";
 import {
   evaluatePublicationReadiness,
   normalizePublicationLineage,
@@ -28,6 +27,7 @@ import {
   createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
+import { evaluateFixtureCoverageScope, type FixtureCoverageScopeDecision } from "@gana-v8/policy-engine";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/publisher-worker",
@@ -53,6 +53,22 @@ export interface PublishedPredictionRecordAiTask {
   readonly id: string;
   readonly triggerKind?: string;
   readonly payload?: Record<string, unknown> | null;
+}
+
+export interface AuthorizationActor {
+  readonly id: string;
+  readonly role: "viewer" | "operator" | "automation" | "system";
+  readonly capabilities: readonly (
+    | "publish:preview"
+    | "publish:parlay-store"
+    | "publish:telegram"
+    | "publish:discord"
+    | "publish:webhook"
+    | "queue:operate"
+    | "workflow:override"
+    | "*"
+  )[];
+  readonly displayName?: string;
 }
 
 export interface PublishedPredictionRecordAiRun {
@@ -103,6 +119,7 @@ export interface PublisherWorkerSkipReason {
     | "not-published"
     | "outside-live-window"
     | "workflow-excluded"
+    | "coverage-policy-blocked"
     | "not-enough-candidates"
     | "publication-blocked";
   readonly detail: string;
@@ -166,10 +183,24 @@ const deriveRuntimePublicationLineage = (runtimeConfig: RuntimeConfig): Publicat
 const defaultPublicationChannel = (runtimeConfig: RuntimeConfig): PublicationChannel =>
   runtimeConfig.flags.demoMode ? "preview-store" : "parlay-store";
 
+const createAutomationActor = (id: string, displayName: string): AuthorizationActor => ({
+  id,
+  role: "automation",
+  capabilities: ["publish:preview"] as const,
+  displayName,
+});
+
+const createSystemActor = (id: string, displayName: string): AuthorizationActor => ({
+  id,
+  role: "system",
+  capabilities: ["*"] as const,
+  displayName,
+});
+
 const defaultPublicationActor = (runtimeConfig: RuntimeConfig): AuthorizationActor =>
   runtimeConfig.flags.demoMode
-    ? automationActor("publisher-worker:preview", "Publisher Worker Preview")
-    : systemActor("publisher-worker:system", "Publisher Worker System");
+    ? createAutomationActor("publisher-worker:preview", "Publisher Worker Preview")
+    : createSystemActor("publisher-worker:system", "Publisher Worker System");
 
 const extractPredictionLineage = (prediction: PublishedPredictionRecord): PublicationLineage | null => {
   const payload = asRecord(prediction.aiRun?.task?.payload);
@@ -263,6 +294,92 @@ const persistParlayWorkflow = async (
       );
     }),
   );
+
+const defaultCoverageDailyPolicy = {
+  minAllowedOdd: 1.2,
+  requireTrackedLeagueOrTeam: false,
+} as const;
+
+const inferPredictionMinDetectedOdd = (prediction: PublishedPredictionRecord): number | undefined => {
+  const impliedProbability = prediction.probabilities.implied;
+  if (!Number.isFinite(impliedProbability) || impliedProbability <= 0) {
+    return undefined;
+  }
+
+  return round(1 / impliedProbability);
+};
+
+const loadPublisherCoveragePolicyContext = async (unitOfWork: StorageUnitOfWork) => {
+  const [leaguePolicies, teamPolicies, dailyPolicies] = await Promise.all([
+    unitOfWork.leagueCoveragePolicies.findEnabled(),
+    unitOfWork.teamCoveragePolicies.findEnabled(),
+    unitOfWork.dailyAutomationPolicies.findEnabled(),
+  ]);
+
+  return {
+    leaguePolicies,
+    teamPolicies,
+    dailyPolicy: dailyPolicies[0] ?? defaultCoverageDailyPolicy,
+    hasPersistedPolicy: leaguePolicies.length > 0 || teamPolicies.length > 0 || dailyPolicies.length > 0,
+  };
+};
+
+const summarizeCoverageBlock = (excludedBy: readonly { message: string }[]): string =>
+  excludedBy.map((reason) => reason.message).join("; ") || "Fixture was blocked by coverage policy.";
+
+const persistCoverageBlockedParlayWorkflow = async (
+  unitOfWork: StorageUnitOfWork,
+  fixtureId: string,
+  generatedAt: string,
+  scopeDecision: FixtureCoverageScopeDecision,
+): Promise<void> => {
+  const current =
+    (await unitOfWork.fixtureWorkflows.findByFixtureId(fixtureId)) ??
+    createFixtureWorkflow({
+      fixtureId,
+      ingestionStatus: "pending",
+      oddsStatus: "pending",
+      enrichmentStatus: "pending",
+      candidateStatus: "pending",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: false,
+    });
+
+  const persistedWorkflow = await unitOfWork.fixtureWorkflows.save(
+    transitionFixtureWorkflowStage(current, "parlay", {
+      status: "blocked",
+      occurredAt: generatedAt,
+      isCandidate: false,
+      ...(scopeDecision.minDetectedOdd !== undefined ? { minDetectedOdd: scopeDecision.minDetectedOdd } : {}),
+      diagnostics: {
+        ...(current.diagnostics ?? {}),
+        coverageDecision: scopeDecision,
+      },
+    }),
+  );
+
+  await unitOfWork.auditEvents.save(
+    createAuditEvent({
+      id: `audit:fixture-workflow:${fixtureId}:coverage-policy-blocked:parlay:${persistedWorkflow.updatedAt}`,
+      aggregateType: "fixture-workflow",
+      aggregateId: fixtureId,
+      eventType: "fixture-workflow.coverage-policy.blocked",
+      actor: "publisher-worker",
+      payload: {
+        stage: "parlay",
+        included: scopeDecision.included,
+        eligibleForScoring: scopeDecision.eligibleForScoring,
+        eligibleForParlay: scopeDecision.eligibleForParlay,
+        appliedMinAllowedOdd: scopeDecision.appliedMinAllowedOdd,
+        minDetectedOdd: scopeDecision.minDetectedOdd ?? null,
+        excludedBy: scopeDecision.excludedBy,
+      },
+      occurredAt: persistedWorkflow.updatedAt,
+    }),
+  );
+};
 
 const createEmptyScorecard = (reasons: readonly string[]): ParlayScorecard => ({
   legCount: 0,
@@ -567,12 +684,47 @@ export const publishParlayMvp = async (
 
     const candidates: AtomicCandidate[] = [];
     const skipReasons: PublisherWorkerSkipReason[] = [];
+    const shouldEvaluateCoveragePolicy = options.unitOfWork !== undefined || options.client === undefined;
+    const coverageContext = shouldEvaluateCoveragePolicy
+      ? await loadPublisherCoveragePolicyContext(runtime.unitOfWork)
+      : null;
 
     for (const prediction of loaded) {
       const invalid = collectCandidateValidation(prediction, generatedAt);
       if (invalid) {
         skipReasons.push(invalid);
         continue;
+      }
+
+      const workflow = shouldEvaluateCoveragePolicy
+        ? await runtime.unitOfWork.fixtureWorkflows.findByFixtureId(prediction.fixtureId)
+        : undefined;
+      if (coverageContext?.hasPersistedPolicy) {
+        const minDetectedOdd = workflow?.minDetectedOdd ?? inferPredictionMinDetectedOdd(prediction);
+        const coverageDecision = evaluateFixtureCoverageScope({
+          fixture: prediction.fixture!,
+          ...(workflow ? { workflow } : {}),
+          leaguePolicies: coverageContext.leaguePolicies,
+          teamPolicies: coverageContext.teamPolicies,
+          dailyPolicy: coverageContext.dailyPolicy,
+          ...(minDetectedOdd !== undefined ? { minDetectedOdd } : {}),
+          now: generatedAt,
+        });
+        if (!coverageDecision.eligibleForParlay) {
+          await persistCoverageBlockedParlayWorkflow(
+            runtime.unitOfWork,
+            prediction.fixtureId,
+            generatedAt,
+            coverageDecision,
+          );
+          skipReasons.push({
+            predictionId: prediction.id,
+            fixtureId: prediction.fixtureId,
+            reason: "coverage-policy-blocked",
+            detail: summarizeCoverageBlock(coverageDecision.excludedBy),
+          });
+          continue;
+        }
       }
 
       candidates.push(toAtomicCandidateFromPrediction(prediction));

@@ -18,6 +18,10 @@ import {
 } from "@gana-v8/config-runtime";
 import { runPublisherWorker, type PublishParlayMvpResult } from "@gana-v8/publisher-worker";
 import {
+  evaluateFixtureCoverageScope,
+  type FixtureCoverageScopeDecision,
+} from "@gana-v8/policy-engine";
+import {
   findFixtureOpsById,
   loadOperationSnapshotFromDatabase,
   type FixtureOpsDetailReadModel,
@@ -25,7 +29,6 @@ import {
   listLiveIngestionRuns,
 } from "@gana-v8/public-api";
 import {
-  loadEligibleFixturesForScoring,
   scoreFixturePrediction,
   type FixtureScoreResult,
 } from "@gana-v8/scoring-worker";
@@ -173,6 +176,33 @@ export interface EnqueuePredictionForEligibleFixturesResult {
   }[];
 }
 
+interface CoverageScopedEligibleFixture {
+  readonly candidate: CoverageEligibleFixtureCandidate;
+  readonly scopeDecision: FixtureCoverageScopeDecision;
+}
+
+interface CoverageOddsSelectionLike {
+  readonly selectionKey: string;
+  readonly priceDecimal: number;
+}
+
+interface CoverageOddsSnapshotLike {
+  readonly id: string;
+  readonly fixtureId?: string | null;
+  readonly providerFixtureId: string;
+  readonly marketKey: string;
+  readonly bookmakerKey: string;
+  readonly capturedAt: Date;
+  readonly selections: readonly CoverageOddsSelectionLike[];
+}
+
+interface CoverageEligibleFixtureCandidate {
+  readonly fixture: Record<string, unknown> & { id: string; status: string; competition: string; homeTeam: string; awayTeam: string; metadata: Record<string, string> };
+  readonly latestOddsSnapshot: CoverageOddsSnapshotLike | null;
+  readonly eligible: boolean;
+  readonly reason?: string;
+}
+
 export interface AutomationOpsFixtureSummary {
   readonly fixtureId: string;
   readonly scoringEligibility: FixtureOpsDetailReadModel["scoringEligibility"];
@@ -253,6 +283,128 @@ const AUTOMATION_PREDICTION_STEP = "score";
 const AUTOMATION_SOURCE = "hermes-control-plane";
 const AUTOMATION_PREDICTION_TASK_PREFIX = "automation:prediction:score";
 const AUTOMATION_VALIDATION_TASK_PREFIX = "automation:validation";
+
+const summarizeCoverageExclusions = (decision: FixtureCoverageScopeDecision): string =>
+  decision.excludedBy.map((reason) => reason.message).join("; ") || "Fixture is not eligible for scoring.";
+
+const detectMinAllowedOdd = (candidate: CoverageEligibleFixtureCandidate): number | undefined => {
+  const prices = candidate.latestOddsSnapshot?.selections
+    .map((selection) => selection.priceDecimal)
+    .filter((price): price is number => Number.isFinite(price));
+  if (!prices || prices.length === 0) {
+    return undefined;
+  }
+
+  return Math.min(...prices);
+};
+
+const loadCoverageScopedEligibleFixtures = async (
+  databaseUrl: string,
+  options: EnqueuePredictionForEligibleFixturesOptions = {},
+): Promise<CoverageScopedEligibleFixture[]> => {
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+
+  try {
+    const fixtures = await prisma.fixture.findMany({
+      where: {
+        status: "scheduled",
+        ...(options.fixtureIds ? { id: { in: Array.from(options.fixtureIds) } } : {}),
+      },
+      orderBy: { scheduledAt: "asc" },
+    });
+    const limitedFixtures = fixtures.slice(0, options.maxFixtures ?? fixtures.length);
+
+    const eligibleFixtures = await Promise.all(
+      limitedFixtures.map(async (fixture) => {
+        const providerFixtureId = typeof fixture.metadata === "object" && fixture.metadata !== null
+          ? String((fixture.metadata as Record<string, unknown>).providerFixtureId ?? "")
+          : "";
+        const latestOddsSnapshot = await prisma.oddsSnapshot.findFirst({
+          where: {
+            marketKey: "h2h",
+            OR: [
+              { fixtureId: fixture.id },
+              ...(providerFixtureId ? [{ providerFixtureId }] : []),
+            ],
+          },
+          include: { selections: true },
+          orderBy: [{ capturedAt: "desc" }],
+        });
+
+        if (!latestOddsSnapshot) {
+          return {
+            fixture: fixture as CoverageEligibleFixtureCandidate["fixture"],
+            latestOddsSnapshot: null,
+            eligible: false,
+            reason: "No latest h2h odds snapshot found for fixture.",
+          } satisfies CoverageEligibleFixtureCandidate;
+        }
+
+        const selectionKeys = new Set(latestOddsSnapshot.selections.map((selection) => selection.selectionKey));
+        const hasCompleteH2h = selectionKeys.has("home") && selectionKeys.has("draw") && selectionKeys.has("away");
+        if (!hasCompleteH2h) {
+          return {
+            fixture: fixture as CoverageEligibleFixtureCandidate["fixture"],
+            latestOddsSnapshot,
+            eligible: false,
+            reason: "Latest h2h odds snapshot is missing home/draw/away selections.",
+          } satisfies CoverageEligibleFixtureCandidate;
+        }
+
+        return {
+          fixture: fixture as CoverageEligibleFixtureCandidate["fixture"],
+          latestOddsSnapshot,
+          eligible: true,
+        } satisfies CoverageEligibleFixtureCandidate;
+      }),
+    );
+
+    const [leaguePolicies, teamPolicies, dailyPolicies] = await Promise.all([
+      unitOfWork.leagueCoveragePolicies.findEnabled(),
+      unitOfWork.teamCoveragePolicies.findEnabled(),
+      unitOfWork.dailyAutomationPolicies.findEnabled(),
+    ]);
+    const dailyPolicy = dailyPolicies[0] ?? {
+      id: "default-daily-policy",
+      policyName: "default-daily-policy",
+      enabled: true,
+      timezone: "UTC",
+      minAllowedOdd: 1.2,
+      defaultMaxFixturesPerRun: 50,
+      defaultLookaheadHours: 24,
+      defaultLookbackHours: 6,
+      requireTrackedLeagueOrTeam: false,
+      allowManualInclusionBypass: true,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+
+    const scoped = await Promise.all(
+      eligibleFixtures.map(async (candidate) => {
+        const workflow = await unitOfWork.fixtureWorkflows.findByFixtureId(candidate.fixture.id);
+        const minDetectedOdd = detectMinAllowedOdd(candidate);
+        const scopeDecision = evaluateFixtureCoverageScope({
+          fixture: candidate.fixture,
+          ...(workflow ? { workflow } : {}),
+          leaguePolicies,
+          teamPolicies,
+          dailyPolicy,
+          ...(minDetectedOdd !== undefined ? { minDetectedOdd } : {}),
+          now: (options.now ?? new Date()).toISOString(),
+        });
+        return {
+          candidate,
+          scopeDecision,
+        } satisfies CoverageScopedEligibleFixture;
+      }),
+    );
+
+    return scoped;
+  } finally {
+    await prisma.$disconnect();
+  }
+};
 
 export const createHermesJobRouter = (
   runtimeConfig: RuntimeConfig = loadHermesRuntimeConfig(),
@@ -549,23 +701,29 @@ export const enqueuePredictionForEligibleFixtures = async (
   options: EnqueuePredictionForEligibleFixturesOptions = {},
 ): Promise<EnqueuePredictionForEligibleFixturesResult> => {
   const now = options.now ?? new Date();
-  const eligibleFixtures = await loadEligibleFixturesForScoring(databaseUrl);
-  const filteredFixtures = options.fixtureIds
-    ? eligibleFixtures.filter((candidate) => options.fixtureIds?.includes(candidate.fixture.id))
-    : eligibleFixtures;
+  const scopedFixtures = await loadCoverageScopedEligibleFixtures(databaseUrl, options);
   const selectedFixtures =
     options.maxFixtures !== undefined
-      ? filteredFixtures.filter((candidate) => candidate.eligible).slice(0, options.maxFixtures)
-      : filteredFixtures;
+      ? scopedFixtures.slice(0, options.maxFixtures)
+      : scopedFixtures;
 
   const tasks: TaskEntity[] = [];
   const skippedFixtures: Array<{ fixtureId: string; reason: string }> = [];
 
-  for (const candidate of selectedFixtures) {
+  for (const scopedCandidate of selectedFixtures) {
+    const { candidate, scopeDecision } = scopedCandidate;
     if (!candidate.eligible) {
       skippedFixtures.push({
         fixtureId: candidate.fixture.id,
         reason: candidate.reason ?? "Fixture is not eligible for scoring.",
+      });
+      continue;
+    }
+
+    if (!scopeDecision.eligibleForScoring) {
+      skippedFixtures.push({
+        fixtureId: candidate.fixture.id,
+        reason: summarizeCoverageExclusions(scopeDecision),
       });
       continue;
     }
@@ -598,7 +756,7 @@ export const enqueuePredictionForEligibleFixtures = async (
 
   return {
     queuedAt: now.toISOString(),
-    eligibleFixtureCount: selectedFixtures.filter((candidate) => candidate.eligible).length,
+    eligibleFixtureCount: selectedFixtures.filter((candidate) => candidate.candidate.eligible && candidate.scopeDecision.eligibleForScoring).length,
     enqueuedCount: tasks.length,
     skippedCount: skippedFixtures.length,
     tasks,

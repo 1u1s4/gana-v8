@@ -189,7 +189,7 @@ test("operator console builds panels and alerts from the snapshot", () => {
   const snapshot = createOperatorConsoleSnapshot();
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 15);
+  assert.equal(model.panels.length, 17);
   assert.equal(model.health.status, "ok");
   assert.equal(model.validationSummary.partial, 1);
   assert.equal(model.alerts.length, 0);
@@ -322,6 +322,111 @@ test("operator console surfaces fixture pipeline readiness from fixture metadata
   assert.match(fixtureOpsPanel.lines.join("\n"), /recent ops/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /selection-override.updated.*high conviction/i);
   assert.match(fixtureOpsPanel.lines.join("\n"), /manual-selection.updated.*desk review/i);
+});
+
+test("operator console adds coverage and daily scope panels", () => {
+  const operationSnapshot = createOperationLikeSnapshot({
+    leagueCoveragePolicies: [
+      {
+        id: "league-policy-epl",
+        provider: "api-football",
+        leagueKey: "39",
+        leagueName: "Premier League",
+        season: 2099,
+        enabled: true,
+        alwaysOn: true,
+        priority: 90,
+        marketsAllowed: ["moneyline"],
+        createdAt: "2099-01-01T00:00:00.000Z",
+        updatedAt: "2099-01-01T00:00:00.000Z",
+      },
+    ],
+    teamCoveragePolicies: [
+      {
+        id: "team-policy-liverpool",
+        provider: "api-football",
+        teamKey: "40",
+        teamName: "Liverpool",
+        enabled: true,
+        alwaysTrack: true,
+        priority: 95,
+        followHome: true,
+        followAway: true,
+        forceResearch: true,
+        createdAt: "2099-01-01T00:00:00.000Z",
+        updatedAt: "2099-01-01T00:00:00.000Z",
+      },
+    ],
+    dailyAutomationPolicies: [
+      {
+        id: "daily-policy-default",
+        policyName: "default-football-daily",
+        enabled: true,
+        timezone: "America/Guatemala",
+        minAllowedOdd: 1.2,
+        defaultMaxFixturesPerRun: 30,
+        defaultLookaheadHours: 24,
+        defaultLookbackHours: 6,
+        requireTrackedLeagueOrTeam: true,
+        allowManualInclusionBypass: true,
+        createdAt: "2099-01-01T00:00:00.000Z",
+        updatedAt: "2099-01-01T00:00:00.000Z",
+      },
+    ],
+    fixtureWorkflows: [
+      {
+        id: "fixture:api-football:123",
+        fixtureId: "fixture:api-football:123",
+        ingestionStatus: "succeeded",
+        oddsStatus: "succeeded",
+        enrichmentStatus: "pending",
+        candidateStatus: "pending",
+        predictionStatus: "pending",
+        parlayStatus: "pending",
+        validationStatus: "pending",
+        isCandidate: false,
+        selectionOverride: "force-include",
+        minDetectedOdd: 1.11,
+        manualSelectionStatus: "none",
+        errorCount: 0,
+        createdAt: "2099-01-01T00:00:00.000Z",
+        updatedAt: "2099-01-01T00:00:00.000Z",
+      },
+    ],
+    fixtures: [
+      {
+        id: "fixture:api-football:123",
+        sport: "football",
+        competition: "Premier League",
+        homeTeam: "Liverpool",
+        awayTeam: "Chelsea",
+        scheduledAt: "2099-01-01T18:00:00.000Z",
+        status: "scheduled",
+        metadata: {
+          providerCode: "api-football",
+          providerLeagueId: "39",
+          providerHomeTeamId: "40",
+          providerAwayTeamId: "49",
+        },
+        createdAt: "2099-01-01T00:00:00.000Z",
+        updatedAt: "2099-01-01T00:00:00.000Z",
+      },
+    ],
+  });
+
+  const model = buildOperatorConsoleModel(createOperatorConsoleSnapshotFromOperation(operationSnapshot as never));
+  const coveragePanel = model.panels.find((panel) => panel.title === "Coverage registry");
+  const scopePanel = model.panels.find((panel) => panel.title === "Daily scope");
+
+  assert.ok(coveragePanel);
+  assert.ok(scopePanel);
+  assert.match(coveragePanel.lines.join("\n"), /Leagues: 1/);
+  assert.match(coveragePanel.lines.join("\n"), /Teams: 1/);
+  assert.match(coveragePanel.lines.join("\n"), /Min allowed odd: 1.20/);
+  assert.match(scopePanel.lines.join("\n"), /fixture:api-football:123/);
+  assert.match(scopePanel.lines.join("\n"), /included yes/);
+  assert.match(scopePanel.lines.join("\n"), /scoring no/);
+  assert.match(scopePanel.lines.join("\n"), /odds-below-min-threshold/);
 });
 
 test("operator console raises alerts from operational logs and degraded validation health", () => {

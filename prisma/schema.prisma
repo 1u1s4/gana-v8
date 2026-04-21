@@ -415,6 +415,61 @@ model AuditEvent {
   @@index([aggregateType, aggregateId, occurredAt])
 }
 
+model LeagueCoveragePolicy {
+  id             String   @id
+  provider       String
+  leagueKey      String
+  leagueName     String
+  season         Int
+  enabled        Boolean
+  alwaysOn       Boolean
+  priority       Int
+  marketsAllowed Json
+  notes          String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([provider, leagueKey, season])
+  @@index([enabled, priority, leagueName])
+}
+
+model TeamCoveragePolicy {
+  id            String   @id
+  provider      String
+  teamKey       String
+  teamName      String
+  enabled       Boolean
+  alwaysTrack   Boolean
+  priority      Int
+  followHome    Boolean
+  followAway    Boolean
+  forceResearch Boolean
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([provider, teamKey])
+  @@index([enabled, priority, teamName])
+}
+
+model DailyAutomationPolicy {
+  id                       String   @id
+  policyName               String   @unique
+  enabled                  Boolean
+  timezone                 String
+  minAllowedOdd            Float
+  defaultMaxFixturesPerRun Int
+  defaultLookaheadHours    Int
+  defaultLookbackHours     Int
+  requireTrackedLeagueOrTeam Boolean
+  allowManualInclusionBypass Boolean
+  notes                    String?  @db.Text
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([enabled, policyName])
+}
+
 model SandboxNamespace {
   id            String      @id
   environment   Environment
