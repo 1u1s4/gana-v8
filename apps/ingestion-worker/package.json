@@ -20,7 +20,7 @@
     "dev": "node ../../scripts/workspace-dev.mjs ingestion-worker",
     "lint": "node ../../scripts/workspace-lint.mjs .",
     "test": "tsc -p tsconfig.json && node --test dist/tests/**/*.test.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @gana-v8/canonical-pipeline build && pnpm --filter @gana-v8/config-runtime build && pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/orchestration-sdk build && pnpm --filter @gana-v8/source-connectors build && pnpm --filter @gana-v8/storage-adapters build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
