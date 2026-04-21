@@ -645,6 +645,40 @@ export const maybeClaimNextPersistedTask = async (
   }
 };
 
+const executePersistedTaskClaim = async (
+  queue: PersistedTaskQueue,
+  claim: PersistedTaskClaim,
+  handlers: PersistedTaskHandlers,
+  now?: Date,
+): Promise<PersistedTaskExecution> => {
+  const handler = handlers[claim.task.kind as PersistedTaskIntent];
+
+  if (!handler) {
+    throw new Error(`No persisted task handler registered for kind ${claim.task.kind}`);
+  }
+
+  try {
+    const output = await handler(claim.task, claim.taskRun);
+    const completed = await queue.complete(claim.task.id, claim.taskRun.id, now);
+
+    return {
+      task: completed.task as TaskEntity,
+      taskRun: completed.taskRun as TaskRunEntity,
+      output,
+    };
+  } catch (error) {
+    const taskError = error instanceof Error ? error : new Error(String(error));
+    const failed = await queue.fail(claim.task.id, claim.taskRun.id, taskError.message, now);
+
+    return {
+      task: failed.task as TaskEntity,
+      taskRun: failed.taskRun as TaskRunEntity,
+      output: {},
+      error: taskError,
+    };
+  }
+};
+
 export const runNextPersistedTask = async (
   databaseUrl: string,
   handlers: PersistedTaskHandlers,
@@ -659,32 +693,28 @@ export const runNextPersistedTask = async (
       return null;
     }
 
-    const handler = handlers[claim.task.kind as PersistedTaskIntent];
+    return executePersistedTaskClaim(queue, claim, handlers, options.now);
+  } finally {
+    await queue.close();
+  }
+};
 
-    if (!handler) {
-      throw new Error(`No persisted task handler registered for kind ${claim.task.kind}`);
+export const runPersistedTaskById = async (
+  databaseUrl: string,
+  taskId: string,
+  handlers: PersistedTaskHandlers,
+  options: Omit<RunNextPersistedTaskOptions, "kind"> = {},
+): Promise<PersistedTaskExecution | null> => {
+  const queue = createPersistedTaskQueue(databaseUrl);
+
+  try {
+    const claim = (await queue.claim(taskId, options.now ?? new Date())) as PersistedTaskClaim | null;
+
+    if (!claim) {
+      return null;
     }
 
-    try {
-      const output = await handler(claim.task, claim.taskRun);
-      const completed = await queue.complete(claim.task.id, claim.taskRun.id, options.now);
-
-      return {
-        task: completed.task as TaskEntity,
-        taskRun: completed.taskRun as TaskRunEntity,
-        output,
-      };
-    } catch (error) {
-      const taskError = error instanceof Error ? error : new Error(String(error));
-      const failed = await queue.fail(claim.task.id, claim.taskRun.id, taskError.message, options.now);
-
-      return {
-        task: failed.task as TaskEntity,
-        taskRun: failed.taskRun as TaskRunEntity,
-        output: {},
-        error: taskError,
-      };
-    }
+    return executePersistedTaskClaim(queue, claim, handlers, options.now);
   } finally {
     await queue.close();
   }
@@ -934,15 +964,13 @@ export const runAutomationCycle = async (
   };
 
   const researchExecutions: PersistedTaskExecution[] = [];
-  while (true) {
-    const execution = await runNextPersistedTask(databaseUrl, handlers, {
-      kind: "research",
+  for (const task of enqueuedResearch.tasks) {
+    const execution = await runPersistedTaskById(databaseUrl, task.id, handlers, {
       now,
     });
     if (!execution) {
-      break;
+      throw new Error(`Research task ${task.id} could not be claimed for the current automation cycle`);
     }
-
     researchExecutions.push(execution);
   }
 
@@ -961,15 +989,13 @@ export const runAutomationCycle = async (
   });
 
   const predictionExecutions: PersistedTaskExecution[] = [];
-  while (true) {
-    const execution = await runNextPersistedTask(databaseUrl, handlers, {
-      kind: "prediction",
+  for (const task of enqueuedPredictions.tasks) {
+    const execution = await runPersistedTaskById(databaseUrl, task.id, handlers, {
       now,
     });
     if (!execution) {
-      break;
+      throw new Error(`Prediction task ${task.id} could not be claimed for the current automation cycle`);
     }
-
     predictionExecutions.push(execution);
   }
 
@@ -993,8 +1019,7 @@ export const runAutomationCycle = async (
       scheduledFor: now,
       now,
     }));
-  const validationExecution = await runNextPersistedTask(databaseUrl, handlers, {
-    kind: "validation",
+  const validationExecution = await runPersistedTaskById(databaseUrl, validationTask.id, handlers, {
     now,
   });
 

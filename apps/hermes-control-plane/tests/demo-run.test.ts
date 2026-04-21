@@ -1425,6 +1425,95 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
   }
 });
 
+testWithDatabase("runAutomationCycle executes only manifest-owned persisted tasks", async (databaseUrl) => {
+  const prefix = `hain${Date.now().toString(36)}`;
+  const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
+    competition: "Premier League",
+    homeTeam: "Liverpool",
+    awayTeam: "Arsenal",
+  });
+  const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
+    competition: "Premier League",
+    homeTeam: "Chelsea",
+    awayTeam: "Tottenham",
+  });
+  const foreignFixtureId = `${prefix}-foreign-fixture`;
+  const foreignResearchTaskId = `${prefix}-foreign-research`;
+  const foreignPredictionTaskId = `${prefix}-foreign-prediction`;
+  const foreignValidationTaskId = `${prefix}-foreign-validation`;
+  const validationTaskId = `${prefix}-validation-task`;
+  const now = new Date("2099-01-01T10:00:00.000Z");
+
+  await createAutomationCoveragePolicies(databaseUrl, prefix);
+
+  try {
+    await enqueuePersistedTask(databaseUrl, {
+      id: foreignResearchTaskId,
+      kind: "research",
+      priority: 99,
+      payload: {
+        fixtureId: foreignFixtureId,
+        source: "foreign-manifest",
+        step: "research",
+      },
+      scheduledFor: now,
+      now,
+    });
+    await enqueuePersistedTask(databaseUrl, {
+      id: foreignPredictionTaskId,
+      kind: "prediction",
+      priority: 99,
+      payload: {
+        fixtureId: foreignFixtureId,
+        source: "foreign-manifest",
+        step: "prediction",
+      },
+      scheduledFor: now,
+      now,
+    });
+    await enqueuePersistedTask(databaseUrl, {
+      id: foreignValidationTaskId,
+      kind: "validation",
+      priority: 99,
+      payload: {
+        executedAt: "2099-01-01T10:14:00.000Z",
+        source: "foreign-manifest",
+      },
+      scheduledFor: now,
+      now,
+    });
+
+    const summary = await runAutomationCycle(databaseUrl, {
+      env: TEST_RUNTIME_ENV,
+      now,
+      fixtureIds: [fixtureOne.fixtureId, fixtureTwo.fixtureId],
+      maxFixtures: 2,
+      researchGeneratedAt: "2099-01-01T10:11:00.000Z",
+      scoringGeneratedAt: "2099-01-01T10:12:00.000Z",
+      parlayGeneratedAt: "2099-01-01T10:13:00.000Z",
+      validationExecutedAt: "2099-01-01T10:14:00.000Z",
+      validationTaskId,
+    });
+
+    assert.equal(summary.processedResearchCount, 2);
+    assert.equal(summary.researchExecutions.every((execution) => execution.task.id !== foreignResearchTaskId), true);
+    assert.equal(summary.processedPredictionCount, 2);
+    assert.equal(summary.predictionExecutions.every((execution) => execution.task.id !== foreignPredictionTaskId), true);
+    assert.equal(summary.validationExecution.task.id, validationTaskId);
+
+    const queue = createPersistedTaskQueue(databaseUrl);
+    try {
+      assert.equal((await queue.getTaskById(foreignResearchTaskId))?.status, "queued");
+      assert.equal((await queue.getTaskById(foreignPredictionTaskId))?.status, "queued");
+      assert.equal((await queue.getTaskById(foreignValidationTaskId))?.status, "queued");
+    } finally {
+      await queue.close();
+    }
+  } finally {
+    await cleanupAutomationArtifacts(databaseUrl, prefix);
+  }
+});
+
 testWithDatabase("runAutomationCycle scopes publisher selection to predictions from the current automation cycle only", async (databaseUrl) => {
   const prefix = `hars${Date.now().toString(36)}`;
   const historicalPrefix = `${prefix}old`;
