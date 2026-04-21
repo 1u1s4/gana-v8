@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+
 import {
   buildReplayTimeline,
   compareFixturePacks,
@@ -192,6 +195,62 @@ export interface SandboxReleaseComparisonResult {
   readonly changedFixtureIds: readonly string[];
 }
 
+export interface SandboxGoldenSnapshot {
+  readonly schemaVersion: "sandbox-golden-v1";
+  readonly mode: RunnerMode;
+  readonly fixturePackId: string;
+  readonly profileName: SandboxProfileName;
+  readonly assertions: readonly string[];
+  readonly providerModes: Readonly<Record<string, string>>;
+  readonly stats: SandboxRunSummary["stats"];
+  readonly clock: SandboxRunSummary["clock"];
+  readonly replayTimeline: SandboxRunSummary["replayTimeline"];
+  readonly golden: SandboxRunSummary["golden"];
+  readonly comparison: SandboxRunSummary["comparison"];
+  readonly safety: SandboxRunSummary["safety"];
+}
+
+export interface GoldenDiffEntry {
+  readonly path: string;
+  readonly kind: "added" | "removed" | "changed";
+  readonly expected?: unknown;
+  readonly actual?: unknown;
+}
+
+export interface GoldenDiff {
+  readonly changed: boolean;
+  readonly entryCount: number;
+  readonly entries: readonly GoldenDiffEntry[];
+}
+
+export interface SandboxCertificationEvidencePack {
+  readonly schemaVersion: "sandbox-certification-v1";
+  readonly generatedAt: string;
+  readonly workspace: string;
+  readonly fixtureWorkspace: string;
+  readonly runtime: {
+    readonly gitSha: string;
+    readonly mode: RunnerMode;
+    readonly profileName: SandboxProfileName;
+    readonly packId: string;
+  };
+  readonly summary: SandboxRunSummary;
+  readonly goldenSnapshot: SandboxGoldenSnapshot;
+}
+
+export interface SandboxCertificationResult {
+  readonly status: "passed" | "failed";
+  readonly goldenPath: string;
+  readonly artifactPath?: string;
+  readonly evidence: SandboxCertificationEvidencePack;
+  readonly diff: GoldenDiff;
+}
+
+export interface SandboxCertificationOptions extends SandboxRunnerOptions {
+  readonly goldenPath: string;
+  readonly artifactPath?: string;
+}
+
 export const prepareSandboxRun = (options: SandboxRunnerOptions): SandboxRunManifest => {
   const fixturePack = getSyntheticFixturePack(options.packId);
   if (!fixturePack.profileHints.includes(options.profileName)) {
@@ -311,6 +370,155 @@ export const compareSandboxReleases = (input: {
   };
 };
 
+export const createSandboxGoldenSnapshot = (
+  summary: SandboxRunSummary,
+): SandboxGoldenSnapshot => ({
+  schemaVersion: "sandbox-golden-v1",
+  mode: summary.mode,
+  fixturePackId: summary.fixturePackId,
+  profileName: summary.profileName,
+  assertions: summary.assertions,
+  providerModes: summary.providerModes,
+  stats: summary.stats,
+  clock: summary.clock,
+  replayTimeline: summary.replayTimeline,
+  golden: summary.golden,
+  comparison: summary.comparison,
+  safety: summary.safety,
+});
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const compareGoldenValues = (
+  expected: unknown,
+  actual: unknown,
+  path: string,
+): GoldenDiffEntry[] => {
+  if (Array.isArray(expected) && Array.isArray(actual)) {
+    const entries: GoldenDiffEntry[] = [];
+    const maxLength = Math.max(expected.length, actual.length);
+    for (let index = 0; index < maxLength; index += 1) {
+      const childPath = `${path}[${index}]`;
+      if (index >= expected.length) {
+        entries.push({ path: childPath, kind: "added", actual: actual[index] });
+        continue;
+      }
+      if (index >= actual.length) {
+        entries.push({ path: childPath, kind: "removed", expected: expected[index] });
+        continue;
+      }
+      entries.push(...compareGoldenValues(expected[index], actual[index], childPath));
+    }
+    return entries;
+  }
+
+  if (isPlainObject(expected) && isPlainObject(actual)) {
+    const entries: GoldenDiffEntry[] = [];
+    const keys = [...new Set([...Object.keys(expected), ...Object.keys(actual)])].sort();
+    for (const key of keys) {
+      const childPath = `${path}.${key}`;
+      if (!(key in actual)) {
+        entries.push({ path: childPath, kind: "removed", expected: expected[key] });
+        continue;
+      }
+      if (!(key in expected)) {
+        entries.push({ path: childPath, kind: "added", actual: actual[key] });
+        continue;
+      }
+      entries.push(...compareGoldenValues(expected[key], actual[key], childPath));
+    }
+    return entries;
+  }
+
+  if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+    return [{ path, kind: "changed", expected, actual }];
+  }
+
+  return [];
+};
+
+export const diffSandboxGoldenSnapshot = (
+  expected: SandboxGoldenSnapshot,
+  actual: SandboxGoldenSnapshot,
+): GoldenDiff => {
+  const entries = compareGoldenValues(expected, actual, "$");
+  return {
+    changed: entries.length > 0,
+    entryCount: entries.length,
+    entries,
+  };
+};
+
+export const createSandboxCertificationEvidencePack = (
+  options: SandboxRunnerOptions,
+): SandboxCertificationEvidencePack => {
+  const summary = runSandboxScenario(options);
+  return {
+    schemaVersion: "sandbox-certification-v1",
+    generatedAt: new Date().toISOString(),
+    workspace: describeWorkspace(),
+    fixtureWorkspace: describeFixtureWorkspace(),
+    runtime: {
+      gitSha: options.gitSha,
+      mode: options.mode,
+      profileName: options.profileName,
+      packId: options.packId,
+    },
+    summary,
+    goldenSnapshot: createSandboxGoldenSnapshot(summary),
+  };
+};
+
+export const loadSandboxGoldenSnapshot = async (
+  goldenPath: string,
+): Promise<SandboxGoldenSnapshot> => {
+  const loaded = JSON.parse(await readFile(goldenPath, "utf8")) as SandboxGoldenSnapshot;
+  if (loaded.schemaVersion !== "sandbox-golden-v1") {
+    throw new Error(`Unsupported sandbox golden schema in ${goldenPath}`);
+  }
+
+  return loaded;
+};
+
+export const writeSandboxGoldenSnapshot = async (
+  goldenPath: string,
+  snapshot: SandboxGoldenSnapshot,
+): Promise<void> => {
+  await mkdir(dirname(goldenPath), { recursive: true });
+  await writeFile(goldenPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+};
+
+export const writeSandboxCertificationArtifact = async (
+  artifactPath: string,
+  evidence: SandboxCertificationEvidencePack,
+): Promise<string> => {
+  const resolvedArtifactPath = resolve(artifactPath);
+  await mkdir(dirname(resolvedArtifactPath), { recursive: true });
+  await writeFile(resolvedArtifactPath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+  return resolvedArtifactPath;
+};
+
+export const certifySandboxRun = async (
+  options: SandboxCertificationOptions,
+): Promise<SandboxCertificationResult> => {
+  const evidence = createSandboxCertificationEvidencePack(options);
+  const resolvedGoldenPath = resolve(options.goldenPath);
+  const expectedGolden = await loadSandboxGoldenSnapshot(resolvedGoldenPath);
+  const diff = diffSandboxGoldenSnapshot(expectedGolden, evidence.goldenSnapshot);
+  const artifactPath = options.artifactPath
+    ? await writeSandboxCertificationArtifact(options.artifactPath, evidence)
+    : undefined;
+
+  return {
+    status: diff.changed ? "failed" : "passed",
+    goldenPath: resolvedGoldenPath,
+    ...(artifactPath ? { artifactPath } : {}),
+    evidence,
+    diff,
+  };
+};
+
 const parseArgValue = (argv: readonly string[], name: string): string | undefined => {
   const index = argv.indexOf(name);
   if (index === -1) {
@@ -319,6 +527,8 @@ const parseArgValue = (argv: readonly string[], name: string): string | undefine
 
   return argv[index + 1];
 };
+
+const hasArgFlag = (argv: readonly string[], flag: string): boolean => argv.includes(flag);
 
 export const parseSandboxRunnerArgs = (
   argv: readonly string[],
@@ -365,10 +575,37 @@ export const runSandboxCli = (argv: readonly string[]): string => {
   );
 };
 
+export const parseSandboxCertificationArgs = (
+  argv: readonly string[],
+): SandboxCertificationOptions => {
+  const runnerOptions = parseSandboxRunnerArgs(argv);
+  const goldenPath = parseArgValue(argv, "--golden");
+  if (!goldenPath) {
+    throw new Error("Sandbox certification requires --golden <path>");
+  }
+
+  const artifactPath = parseArgValue(argv, "--artifact");
+
+  return {
+    ...runnerOptions,
+    goldenPath,
+    ...(artifactPath ? { artifactPath } : {}),
+  };
+};
+
+export const runSandboxCertificationCli = async (argv: readonly string[]): Promise<string> => {
+  const result = await certifySandboxRun(parseSandboxCertificationArgs(argv));
+  return JSON.stringify(result, null, 2);
+};
+
 const isEntrypoint =
   process.argv[1] !== undefined &&
   import.meta.url === new URL(`file://${process.argv[1]}`).href;
 
 if (isEntrypoint) {
-  process.stdout.write(`${runSandboxCli(process.argv.slice(2))}\n`);
+  if (hasArgFlag(process.argv.slice(2), "--certify")) {
+    process.stdout.write(`${await runSandboxCertificationCli(process.argv.slice(2))}\n`);
+  } else {
+    process.stdout.write(`${runSandboxCli(process.argv.slice(2))}\n`);
+  }
 }

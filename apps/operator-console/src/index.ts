@@ -1435,6 +1435,24 @@ td strong {
   background: var(--surface-strong);
 }
 
+.list-item.is-selected {
+  border-color: rgba(191, 79, 44, 0.45);
+  box-shadow: 0 10px 24px rgba(191, 79, 44, 0.12);
+}
+
+.list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.inspector-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 .log-line,
 .panel-line {
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
@@ -1482,6 +1500,16 @@ const root = document.querySelector('[data-app]');
 const statusNode = document.querySelector('[data-status]');
 const refreshButton = document.querySelector('[data-refresh]');
 const pollIntervalMs = 30000;
+const state = {
+  payload: null,
+  selectedTaskId: null,
+  selectedAiRunId: null,
+  taskDetail: null,
+  taskRuns: [],
+  aiRunDetail: null,
+  taskInspectorError: null,
+  aiRunInspectorError: null,
+};
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -1501,10 +1529,38 @@ const formatBadge = (status) => {
   return '<span class="badge ' + tone + '">' + escapeHtml(status) + '</span>';
 };
 
+const requestJson = async (path, init = {}) => {
+  const response = await fetch(path, {
+    ...init,
+    headers: {
+      accept: 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+  const text = await response.text();
+  const payload = text.length > 0 ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new Error((payload && (payload.message || payload.error)) || 'Request failed');
+  }
+
+  return payload;
+};
+
+const formatMetricValue = (value) => value === null || value === undefined ? 'n/a' : String(value);
+
+const formatDateTime = (value) => {
+  if (!value) {
+    return 'n/a';
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? String(value) : parsed.toLocaleString();
+};
+
 const renderMetricCard = (label, value, detail) =>
   '<article class="metric-card">' +
     '<span class="label">' + escapeHtml(label) + '</span>' +
-    '<div class="value">' + escapeHtml(value) + '</div>' +
+    '<div class="value">' + escapeHtml(formatMetricValue(value)) + '</div>' +
     (detail ? '<div class="subtle">' + escapeHtml(detail) + '</div>' : '') +
   '</article>';
 
@@ -1517,6 +1573,9 @@ const renderAlerts = (model) => {
     '<div class="alert-item">' + escapeHtml(alert) + '</div>'
   ).join('') + '</div>';
 };
+
+const renderJsonBlock = (value) =>
+  '<pre class="log-line">' + escapeHtml(JSON.stringify(value ?? {}, null, 2)) + '</pre>';
 
 const renderFixtureActions = (fixtureId) => {
   const actions = [
@@ -1556,17 +1615,39 @@ const renderFixturesTable = (snapshot) => {
     '</tbody></table></div>';
 };
 
+const renderTaskButtons = (task, includeInspect) => {
+  const buttons = [];
+  if (includeInspect) {
+    buttons.push(
+      '<button class="fixture-action" type="button" data-console-action="inspect-task" data-task-id="' + escapeHtml(task.id) + '" data-tone="neutral">Inspect</button>'
+    );
+  }
+  if (task.status === 'running') {
+    buttons.push(
+      '<button class="fixture-action" type="button" data-task-action="quarantine" data-task-id="' + escapeHtml(task.id) + '" data-tone="exclude">Quarantine</button>'
+    );
+  }
+  if (task.status === 'failed' || task.status === 'quarantined' || task.status === 'cancelled') {
+    buttons.push(
+      '<button class="fixture-action" type="button" data-task-action="requeue" data-task-id="' + escapeHtml(task.id) + '" data-tone="include">Requeue</button>'
+    );
+  }
+  return buttons.join('');
+};
+
 const renderTaskList = (snapshot) => {
   if (!snapshot.tasks || snapshot.tasks.length === 0) {
     return '<div class="empty-state">No tasks available.</div>';
   }
 
   return '<div class="list">' + snapshot.tasks.slice(0, 8).map((task) =>
-    '<article class="list-item">' +
+    '<article class="list-item' + (state.selectedTaskId === task.id ? ' is-selected' : '') + '">' +
       '<strong>' + escapeHtml(task.kind) + '</strong>' +
       '<div class="subtle">' + escapeHtml(task.id) + '</div>' +
       '<div>' + formatBadge(task.status) + '</div>' +
       '<div class="subtle">Priority ' + escapeHtml(task.priority) + ' | attempts ' + escapeHtml(task.attempts) + '</div>' +
+      '<div class="subtle">Scheduled ' + escapeHtml(formatDateTime(task.scheduledFor)) + '</div>' +
+      '<div class="list-actions">' + renderTaskButtons(task, true) + '</div>' +
     '</article>'
   ).join('') + '</div>';
 };
@@ -1577,11 +1658,15 @@ const renderAiRuns = (snapshot) => {
   }
 
   return '<div class="list">' + snapshot.aiRuns.slice(0, 6).map((aiRun) =>
-    '<article class="list-item">' +
+    '<article class="list-item' + (state.selectedAiRunId === aiRun.id ? ' is-selected' : '') + '">' +
       '<strong>' + escapeHtml(aiRun.provider) + ' / ' + escapeHtml(aiRun.model) + '</strong>' +
       '<div>' + formatBadge(aiRun.status) + '</div>' +
+      '<div class="subtle">' + escapeHtml(aiRun.id) + '</div>' +
       '<div class="subtle">Prompt ' + escapeHtml(aiRun.latestPromptVersion || aiRun.promptVersion) + '</div>' +
       '<div class="subtle">Request ' + escapeHtml(aiRun.providerRequestId || 'n/a') + '</div>' +
+      '<div class="list-actions">' +
+        '<button class="fixture-action" type="button" data-console-action="inspect-ai-run" data-ai-run-id="' + escapeHtml(aiRun.id) + '" data-tone="neutral">Inspect</button>' +
+      '</div>' +
     '</article>'
   ).join('') + '</div>';
 };
@@ -1611,6 +1696,101 @@ const renderPanels = (model) => {
   ).join('') + '</div>';
 };
 
+const renderTaskInspector = () => {
+  if (state.taskInspectorError) {
+    return '<div class="empty-state">' + escapeHtml(state.taskInspectorError) + '</div>';
+  }
+
+  if (!state.taskDetail) {
+    return '<div class="empty-state">Select a task to inspect queue state, payload, and runs.</div>';
+  }
+
+  const task = state.taskDetail;
+  const attempts = Array.isArray(task.attempts) ? task.attempts : [];
+  const taskRuns = Array.isArray(state.taskRuns) ? state.taskRuns : [];
+
+  return '<div class="list">' +
+    '<article class="list-item is-selected">' +
+      '<strong>' + escapeHtml(task.kind) + '</strong>' +
+      '<div>' + formatBadge(task.status) + '</div>' +
+      '<div class="subtle">' + escapeHtml(task.id) + '</div>' +
+      '<div class="subtle">Trigger ' + escapeHtml(task.triggerKind || 'n/a') + ' | priority ' + escapeHtml(task.priority) + ' | max attempts ' + escapeHtml(task.maxAttempts) + '</div>' +
+      '<div class="subtle">Scheduled ' + escapeHtml(formatDateTime(task.scheduledFor)) + ' | updated ' + escapeHtml(formatDateTime(task.updatedAt)) + '</div>' +
+      (task.lastErrorMessage ? '<div class="alert-item">' + escapeHtml(task.lastErrorMessage) + '</div>' : '') +
+      '<div class="list-actions">' + renderTaskButtons(task, false) + '</div>' +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Payload</strong>' +
+      renderJsonBlock(task.payload) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Attempts</strong>' +
+      (attempts.length === 0
+        ? '<div class="empty-state">No attempts recorded.</div>'
+        : attempts.map((attempt, index) =>
+            '<div class="panel-line">#' + escapeHtml(index + 1) + ' | started ' + escapeHtml(formatDateTime(attempt.startedAt)) + ' | finished ' + escapeHtml(formatDateTime(attempt.finishedAt)) + (attempt.error ? ' | error ' + escapeHtml(attempt.error) : '') + '</div>'
+          ).join('')) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Task Runs</strong>' +
+      (taskRuns.length === 0
+        ? '<div class="empty-state">No task runs available.</div>'
+        : taskRuns.map((taskRun) =>
+            '<div class="panel-line">#' + escapeHtml(taskRun.attemptNumber) + ' | ' + escapeHtml(taskRun.status) + ' | started ' + escapeHtml(formatDateTime(taskRun.startedAt)) + ' | finished ' + escapeHtml(formatDateTime(taskRun.finishedAt)) + (taskRun.retryScheduledFor ? ' | retry ' + escapeHtml(formatDateTime(taskRun.retryScheduledFor)) : '') + (taskRun.error ? ' | error ' + escapeHtml(taskRun.error) : '') + '</div>'
+          ).join('')) +
+    '</article>' +
+  '</div>';
+};
+
+const renderAiRunInspector = () => {
+  if (state.aiRunInspectorError) {
+    return '<div class="empty-state">' + escapeHtml(state.aiRunInspectorError) + '</div>';
+  }
+
+  if (!state.aiRunDetail) {
+    return '<div class="empty-state">Select an AI run to inspect provider traceability and linked outputs.</div>';
+  }
+
+  const aiRun = state.aiRunDetail;
+  const linkedPredictions = Array.isArray(aiRun.linkedPredictions) ? aiRun.linkedPredictions : [];
+  const linkedParlays = Array.isArray(aiRun.linkedParlays) ? aiRun.linkedParlays : [];
+
+  return '<div class="list">' +
+    '<article class="list-item is-selected">' +
+      '<strong>' + escapeHtml(aiRun.provider) + ' / ' + escapeHtml(aiRun.model) + '</strong>' +
+      '<div>' + formatBadge(aiRun.status) + '</div>' +
+      '<div class="subtle">' + escapeHtml(aiRun.id) + '</div>' +
+      '<div class="subtle">Task ' + escapeHtml(aiRun.task ? aiRun.task.kind + ' / ' + aiRun.task.id : aiRun.taskId) + '</div>' +
+      '<div class="subtle">Prompt ' + escapeHtml(aiRun.latestPromptVersion || aiRun.promptVersion) + ' | request ' + escapeHtml(aiRun.providerRequestId || 'n/a') + '</div>' +
+      '<div class="subtle">Created ' + escapeHtml(formatDateTime(aiRun.createdAt)) + ' | updated ' + escapeHtml(formatDateTime(aiRun.updatedAt)) + '</div>' +
+      (aiRun.error ? '<div class="alert-item">' + escapeHtml(aiRun.error) + '</div>' : '') +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Traceability</strong>' +
+      '<div class="inspector-grid">' +
+        '<section class="panel-card"><h3>Usage</h3>' + renderJsonBlock(aiRun.usage || { note: 'No usage reported' }) + '</section>' +
+        '<section class="panel-card"><h3>Refs</h3>' + renderJsonBlock({ outputRef: aiRun.outputRef || null, fallbackReason: aiRun.fallbackReason || null, degraded: aiRun.degraded || false }) + '</section>' +
+      '</div>' +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Linked Predictions</strong>' +
+      (linkedPredictions.length === 0
+        ? '<div class="empty-state">No linked predictions.</div>'
+        : linkedPredictions.map((prediction) =>
+            '<div class="panel-line">' + escapeHtml(prediction.id) + ' | fixture ' + escapeHtml(prediction.fixtureId) + ' | ' + escapeHtml(prediction.market) + ' ' + escapeHtml(prediction.outcome) + ' | ' + escapeHtml(prediction.status) + ' | confidence ' + escapeHtml(prediction.confidence) + '</div>'
+          ).join('')) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Linked Parlays</strong>' +
+      (linkedParlays.length === 0
+        ? '<div class="empty-state">No linked parlays.</div>'
+        : linkedParlays.map((parlay) =>
+            '<div class="panel-line">' + escapeHtml(parlay.id) + ' | ' + escapeHtml(parlay.status) + ' | payout ' + escapeHtml(parlay.expectedPayout) + ' | legs ' + escapeHtml(parlay.legCount) + '</div>'
+          ).join('')) +
+    '</article>' +
+  '</div>';
+};
+
 const renderDashboard = (payload) => {
   const snapshot = payload.snapshot;
   const model = payload.model;
@@ -1633,6 +1813,10 @@ const renderDashboard = (payload) => {
         '<section class="surface"><div class="surface-header"><h3>AI Runs</h3></div><div class="surface-body">' + renderAiRuns(snapshot) + '</div></section>' +
       '</div>' +
     '</section>' +
+    '<section class="panel-grid">' +
+      '<section class="surface"><div class="surface-header"><h2>Task Inspector</h2><span class="subtle">Queue state, payload, retry and quarantine controls</span></div><div class="surface-body">' + renderTaskInspector() + '</div></section>' +
+      '<section class="surface"><div class="surface-header"><h2>AI Run Inspector</h2><span class="subtle">Provider request ids, prompt versions, linked predictions and parlays</span></div><div class="surface-body">' + renderAiRunInspector() + '</div></section>' +
+    '</section>' +
     '<section class="surface"><div class="surface-header"><h2>Operational Log</h2></div><div class="surface-body">' + renderLogs(model) + '</div></section>' +
     '<section class="surface"><div class="surface-header"><h2>Ops Panels</h2><span class="subtle">Derived from public-api snapshots</span></div><div class="surface-body">' + renderPanels(model) + '</div></section>';
 };
@@ -1642,19 +1826,69 @@ const setStatus = (text, tone) => {
   statusNode.className = 'connection-pill ' + (tone || '');
 };
 
+const resolveSelectedId = (items, selectedId) => {
+  if (selectedId && items.some((item) => item.id === selectedId)) {
+    return selectedId;
+  }
+
+  return items[0] ? items[0].id : null;
+};
+
+const loadTaskInspector = async (taskId) => {
+  state.selectedTaskId = taskId;
+  state.taskDetail = null;
+  state.taskRuns = [];
+  state.taskInspectorError = null;
+  if (!taskId) {
+    return;
+  }
+
+  try {
+    const encodedTaskId = encodeURIComponent(taskId);
+    const [taskDetail, taskRuns] = await Promise.all([
+      requestJson('/api/public/tasks/' + encodedTaskId),
+      requestJson('/api/public/tasks/' + encodedTaskId + '/runs'),
+    ]);
+    state.taskDetail = taskDetail;
+    state.taskRuns = Array.isArray(taskRuns) ? taskRuns : [];
+  } catch (error) {
+    state.taskInspectorError = error.message || 'Unable to load task inspector';
+  }
+};
+
+const loadAiRunInspector = async (aiRunId) => {
+  state.selectedAiRunId = aiRunId;
+  state.aiRunDetail = null;
+  state.aiRunInspectorError = null;
+  if (!aiRunId) {
+    return;
+  }
+
+  try {
+    const encodedAiRunId = encodeURIComponent(aiRunId);
+    state.aiRunDetail = await requestJson('/api/public/ai-runs/' + encodedAiRunId);
+  } catch (error) {
+    state.aiRunInspectorError = error.message || 'Unable to load AI run inspector';
+  }
+};
+
+const syncInspectors = async (payload) => {
+  const nextTaskId = resolveSelectedId(payload.snapshot.tasks || [], state.selectedTaskId);
+  const nextAiRunId = resolveSelectedId(payload.snapshot.aiRuns || [], state.selectedAiRunId);
+  await Promise.all([
+    loadTaskInspector(nextTaskId),
+    loadAiRunInspector(nextAiRunId),
+  ]);
+};
+
 const loadConsole = async () => {
   setStatus('Refreshing...', 'badge-warn');
   refreshButton.disabled = true;
 
   try {
-    const response = await fetch('/api/console', {
-      headers: { accept: 'application/json' },
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.message || 'Unable to load operator console payload');
-    }
-
+    const payload = await requestJson('/api/console');
+    state.payload = payload;
+    await syncInspectors(payload);
     renderDashboard(payload);
     setStatus('Live data connected', 'badge-ok');
   } catch (error) {
@@ -1689,18 +1923,60 @@ const submitFixtureAction = async (fixtureId, action) => {
     path = '/api/public/fixtures/' + encodedFixtureId + '/selection-override/reset';
     body = { reason: window.prompt('Reason to clear override:', 'Clear selection override') || undefined };
   } else {
+    return false;
+  }
+
+  await requestJson(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return true;
+};
+
+const submitTaskAction = async (taskId, action) => {
+  const encodedTaskId = encodeURIComponent(taskId);
+  if (action === 'requeue') {
+    await requestJson('/api/public/tasks/' + encodedTaskId + '/requeue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    return true;
+  }
+
+  if (action === 'quarantine') {
+    const reason = window.prompt('Reason to quarantine task:', 'Quarantined from operator console');
+    if (reason === null) {
+      return false;
+    }
+    await requestJson('/api/public/tasks/' + encodedTaskId + '/quarantine', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    return true;
+  }
+
+  return false;
+};
+
+const selectTask = async (taskId) => {
+  if (!state.payload) {
     return;
   }
 
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.message || 'Fixture action failed');
+  await loadTaskInspector(taskId);
+  renderDashboard(state.payload);
+};
+
+const selectAiRun = async (aiRunId) => {
+  if (!state.payload) {
+    return;
   }
+
+  await loadAiRunInspector(aiRunId);
+  renderDashboard(state.payload);
 };
 
 refreshButton.addEventListener('click', () => {
@@ -1708,23 +1984,46 @@ refreshButton.addEventListener('click', () => {
 });
 
 document.addEventListener('click', async (event) => {
-  const target = event.target instanceof HTMLElement ? event.target.closest('[data-fixture-action]') : null;
+  const target = event.target instanceof HTMLElement
+    ? event.target.closest('[data-fixture-action], [data-console-action], [data-task-action]')
+    : null;
   if (!(target instanceof HTMLElement)) {
-    return;
-  }
-
-  const fixtureId = target.dataset.fixtureId;
-  const action = target.dataset.fixtureAction;
-  if (!fixtureId || !action) {
     return;
   }
 
   target.setAttribute('disabled', 'true');
   try {
-    await submitFixtureAction(fixtureId, action);
-    await loadConsole();
+    const fixtureId = target.dataset.fixtureId;
+    const fixtureAction = target.dataset.fixtureAction;
+    if (fixtureId && fixtureAction) {
+      const applied = await submitFixtureAction(fixtureId, fixtureAction);
+      if (applied) {
+        await loadConsole();
+      }
+      return;
+    }
+
+    const consoleAction = target.dataset.consoleAction;
+    if (consoleAction === 'inspect-task' && target.dataset.taskId) {
+      await selectTask(target.dataset.taskId);
+      return;
+    }
+
+    if (consoleAction === 'inspect-ai-run' && target.dataset.aiRunId) {
+      await selectAiRun(target.dataset.aiRunId);
+      return;
+    }
+
+    const taskAction = target.dataset.taskAction;
+    const taskId = target.dataset.taskId;
+    if (taskAction && taskId) {
+      const applied = await submitTaskAction(taskId, taskAction);
+      if (applied) {
+        await loadConsole();
+      }
+    }
   } catch (error) {
-    window.alert(error.message || 'Unable to apply fixture action');
+    window.alert(error.message || 'Unable to apply operator action');
   } finally {
     target.removeAttribute('disabled');
   }

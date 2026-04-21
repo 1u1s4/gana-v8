@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && tsc -p tsconfig.build.json",
+    "certify": "pnpm run build && node dist/index.js --certify",
     "dev": "node ../../scripts/workspace-dev.mjs sandbox-runner",
     "lint": "node ../../scripts/workspace-lint.mjs .",
     "test": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && tsx --test tests/**/*.test.ts",

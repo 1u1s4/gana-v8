@@ -143,6 +143,9 @@ importers:
       '@gana-v8/policy-engine':
         specifier: workspace:*
         version: link:../../packages/policy-engine
+      '@gana-v8/queue-adapters':
+        specifier: workspace:*
+        version: link:../../packages/queue-adapters
       '@gana-v8/storage-adapters':
         specifier: workspace:*
         version: link:../../packages/storage-adapters

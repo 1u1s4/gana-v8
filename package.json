@@ -21,6 +21,8 @@
     "test": "turbo run test",
     "test:e2e": "pnpm test:e2e:hermes-smoke",
     "test:e2e:hermes-smoke": "node tests/e2e/hermes-smoke.mjs",
+    "test:sandbox": "pnpm test:sandbox:certification",
+    "test:sandbox:certification": "node tests/sandbox/certification.mjs",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",

@@ -16,6 +16,7 @@ import {
   createTeamCoveragePolicy,
   createValidation,
 } from "@gana-v8/domain-core";
+import { createInMemoryTaskQueueAdapter } from "@gana-v8/queue-adapters";
 import { createInMemoryUnitOfWork, createPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
@@ -1248,6 +1249,135 @@ test("public api server rejects fixture ops writes without workflow override cap
       body: JSON.stringify({ status: "selected", selectedBy: "operator" }),
     });
     assert.equal(operatorResponse.status, 200);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api server can quarantine running tasks and requeue them through queue actions", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const queueAdapter = createInMemoryTaskQueueAdapter(unitOfWork);
+  const task = createTask({
+    id: "task-server-queue-1",
+    kind: "research",
+    status: "queued",
+    priority: 74,
+    payload: { fixtureId: "fx-server-queue-1" },
+    scheduledFor: "2026-04-22T00:30:00.000Z",
+    createdAt: "2026-04-22T00:30:00.000Z",
+    updatedAt: "2026-04-22T00:30:00.000Z",
+  });
+
+  await unitOfWork.tasks.save(task);
+  const claim = await queueAdapter.claim(task.id, new Date("2026-04-22T00:31:00.000Z"));
+  assert.ok(claim);
+
+  const server = createPublicApiServer({ unitOfWork });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const quarantineResponse = await fetch(`${baseUrl}/tasks/${task.id}/quarantine`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        reason: "Manual operator stop",
+      }),
+    });
+    assert.equal(quarantineResponse.status, 200);
+    const quarantineJson = (await quarantineResponse.json()) as {
+      task: { status: string };
+      taskRun: { id: string; status: string; error?: string };
+    };
+    assert.equal(quarantineJson.task.status, "quarantined");
+    assert.equal(quarantineJson.taskRun.id, claim.taskRun.id);
+    assert.equal(quarantineJson.taskRun.status, "failed");
+    assert.equal(quarantineJson.taskRun.error, "Manual operator stop");
+
+    const requeueResponse = await fetch(`${baseUrl}/tasks/${task.id}/requeue`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(requeueResponse.status, 200);
+    assert.equal(((await requeueResponse.json()) as { status: string }).status, "queued");
+
+    const taskRunsResponse = await fetch(`${baseUrl}/tasks/${task.id}/runs`);
+    assert.equal(taskRunsResponse.status, 200);
+    const taskRunsJson = (await taskRunsResponse.json()) as Array<{ id: string; status: string; error?: string }>;
+    assert.equal(taskRunsJson[0]?.id, claim.taskRun.id);
+    assert.equal(taskRunsJson[0]?.status, "failed");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api server restricts queue actions to actors with queue operate capability", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await unitOfWork.tasks.save(
+    createTask({
+      id: "task-server-authz-queue-1",
+      kind: "prediction",
+      status: "failed",
+      priority: 90,
+      payload: { fixtureId: "fx-server-authz-queue-1" },
+      attempts: [
+        {
+          startedAt: "2026-04-22T01:00:00.000Z",
+          finishedAt: "2026-04-22T01:01:00.000Z",
+          error: "provider timeout",
+        },
+      ],
+      lastErrorMessage: "provider timeout",
+      scheduledFor: "2026-04-22T01:00:00.000Z",
+      createdAt: "2026-04-22T01:00:00.000Z",
+      updatedAt: "2026-04-22T01:01:00.000Z",
+    }),
+  );
+
+  const authentication = createPublicApiTokenAuthentication({
+    viewerToken: "viewer-token",
+    automationToken: "automation-token",
+    operatorToken: "operator-token",
+  });
+  const server = createPublicApiServer({
+    unitOfWork,
+    ...(authentication ? { auth: authentication } : {}),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const automationResponse = await fetch(`${baseUrl}/tasks/task-server-authz-queue-1/requeue`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer automation-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    assert.equal(automationResponse.status, 403);
+
+    const operatorResponse = await fetch(`${baseUrl}/tasks/task-server-authz-queue-1/requeue`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer operator-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    assert.equal(operatorResponse.status, 200);
+    assert.equal(((await operatorResponse.json()) as { status: string }).status, "queued");
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

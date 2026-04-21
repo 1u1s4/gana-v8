@@ -52,12 +52,20 @@ import {
 import {
   createAuthorizationActor,
   hasCapability,
+  type AuthorizationCapability,
   type AuthorizationActor,
 } from "@gana-v8/authz";
+import {
+  createInMemoryTaskQueueAdapter,
+  createPrismaTaskQueueAdapter,
+  type PrismaQueueClientLike,
+  type TaskQueueAdapter,
+} from "@gana-v8/queue-adapters";
 import {
   createPrismaClient,
   createPrismaUnitOfWork,
   createVerifiedPrismaClient,
+  type PrismaClientLike,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
 
@@ -297,6 +305,7 @@ export interface PublicApiHandlers {
 export interface PublicApiHttpOptions {
   readonly snapshot?: OperationSnapshot;
   readonly unitOfWork?: StorageUnitOfWork;
+  readonly queueAdapter?: TaskQueueAdapter;
   readonly auth?: PublicApiAuthenticationOptions;
 }
 
@@ -319,6 +328,16 @@ export interface FixtureSelectionOverrideActionInput
 
 export interface FixtureWorkflowResetActionInput {
   readonly reason?: string;
+  readonly occurredAt?: string;
+}
+
+export interface QueueTaskRequeueActionInput {
+  readonly occurredAt?: string;
+}
+
+export interface QueueTaskQuarantineActionInput {
+  readonly taskRunId?: string;
+  readonly reason: string;
   readonly occurredAt?: string;
 }
 
@@ -434,6 +453,7 @@ export const workspaceInfo = {
     { name: "@gana-v8/contract-schemas", category: "workspace" },
     { name: "@gana-v8/domain-core", category: "workspace" },
     { name: "@gana-v8/observability", category: "workspace" },
+    { name: "@gana-v8/queue-adapters", category: "workspace" },
     { name: "@gana-v8/storage-adapters", category: "workspace" }
   ],
 };
@@ -1001,9 +1021,59 @@ export const loadPublicApiTokenAuthenticationFromEnv = (
   });
 };
 
+const getPublicApiWriteCapability = (requestPath: string): AuthorizationCapability => {
+  const normalizedPath = normalizeRequestPath(requestPath);
+  if (matchTaskRequeuePath(normalizedPath) || matchTaskQuarantinePath(normalizedPath)) {
+    return "queue:operate";
+  }
+
+  return "workflow:override";
+};
+
+const createPublicApiForbiddenResponse = (
+  actor: AuthorizationActor,
+  capability: AuthorizationCapability,
+): PublicApiAuthorizationOutcome => ({
+  denied: {
+    status: 403,
+    body: {
+      error: "forbidden",
+      message: `Actor ${actor.id} lacks capability ${capability}`,
+    },
+  },
+});
+
+const isPrismaUnitOfWorkLike = (
+  unitOfWork: StorageUnitOfWork,
+): unitOfWork is StorageUnitOfWork & { readonly client: PrismaClientLike & PrismaQueueClientLike } => {
+  const candidate = unitOfWork as StorageUnitOfWork & { readonly client?: PrismaClientLike & PrismaQueueClientLike };
+  return typeof candidate.client?.$transaction === "function";
+};
+
+const resolvePublicApiQueueAdapter = (
+  options: Pick<PublicApiHttpOptions, "queueAdapter" | "unitOfWork">,
+): TaskQueueAdapter | undefined => {
+  if (options.queueAdapter) {
+    return options.queueAdapter;
+  }
+
+  if (!options.unitOfWork) {
+    return undefined;
+  }
+
+  if (isPrismaUnitOfWorkLike(options.unitOfWork)) {
+    return createPrismaTaskQueueAdapter(options.unitOfWork.client, options.unitOfWork, {
+      createTransactionalUnitOfWork: (client) => createPrismaUnitOfWork(client as PrismaClientLike),
+    });
+  }
+
+  return createInMemoryTaskQueueAdapter(options.unitOfWork);
+};
+
 export const authorizePublicApiRequest = (
   request: IncomingMessage,
   method: string,
+  requestPath: string,
   authentication?: PublicApiAuthenticationOptions,
 ): PublicApiAuthorizationOutcome => {
   if (!authentication || authentication.credentials.length === 0) {
@@ -1021,16 +1091,11 @@ export const authorizePublicApiRequest = (
     return createPublicApiUnauthorizedResponse(realm, "The provided token is not authorized for this public API.");
   }
 
-  if (method !== "GET" && method !== "HEAD" && !hasCapability(credential.actor, "workflow:override")) {
-    return {
-      denied: {
-        status: 403,
-        body: {
-          error: "forbidden",
-          message: `Actor ${credential.actor.id} lacks capability workflow:override`,
-        },
-      },
-    };
+  if (method !== "GET" && method !== "HEAD") {
+    const requiredCapability = getPublicApiWriteCapability(requestPath);
+    if (!hasCapability(credential.actor, requiredCapability)) {
+      return createPublicApiForbiddenResponse(credential.actor, requiredCapability);
+    }
   }
 
   return { actor: credential.actor };
@@ -1042,11 +1107,13 @@ export function createPublicApiServer(
   const staticHandlers = options.unitOfWork
     ? null
     : createPublicApiHandlers(options.snapshot ?? createOperationSnapshot());
+  const queueAdapter = resolvePublicApiQueueAdapter(options);
 
   return createServer((request, response) => {
       void handlePublicApiRequest(request, response, {
         ...(staticHandlers ? { handlers: staticHandlers } : {}),
         ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
+        ...(queueAdapter ? { queueAdapter } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
       }).catch((error: unknown) => {
         writeJsonResponse(response, 500, {
@@ -1063,12 +1130,14 @@ export async function handlePublicApiRequest(
   options: {
     readonly handlers?: PublicApiHandlers;
     readonly unitOfWork?: StorageUnitOfWork;
+    readonly queueAdapter?: TaskQueueAdapter;
     readonly auth?: PublicApiAuthenticationOptions;
   } = {},
 ): Promise<void> {
   const method = request.method ?? "GET";
   const requestPath = request.url ?? "/";
-  const authorization = authorizePublicApiRequest(request, method, options.auth);
+  const normalizedRequestPath = normalizeRequestPath(requestPath);
+  const authorization = authorizePublicApiRequest(request, method, normalizedRequestPath, options.auth);
 
   if (authorization.denied) {
     writeJsonResponse(response, authorization.denied.status, authorization.denied.body, authorization.headers);
@@ -1085,7 +1154,109 @@ export async function handlePublicApiRequest(
   }
 
   if (method === "POST" && options.unitOfWork) {
-    const manualSelectionResetPath = matchFixtureManualSelectionResetPath(normalizeRequestPath(requestPath));
+    const taskRequeuePath = matchTaskRequeuePath(normalizedRequestPath);
+    if (taskRequeuePath) {
+      if (!options.queueAdapter) {
+        writeJsonResponse(response, 501, {
+          error: "queue_unavailable",
+          message: "Task queue operations require a configured queue adapter.",
+        });
+        return;
+      }
+
+      const body = await readJsonRequestBody<QueueTaskRequeueActionInput>(request);
+      const occurredAt = parseQueueActionOccurredAt(body.occurredAt);
+      if (occurredAt === null) {
+        writeJsonResponse(response, 400, {
+          error: "invalid_request_body",
+          message: "Queue task actions require a valid ISO timestamp when occurredAt is provided.",
+        });
+        return;
+      }
+      const task = await options.unitOfWork.tasks.getById(taskRequeuePath.taskId);
+      if (!task) {
+        writeJsonResponse(response, 404, {
+          error: "resource_not_found",
+          resource: "task",
+          resourceId: taskRequeuePath.taskId,
+        });
+        return;
+      }
+
+      try {
+        const requeuedTask = await options.queueAdapter.requeue(taskRequeuePath.taskId, occurredAt);
+        writeJsonResponse(response, 200, requeuedTask);
+      } catch (error) {
+        writeQueueActionError(response, error);
+      }
+      return;
+    }
+
+    const taskQuarantinePath = matchTaskQuarantinePath(normalizedRequestPath);
+    if (taskQuarantinePath) {
+      if (!options.queueAdapter) {
+        writeJsonResponse(response, 501, {
+          error: "queue_unavailable",
+          message: "Task queue operations require a configured queue adapter.",
+        });
+        return;
+      }
+
+      const body = await readJsonRequestBody<QueueTaskQuarantineActionInput>(request);
+      if (typeof body.reason !== "string" || body.reason.trim().length === 0) {
+        writeJsonResponse(response, 400, {
+          error: "invalid_request_body",
+          message: "Task quarantine requires a non-empty reason.",
+        });
+        return;
+      }
+
+      const occurredAt = parseQueueActionOccurredAt(body.occurredAt);
+      if (occurredAt === null) {
+        writeJsonResponse(response, 400, {
+          error: "invalid_request_body",
+          message: "Queue task actions require a valid ISO timestamp when occurredAt is provided.",
+        });
+        return;
+      }
+      const task = await options.unitOfWork.tasks.getById(taskQuarantinePath.taskId);
+      if (!task) {
+        writeJsonResponse(response, 404, {
+          error: "resource_not_found",
+          resource: "task",
+          resourceId: taskQuarantinePath.taskId,
+        });
+        return;
+      }
+
+      const taskRunId = await resolveQueueActionTaskRunId(
+        options.unitOfWork,
+        taskQuarantinePath.taskId,
+        body.taskRunId,
+      );
+      if (!taskRunId) {
+        writeJsonResponse(response, 409, {
+          error: "task_run_not_available",
+          message: `Task ${taskQuarantinePath.taskId} has no running task run to quarantine.`,
+        });
+        return;
+      }
+
+      try {
+        const quarantinedClaim = await options.queueAdapter.quarantine(
+          taskQuarantinePath.taskId,
+          taskRunId,
+          body.reason.trim(),
+          occurredAt,
+        );
+        writeJsonResponse(response, 200, quarantinedClaim);
+      } catch (error) {
+        writeQueueActionError(response, error);
+      }
+      return;
+    }
+
+    const manualSelectionResetPath = matchFixtureManualSelectionResetPath(normalizedRequestPath);
     if (manualSelectionResetPath) {
       const body = await readJsonRequestBody<FixtureWorkflowResetActionInput>(request);
       const workflow = await applyFixtureManualSelection(options.unitOfWork, manualSelectionResetPath.fixtureId, {
@@ -1105,7 +1276,7 @@ export async function handlePublicApiRequest(
       return;
     }
 
-    const manualSelectionPath = matchFixtureManualSelectionPath(normalizeRequestPath(requestPath));
+    const manualSelectionPath = matchFixtureManualSelectionPath(normalizedRequestPath);
     if (manualSelectionPath) {
       const body = await readJsonRequestBody<FixtureManualSelectionActionInput>(request);
       const workflow = await applyFixtureManualSelection(options.unitOfWork, manualSelectionPath.fixtureId, body);
@@ -1113,7 +1284,7 @@ export async function handlePublicApiRequest(
       return;
     }
 
-    const selectionOverrideResetPath = matchFixtureSelectionOverrideResetPath(normalizeRequestPath(requestPath));
+    const selectionOverrideResetPath = matchFixtureSelectionOverrideResetPath(normalizedRequestPath);
     if (selectionOverrideResetPath) {
       const body = await readJsonRequestBody<FixtureWorkflowResetActionInput>(request);
       const workflow = await applyFixtureSelectionOverride(options.unitOfWork, selectionOverrideResetPath.fixtureId, {
@@ -1125,7 +1296,7 @@ export async function handlePublicApiRequest(
       return;
     }
 
-    const selectionOverridePath = matchFixtureSelectionOverridePath(normalizeRequestPath(requestPath));
+    const selectionOverridePath = matchFixtureSelectionOverridePath(normalizedRequestPath);
     if (selectionOverridePath) {
       const body = await readJsonRequestBody<FixtureSelectionOverrideActionInput>(request);
       const workflow = await applyFixtureSelectionOverride(options.unitOfWork, selectionOverridePath.fixtureId, body);
@@ -1140,6 +1311,54 @@ export async function handlePublicApiRequest(
     allowedMethods: options.unitOfWork ? ["GET", "POST"] : ["GET"],
   });
 }
+
+const parseQueueActionOccurredAt = (occurredAt?: string): Date | null | undefined => {
+  if (occurredAt === undefined) {
+    return undefined;
+  }
+
+  const parsedAt = new Date(occurredAt);
+  return Number.isNaN(parsedAt.valueOf()) ? null : parsedAt;
+};
+
+const resolveQueueActionTaskRunId = async (
+  unitOfWork: StorageUnitOfWork,
+  taskId: string,
+  explicitTaskRunId?: string,
+): Promise<string | null> => {
+  if (explicitTaskRunId) {
+    const taskRun = await unitOfWork.taskRuns.getById(explicitTaskRunId);
+    return taskRun && taskRun.taskId === taskId && taskRun.status === "running" ? taskRun.id : null;
+  }
+
+  return (
+    sortByIsoDescending(
+      await unitOfWork.taskRuns.findByTaskId(taskId),
+      (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
+    ).find((taskRun) => taskRun.status === "running")?.id ?? null
+  );
+};
+
+const writeQueueActionError = (
+  response: ServerResponse,
+  error: unknown,
+): void => {
+  const message = error instanceof Error ? error.message : "Unexpected queue action error";
+  const normalizedMessage = message.toLowerCase();
+  const status =
+    normalizedMessage.includes("was not found")
+      ? 404
+      : normalizedMessage.includes("cannot be requeued") ||
+          normalizedMessage.includes("is not running") ||
+          normalizedMessage.includes("does not belong to task")
+        ? 409
+        : 500;
+
+  writeJsonResponse(response, status, {
+    error: status === 500 ? "internal_error" : "queue_action_failed",
+    message,
+  });
+};
 
 export interface StartPublicApiServerOptions extends PublicApiHttpOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -1175,6 +1394,7 @@ export const startPublicApiServer = async (
       : prismaClient
         ? { unitOfWork: createPrismaUnitOfWork(prismaClient) }
         : {}),
+    ...(options.queueAdapter ? { queueAdapter: options.queueAdapter } : {}),
     ...(authentication ? { auth: authentication } : {}),
   });
 
@@ -2473,6 +2693,24 @@ function matchFixtureDetailPath(requestPath: string): { fixtureId: string } | nu
 
 function matchTaskRunsByTaskPath(requestPath: string): { taskId: string } | null {
   const match = requestPath.match(/^\/tasks\/([^/]+)\/runs$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { taskId: decodeURIComponent(match[1]) };
+}
+
+function matchTaskRequeuePath(requestPath: string): { taskId: string } | null {
+  const match = requestPath.match(/^\/tasks\/([^/]+)\/requeue$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { taskId: decodeURIComponent(match[1]) };
+}
+
+function matchTaskQuarantinePath(requestPath: string): { taskId: string } | null {
+  const match = requestPath.match(/^\/tasks\/([^/]+)\/quarantine$/);
   if (!match?.[1]) {
     return null;
   }

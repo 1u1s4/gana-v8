@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createFixture } from "@gana-v8/domain-core";
+import { createAiRun, createFixture, createTask, createTaskRun } from "@gana-v8/domain-core";
 import {
   createPublicApiServer,
   createPublicApiTokenAuthentication,
@@ -595,6 +595,53 @@ test("operator console web server serves dashboard assets and proxies fixture ac
   });
 
   await unitOfWork.fixtures.save(fixture);
+  await unitOfWork.tasks.save(
+    createTask({
+      id: "task:web-console:1",
+      kind: "research",
+      status: "failed",
+      priority: 70,
+      payload: { fixtureId: fixture.id },
+      attempts: [
+        {
+          startedAt: "2026-04-22T00:40:00.000Z",
+          finishedAt: "2026-04-22T00:41:00.000Z",
+          error: "provider timeout",
+        },
+      ],
+      lastErrorMessage: "provider timeout",
+      scheduledFor: "2026-04-22T00:40:00.000Z",
+      createdAt: "2026-04-22T00:40:00.000Z",
+      updatedAt: "2026-04-22T00:41:00.000Z",
+    }),
+  );
+  await unitOfWork.taskRuns.save(
+    createTaskRun({
+      id: "task:web-console:1:attempt:1",
+      taskId: "task:web-console:1",
+      attemptNumber: 1,
+      status: "failed",
+      startedAt: "2026-04-22T00:40:00.000Z",
+      finishedAt: "2026-04-22T00:41:00.000Z",
+      error: "provider timeout",
+      createdAt: "2026-04-22T00:40:00.000Z",
+      updatedAt: "2026-04-22T00:41:00.000Z",
+    }),
+  );
+  await unitOfWork.aiRuns.save(
+    createAiRun({
+      id: "airun:web-console:1",
+      taskId: "task:web-console:1",
+      provider: "groq",
+      model: "openai/gpt-oss-120b",
+      promptVersion: "research-v2",
+      status: "completed",
+      providerRequestId: "req-web-console-1",
+      outputRef: "memory://ai-runs/airun:web-console:1.json",
+      createdAt: "2026-04-22T00:40:20.000Z",
+      updatedAt: "2026-04-22T00:40:30.000Z",
+    }),
+  );
   const authentication = createPublicApiTokenAuthentication({
     viewerToken: "viewer-token",
     operatorToken: "operator-token",
@@ -622,6 +669,12 @@ test("operator console web server serves dashboard assets and proxies fixture ac
     assert.equal(htmlResponse.status, 200);
     assert.match(await htmlResponse.text(), /Harness Control Surface/);
 
+    const appJsResponse = await fetch(`${baseUrl}/app.js`);
+    assert.equal(appJsResponse.status, 200);
+    const appJs = await appJsResponse.text();
+    assert.match(appJs, /Task Inspector/);
+    assert.match(appJs, /AI Run Inspector/);
+
     const payloadResponse = await fetch(`${baseUrl}/api/console`);
     assert.equal(payloadResponse.status, 200);
     const payloadJson = (await payloadResponse.json()) as {
@@ -630,6 +683,14 @@ test("operator console web server serves dashboard assets and proxies fixture ac
     };
     assert.equal(payloadJson.snapshot.fixtures[0]?.id, fixture.id);
     assert.ok(payloadJson.model.panels.some((panel) => panel.title === "Fixture ops"));
+
+    const aiRunResponse = await fetch(`${baseUrl}/api/public/ai-runs/${encodeURIComponent("airun:web-console:1")}`);
+    assert.equal(aiRunResponse.status, 200);
+    assert.equal(((await aiRunResponse.json()) as { id: string }).id, "airun:web-console:1");
+
+    const taskRunsResponse = await fetch(`${baseUrl}/api/public/tasks/${encodeURIComponent("task:web-console:1")}/runs`);
+    assert.equal(taskRunsResponse.status, 200);
+    assert.equal(((await taskRunsResponse.json()) as Array<{ id: string }>)[0]?.id, "task:web-console:1:attempt:1");
 
     const actionResponse = await fetch(`${baseUrl}/api/public/fixtures/${encodeURIComponent(fixture.id)}/manual-selection`, {
       method: "POST",
@@ -649,6 +710,14 @@ test("operator console web server serves dashboard assets and proxies fixture ac
     };
     assert.equal(fixtureOpsJson.workflow?.manualSelectionStatus, "selected");
     assert.equal(fixtureOpsJson.workflow?.manualSelectionBy, "web-console");
+
+    const queueActionResponse = await fetch(`${baseUrl}/api/public/tasks/${encodeURIComponent("task:web-console:1")}/requeue`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(queueActionResponse.status, 200);
+    assert.equal(((await queueActionResponse.json()) as { status: string }).status, "queued");
   } finally {
     await new Promise<void>((resolve, reject) =>
       operatorConsoleServer.close((error) => (error ? reject(error) : resolve())),

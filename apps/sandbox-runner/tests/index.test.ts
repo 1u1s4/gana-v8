@@ -1,14 +1,23 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
+  certifySandboxRun,
+  createSandboxGoldenSnapshot,
+  diffSandboxGoldenSnapshot,
   compareSandboxReleases,
   materializeSandboxRun,
   parseSandboxRunnerArgs,
+  parseSandboxCertificationArgs,
   runSandboxCli,
+  runSandboxCertificationCli,
   runSandboxScenario,
+  writeSandboxGoldenSnapshot,
 } from "../src/index.ts";
 
 test("sandbox runner emits smoke summary with dry-run safety guarantees", () => {
@@ -155,4 +164,154 @@ test("sandbox runner compares releases reproducibly for the same pack", () => {
   assert.equal(comparison.changed, false);
   assert.equal(comparison.fingerprintChanged, false);
   assert.deepEqual(comparison.changedFixtureIds, []);
+});
+
+test("sandbox runner creates stable golden snapshots and empty diffs for the same scenario", () => {
+  const summary = runSandboxScenario({
+    mode: "smoke",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    gitSha: "abcdef1234567890",
+    now: new Date("2026-08-16T20:00:00.000Z"),
+  });
+  const baseline = createSandboxGoldenSnapshot(summary);
+  const candidate = createSandboxGoldenSnapshot(summary);
+  const diff = diffSandboxGoldenSnapshot(baseline, candidate);
+
+  assert.equal(baseline.schemaVersion, "sandbox-golden-v1");
+  assert.equal(diff.changed, false);
+  assert.equal(diff.entryCount, 0);
+});
+
+test("sandbox runner certification detects golden drift and writes evidence artifacts", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "gana-v8-sandbox-cert-"));
+  const goldenPath = join(tempRoot, "golden.json");
+  const artifactPath = join(tempRoot, "evidence.json");
+
+  await writeSandboxGoldenSnapshot(goldenPath, {
+    schemaVersion: "sandbox-golden-v1",
+    mode: "smoke",
+    fixturePackId: "football-dual-smoke",
+    profileName: "ci-smoke",
+    assertions: ["wrong-assertion"],
+    providerModes: { fixtures_api: "replay" },
+    stats: {
+      fixtureCount: 99,
+      completedFixtures: 0,
+      replayEventCount: 0,
+      replayChannels: [],
+      cronJobsValidated: 0,
+    },
+    clock: {
+      mode: "virtual",
+      startAt: "2026-01-01T00:00:00.000Z",
+      endAt: "2026-01-01T00:00:00.000Z",
+      tickCount: 0,
+    },
+    replayTimeline: [],
+    golden: {
+      packId: "football-dual-smoke",
+      version: "bad",
+      fingerprint: "drifted",
+    },
+    comparison: {
+      baselinePackId: "football-dual-smoke",
+      candidatePackId: "football-dual-smoke",
+      changed: true,
+      fixtureDelta: 1,
+      replayEventDelta: 1,
+      changedFixtureIds: ["bad-fixture"],
+    },
+    safety: {
+      publishEnabled: false,
+      allowedHosts: [],
+      cronDryRunOnly: true,
+    },
+  });
+
+  const result = await certifySandboxRun({
+    mode: "smoke",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    gitSha: "abcdef1234567890",
+    now: new Date("2026-08-16T20:00:00.000Z"),
+    goldenPath,
+    artifactPath,
+  });
+
+  assert.equal(result.status, "failed");
+  assert.ok(result.diff.entryCount > 0);
+  assert.equal(typeof result.artifactPath, "string");
+  const artifact = JSON.parse(await readFile(artifactPath, "utf8")) as {
+    schemaVersion: string;
+    summary: { fixturePackId: string };
+  };
+  assert.equal(artifact.schemaVersion, "sandbox-certification-v1");
+  assert.equal(artifact.summary.fixturePackId, "football-dual-smoke");
+});
+
+test("sandbox runner certification cli parses golden and artifact flags", () => {
+  const parsed = parseSandboxCertificationArgs([
+    "--certify",
+    "--mode",
+    "replay",
+    "--profile",
+    "ci-regression",
+    "--pack",
+    "football-replay-late-swing",
+    "--git-sha",
+    "1234567890abcdef",
+    "--golden",
+    "/tmp/golden.json",
+    "--artifact",
+    "/tmp/evidence.json",
+  ]);
+
+  assert.equal(parsed.mode, "replay");
+  assert.equal(parsed.profileName, "ci-regression");
+  assert.equal(parsed.goldenPath, "/tmp/golden.json");
+  assert.equal(parsed.artifactPath, "/tmp/evidence.json");
+});
+
+test("sandbox runner certification cli renders a passed certification payload", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "gana-v8-sandbox-cert-cli-"));
+  const goldenPath = join(tempRoot, "golden.json");
+  const artifactPath = join(tempRoot, "evidence.json");
+  const summary = runSandboxScenario({
+    mode: "smoke",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    gitSha: "abcdef1234567890",
+    now: new Date("2026-08-16T20:00:00.000Z"),
+  });
+
+  await writeSandboxGoldenSnapshot(goldenPath, createSandboxGoldenSnapshot(summary));
+
+  const rendered = JSON.parse(
+    await runSandboxCertificationCli([
+      "--certify",
+      "--mode",
+      "smoke",
+      "--profile",
+      "ci-smoke",
+      "--pack",
+      "football-dual-smoke",
+      "--git-sha",
+      "abcdef1234567890",
+      "--now",
+      "2026-08-16T20:00:00.000Z",
+      "--golden",
+      goldenPath,
+      "--artifact",
+      artifactPath,
+    ]),
+  ) as {
+    status: string;
+    diff: { entryCount: number };
+    evidence: { goldenSnapshot: { fixturePackId: string } };
+  };
+
+  assert.equal(rendered.status, "passed");
+  assert.equal(rendered.diff.entryCount, 0);
+  assert.equal(rendered.evidence.goldenSnapshot.fixturePackId, "football-dual-smoke");
 });
