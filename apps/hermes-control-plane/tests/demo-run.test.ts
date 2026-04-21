@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createAiRun,
   createDailyAutomationPolicy,
   createFixture,
   createFixtureWorkflow,
   createLeagueCoveragePolicy,
+  createPrediction,
+  createTask,
   createTaskRun,
   createTeamCoveragePolicy,
 } from "@gana-v8/domain-core";
@@ -962,9 +965,9 @@ test("enqueuePredictionForEligibleFixtures applies coverage watchlists and block
   }
 });
 
-test("runAutomationCycle processes scoring tasks, builds a parlay, and executes validation worker", async () => {
+test("runAutomationCycle enqueues scoring tasks, persists predictions, publishes a parlay, and executes validation", async () => {
   const databaseUrl = process.env.DATABASE_URL!;
-  const prefix = `hac${Date.now().toString(36)}`;
+  const prefix = `har${Date.now().toString(36)}`;
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
@@ -1014,6 +1017,168 @@ test("runAutomationCycle processes scoring tasks, builds a parlay, and executes 
       await prisma.$disconnect();
     }
   } finally {
+    await cleanupAutomationArtifacts(databaseUrl, prefix);
+  }
+});
+
+test("runAutomationCycle scopes publisher selection to predictions from the current automation cycle only", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prefix = `hars${Date.now().toString(36)}`;
+  const historicalPrefix = `${prefix}old`;
+
+  await cleanupAutomationArtifacts(databaseUrl, prefix);
+  await cleanupAutomationArtifacts(databaseUrl, historicalPrefix);
+
+  try {
+    const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
+      competition: "Premier League",
+      providerLeagueId: "39",
+      homeTeam: "Liverpool",
+      providerHomeTeamId: "40",
+      homePrice: 1.85,
+      drawPrice: 3.7,
+      awayPrice: 4.6,
+    });
+    const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
+      competition: "Premier League",
+      providerLeagueId: "39",
+      homePrice: 1.92,
+      drawPrice: 3.5,
+      awayPrice: 4.1,
+    });
+    const blockedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "3", {
+      competition: "Premier League",
+      providerLeagueId: "39",
+      homePrice: 1.12,
+      drawPrice: 7.1,
+      awayPrice: 16.5,
+    });
+    const historicalFixture = await createAutomationFixtureWithOdds(databaseUrl, historicalPrefix, "1", {
+      competition: "Premier League",
+      providerLeagueId: "39",
+      homePrice: 2.5,
+      drawPrice: 3.4,
+      awayPrice: 2.8,
+    });
+
+    const prisma = createPrismaClient(databaseUrl);
+    const unitOfWork = createPrismaUnitOfWork(prisma);
+    try {
+      await unitOfWork.leagueCoveragePolicies.save(
+        createLeagueCoveragePolicy({
+          id: `${prefix}-league-policy`,
+          provider: "api-football",
+          leagueKey: "39",
+          leagueName: "Premier League",
+          season: 2099,
+          enabled: true,
+          alwaysOn: true,
+          priority: 90,
+          marketsAllowed: ["moneyline"],
+        }),
+      );
+      await unitOfWork.teamCoveragePolicies.save(
+        createTeamCoveragePolicy({
+          id: `${prefix}-team-policy`,
+          provider: "api-football",
+          teamKey: "40",
+          teamName: "Liverpool",
+          enabled: true,
+          alwaysTrack: true,
+          priority: 95,
+          followHome: true,
+          followAway: true,
+          forceResearch: true,
+        }),
+      );
+      await unitOfWork.dailyAutomationPolicies.save(
+        createDailyAutomationPolicy({
+          id: `${prefix}-daily-policy`,
+          policyName: `${prefix}-default-daily-policy`,
+          enabled: true,
+          timezone: "America/Guatemala",
+          minAllowedOdd: 1.2,
+          defaultMaxFixturesPerRun: 30,
+          defaultLookaheadHours: 24,
+          defaultLookbackHours: 6,
+          requireTrackedLeagueOrTeam: true,
+          allowManualInclusionBypass: true,
+        }),
+      );
+
+      const historicalTask = await unitOfWork.tasks.save(
+        createTask({
+          id: `${historicalPrefix}-task-prediction`,
+          kind: "prediction",
+          status: "succeeded",
+          priority: 99,
+          payload: {
+            fixtureId: historicalFixture.fixtureId,
+            source: "scoring-worker",
+            step: "score",
+          },
+          scheduledFor: "2099-01-01T09:30:00.000Z",
+          createdAt: "2099-01-01T09:30:00.000Z",
+          updatedAt: "2099-01-01T09:31:00.000Z",
+        }),
+      );
+      const historicalAiRun = await unitOfWork.aiRuns.save(
+        createAiRun({
+          id: `${historicalPrefix}-airun`,
+          taskId: historicalTask.id,
+          provider: "internal",
+          model: "deterministic-moneyline-v1",
+          promptVersion: "scoring-worker-mvp-v1",
+          status: "completed",
+          outputRef: "historical.json",
+          createdAt: "2099-01-01T09:31:00.000Z",
+          updatedAt: "2099-01-01T09:31:00.000Z",
+        }),
+      );
+      await unitOfWork.predictions.save(
+        createPrediction({
+          id: `${historicalPrefix}-prediction`,
+          fixtureId: historicalFixture.fixtureId,
+          aiRunId: historicalAiRun.id,
+          market: "moneyline",
+          outcome: "home",
+          status: "published",
+          confidence: 0.99,
+          probabilities: { implied: 0.4, model: 0.75, edge: 0.35 },
+          rationale: ["historical best pick"],
+          publishedAt: "2099-01-01T09:32:00.000Z",
+          createdAt: "2099-01-01T09:31:30.000Z",
+          updatedAt: "2099-01-01T09:32:00.000Z",
+        }),
+      );
+
+      const summary = await runAutomationCycle(databaseUrl, {
+        now: new Date("2099-01-01T10:00:00.000Z"),
+        fixtureIds: [fixtureOne.fixtureId, fixtureTwo.fixtureId, blockedFixture.fixtureId],
+        maxFixtures: 3,
+        scoringGeneratedAt: "2099-01-01T10:05:00.000Z",
+        parlayGeneratedAt: "2099-01-01T10:06:00.000Z",
+        validationExecutedAt: "2099-01-01T10:07:00.000Z",
+        validationTaskId: `${prefix}-validation-task`,
+      });
+
+      assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
+      assert.equal(summary.enqueuedPredictions.skippedCount, 1);
+      assert.equal(summary.enqueuedPredictions.skippedFixtures[0]?.fixtureId, blockedFixture.fixtureId);
+      assert.equal(summary.parlayResult.status, "persisted");
+      assert.deepEqual(
+        summary.parlayResult.parlay?.legs.map((leg) => leg.fixtureId).sort(),
+        [fixtureOne.fixtureId, fixtureTwo.fixtureId].sort(),
+      );
+      assert.equal(
+        summary.parlayResult.parlay?.legs.some((leg) => leg.fixtureId === historicalFixture.fixtureId),
+        false,
+      );
+    } finally {
+      await prisma.$disconnect();
+    }
+  } finally {
+    await cleanupAutomationArtifacts(databaseUrl, historicalPrefix);
     await cleanupAutomationArtifacts(databaseUrl, prefix);
   }
 });

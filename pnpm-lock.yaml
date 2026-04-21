@@ -233,6 +233,9 @@ importers:
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
       '@gana-v8/prediction-engine':
         specifier: workspace:*
         version: link:../../packages/prediction-engine
