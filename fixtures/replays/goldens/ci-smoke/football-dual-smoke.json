@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "sandbox-golden-v1",
+  "mode": "smoke",
+  "fixturePackId": "football-dual-smoke",
+  "profileName": "ci-smoke",
+  "assertions": [
+    "namespace-isolation",
+    "provider-routing",
+    "smoke-health",
+    "cron-validation-dry-run"
+  ],
+  "providerModes": {
+    "fixtures_api": "replay",
+    "odds_api": "replay",
+    "research_api": "mock",
+    "publish_api": "disabled"
+  },
+  "stats": {
+    "fixtureCount": 2,
+    "completedFixtures": 1,
+    "replayEventCount": 4,
+    "replayChannels": [
+      "fixtures",
+      "odds"
+    ],
+    "cronJobsValidated": 1
+  },
+  "clock": {
+    "mode": "virtual",
+    "startAt": "2026-08-16T18:00:00.000Z",
+    "endAt": "2026-08-16T18:13:00.000Z",
+    "tickCount": 4
+  },
+  "replayTimeline": [
+    {
+      "id": "football-dual-smoke-fx-1-evt-fixture-upsert",
+      "fixtureId": "football-dual-smoke-fx-1",
+      "channel": "fixtures",
+      "offsetMinutes": 0,
+      "scheduledAt": "2026-08-16T18:00:00.000Z"
+    },
+    {
+      "id": "football-dual-smoke-fx-1-evt-odds-open",
+      "fixtureId": "football-dual-smoke-fx-1",
+      "channel": "odds",
+      "offsetMinutes": 3,
+      "scheduledAt": "2026-08-16T18:03:00.000Z"
+    },
+    {
+      "id": "football-dual-smoke-fx-2-evt-fixture-upsert",
+      "fixtureId": "football-dual-smoke-fx-2",
+      "channel": "fixtures",
+      "offsetMinutes": 10,
+      "scheduledAt": "2026-08-16T18:10:00.000Z"
+    },
+    {
+      "id": "football-dual-smoke-fx-2-evt-odds-open",
+      "fixtureId": "football-dual-smoke-fx-2",
+      "channel": "odds",
+      "offsetMinutes": 13,
+      "scheduledAt": "2026-08-16T18:13:00.000Z"
+    }
+  ],
+  "golden": {
+    "packId": "football-dual-smoke",
+    "version": "2026.08.16",
+    "fingerprint": "{\"id\":\"football-dual-smoke\",\"version\":\"2026.08.16\",\"fixtures\":[{\"id\":\"football-dual-smoke-fx-1\",\"status\":\"completed\",\"scheduledAt\":\"2026-08-16T18:00:00.000Z\",\"homeTeam\":\"Chelsea\",\"awayTeam\":\"Arsenal\",\"metadata\":{\"seed\":\"smoke-seed-2026\",\"scenario\":\"smoke\",\"synthetic\":\"true\"}},{\"id\":\"football-dual-smoke-fx-2\",\"status\":\"scheduled\",\"scheduledAt\":\"2026-08-16T19:30:00.000Z\",\"homeTeam\":\"Real Madrid\",\"awayTeam\":\"Barcelona\",\"metadata\":{\"seed\":\"smoke-seed-2026\",\"scenario\":\"smoke\",\"synthetic\":\"true\"}}],\"replayEvents\":[{\"id\":\"football-dual-smoke-fx-1-evt-fixture-upsert\",\"fixtureId\":\"football-dual-smoke-fx-1\",\"offsetMinutes\":0,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"completed\"}},{\"id\":\"football-dual-smoke-fx-1-evt-odds-open\",\"fixtureId\":\"football-dual-smoke-fx-1\",\"offsetMinutes\":3,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.33,\"awayPrice\":2.76}},{\"id\":\"football-dual-smoke-fx-2-evt-fixture-upsert\",\"fixtureId\":\"football-dual-smoke-fx-2\",\"offsetMinutes\":10,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"scheduled\"}},{\"id\":\"football-dual-smoke-fx-2-evt-odds-open\",\"fixtureId\":\"football-dual-smoke-fx-2\",\"offsetMinutes\":13,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":1.84,\"awayPrice\":3.03}}]}"
+  },
+  "comparison": {
+    "baselinePackId": "football-dual-smoke",
+    "candidatePackId": "football-dual-smoke",
+    "changed": false,
+    "fixtureDelta": 0,
+    "replayEventDelta": 0,
+    "changedFixtureIds": []
+  },
+  "safety": {
+    "publishEnabled": false,
+    "allowedHosts": [
+      "sandbox-ci.local"
+    ],
+    "cronDryRunOnly": true
+  }
+}

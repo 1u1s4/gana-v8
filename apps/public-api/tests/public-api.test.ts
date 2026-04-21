@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   createAuditEvent,
@@ -49,9 +52,112 @@ import {
   listValidations,
   loadOperationSnapshotFromDatabase,
   loadOperationSnapshotFromUnitOfWork,
+  loadSandboxCertificationReadModels,
   publicApiEndpointPaths,
   routePublicApiRequest,
 } from "../src/index.js";
+
+const createSandboxCertificationFixture = async (input: {
+  readonly status?: "passed" | "failed" | "missing";
+} = {}): Promise<{
+  readonly goldensRoot: string;
+  readonly artifactsRoot: string;
+}> => {
+  const root = await mkdtemp(join(tmpdir(), "gana-v8-public-api-cert-"));
+  const goldensRoot = join(root, "goldens");
+  const artifactsRoot = join(root, "artifacts");
+  await mkdir(join(goldensRoot, "ci-smoke"), { recursive: true });
+  await mkdir(join(artifactsRoot, "ci-smoke"), { recursive: true });
+
+  const goldenSnapshot = {
+    schemaVersion: "sandbox-golden-v1",
+    mode: "smoke",
+    fixturePackId: "football-dual-smoke",
+    profileName: "ci-smoke",
+    assertions: ["namespace-isolation", "smoke-health"],
+    providerModes: {
+      fixtures_api: "replay",
+      odds_api: "replay",
+    },
+    stats: {
+      fixtureCount: 2,
+      completedFixtures: 1,
+      replayEventCount: 4,
+      replayChannels: ["fixtures", "odds"],
+      cronJobsValidated: 1,
+    },
+    clock: {
+      mode: "virtual",
+      startAt: "2026-08-16T18:00:00.000Z",
+      endAt: "2026-08-16T18:13:00.000Z",
+      tickCount: 4,
+    },
+    replayTimeline: [
+      {
+        id: "evt-1",
+        fixtureId: "fx-1",
+        channel: "fixtures",
+        offsetMinutes: 0,
+        scheduledAt: "2026-08-16T18:00:00.000Z",
+      },
+    ],
+    golden: {
+      packId: "football-dual-smoke",
+      version: "2026.08.16",
+      fingerprint: "golden-fingerprint-1",
+    },
+    comparison: {
+      baselinePackId: "football-dual-smoke",
+      candidatePackId: "football-dual-smoke",
+      changed: false,
+      fixtureDelta: 0,
+      replayEventDelta: 0,
+      changedFixtureIds: [],
+    },
+    safety: {
+      publishEnabled: false,
+      allowedHosts: ["sandbox-ci.local"],
+      cronDryRunOnly: true,
+    },
+  };
+
+  await writeFile(
+    join(goldensRoot, "ci-smoke", "football-dual-smoke.json"),
+    `${JSON.stringify(goldenSnapshot, null, 2)}\n`,
+    "utf8",
+  );
+
+  if (input.status !== "missing") {
+    const evidenceSnapshot =
+      input.status === "failed"
+        ? {
+            ...goldenSnapshot,
+            stats: {
+              ...goldenSnapshot.stats,
+              replayEventCount: 99,
+            },
+          }
+        : goldenSnapshot;
+    await writeFile(
+      join(artifactsRoot, "ci-smoke", "football-dual-smoke.evidence.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: "sandbox-certification-v1",
+          generatedAt: "2026-08-16T20:30:00.000Z",
+          summary: {
+            fixturePackId: "football-dual-smoke",
+          },
+          goldenSnapshot: evidenceSnapshot,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  }
+
+  return { goldensRoot, artifactsRoot };
+};
 
 test("public api exposes ai runs and provider states", () => {
   const snapshot = createOperationSnapshot();
@@ -93,6 +199,20 @@ test("public api routes ai runs and provider states", () => {
     routePublicApiRequest(handlers, `/provider-states/${encodeURIComponent(snapshot.providerStates[0]!.provider)}`).status,
     200,
   );
+});
+
+test("public api loads sandbox certification read models from goldens and evidence packs", async () => {
+  const { goldensRoot, artifactsRoot } = await createSandboxCertificationFixture({ status: "failed" });
+  const certifications = await loadSandboxCertificationReadModels({
+    goldensRoot,
+    artifactsRoot,
+  });
+
+  assert.equal(certifications.length, 1);
+  assert.equal(certifications[0]?.profileName, "ci-smoke");
+  assert.equal(certifications[0]?.packId, "football-dual-smoke");
+  assert.equal(certifications[0]?.status, "failed");
+  assert.ok((certifications[0]?.diffEntryCount ?? 0) > 0);
 });
 
 test("public api exposes persisted live ingestion runs reconstructed from task, task-run, and audit events", () => {
@@ -1124,6 +1244,48 @@ test("public api server enforces bearer tokens for reads when auth is configured
     });
     assert.equal(viewerResponse.status, 200);
     assert.deepEqual(await viewerResponse.json(), snapshot.health);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api server exposes sandbox certification summaries and detail routes", async () => {
+  const { goldensRoot, artifactsRoot } = await createSandboxCertificationFixture({ status: "passed" });
+  const server = createPublicApiServer({
+    snapshot: createOperationSnapshot(),
+    sandboxCertification: {
+      goldensRoot,
+      artifactsRoot,
+    },
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const listResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.sandboxCertification}`);
+    assert.equal(listResponse.status, 200);
+    const listJson = (await listResponse.json()) as Array<{ status: string; packId: string }>;
+    assert.equal(listJson[0]?.status, "passed");
+    assert.equal(listJson[0]?.packId, "football-dual-smoke");
+
+    const detailResponse = await fetch(
+      `${baseUrl}${publicApiEndpointPaths.sandboxCertification}/ci-smoke/football-dual-smoke`,
+    );
+    assert.equal(detailResponse.status, 200);
+    const detailJson = (await detailResponse.json()) as {
+      status: string;
+      diffEntries: unknown[];
+      allowedHosts: string[];
+    };
+    assert.equal(detailJson.status, "passed");
+    assert.deepEqual(detailJson.diffEntries, []);
+    assert.deepEqual(detailJson.allowedHosts, ["sandbox-ci.local"]);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

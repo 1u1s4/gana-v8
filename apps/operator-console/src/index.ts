@@ -16,6 +16,8 @@ import { createOperationalSummary, type
   type ProviderStateReadModel,
   type PublicApiHealth,
   type RawIngestionBatchReadModel,
+  type SandboxCertificationDetailReadModel,
+  type SandboxCertificationReadModel,
   type ValidationSummary,
   type OddsSnapshotReadModel,
   publicApiEndpointPaths,
@@ -92,6 +94,8 @@ export interface OperatorConsoleCoveragePolicy {
   readonly priority: number;
 }
 
+export interface OperatorConsoleSandboxCertification extends SandboxCertificationReadModel {}
+
 export interface OperatorConsoleSnapshot {
   readonly generatedAt: string;
   readonly fixtures: readonly OperatorConsoleFixture[];
@@ -115,6 +119,7 @@ export interface OperatorConsoleSnapshot {
     readonly requireTrackedLeagueOrTeam: boolean;
   } | null;
   readonly coverageDailyScope: readonly CoverageDailyScopeReadModel[];
+  readonly sandboxCertification: readonly OperatorConsoleSandboxCertification[];
 }
 
 export interface OperatorConsolePanel {
@@ -140,6 +145,7 @@ export interface OperatorConsoleRemoteOptions {
 export interface OperatorConsoleWebPayload {
   readonly generatedAt: string;
   readonly snapshot: OperatorConsoleSnapshot;
+  readonly certification: readonly OperatorConsoleSandboxCertification[];
   readonly model: OperatorConsoleModel;
 }
 
@@ -236,6 +242,7 @@ const failedTaskRuns = (taskRuns: readonly OperatorConsoleTaskRun[]): OperatorCo
 
 export function createOperatorConsoleSnapshotFromOperation(
   operationSnapshot: OperationSnapshot,
+  certification: readonly OperatorConsoleSandboxCertification[] = [],
 ): OperatorConsoleSnapshot {
   const tasks: OperatorConsoleTask[] = operationSnapshot.tasks.map((task) => ({
     id: task.id,
@@ -398,6 +405,7 @@ export function createOperatorConsoleSnapshotFromOperation(
         }
       : null,
     coverageDailyScope,
+    sandboxCertification: [...certification],
   };
 }
 
@@ -726,6 +734,7 @@ export function createOperatorConsoleSnapshot(
     teamCoveragePolicies: input.teamCoveragePolicies ?? [],
     dailyAutomationPolicy: input.dailyAutomationPolicy ?? null,
     coverageDailyScope: input.coverageDailyScope ?? [],
+    sandboxCertification: input.sandboxCertification ?? [],
   };
 }
 
@@ -756,6 +765,12 @@ export function buildOperatorConsoleModel(
     ...(snapshot.operationalSummary.policy.status !== "ready"
       ? [`policy: ${snapshot.operationalSummary.policy.summary}`]
       : []),
+    ...snapshot.sandboxCertification
+      .filter((certification) => certification.status !== "passed")
+      .map(
+        (certification) =>
+          `sandbox:${certification.profileName}/${certification.packId} ${certification.status} (${certification.diffEntryCount} diff)`,
+      ),
   ];
 
   const panels: OperatorConsolePanel[] = [
@@ -820,6 +835,16 @@ export function buildOperatorConsoleModel(
             `${providerState.provider} | aiRuns ${providerState.aiRunCount} | failed ${providerState.failedAiRunCount} | latestPrompt ${providerState.latestPromptVersion ?? "unknown"} | remaining ${providerState.quota?.remaining ?? "unknown"}`,
         ),
       ],
+    },
+    {
+      title: "Sandbox certification",
+      lines:
+        snapshot.sandboxCertification.length === 0
+          ? ["No sandbox certification evidence loaded."]
+          : snapshot.sandboxCertification.map(
+              (certification) =>
+                `${certification.profileName}/${certification.packId} | ${certification.status} | diff ${certification.diffEntryCount} | replay ${certification.replayEventCount} | generated ${certification.generatedAt ?? "missing"}`,
+            ),
     },
     {
       title: "Observability",
@@ -1105,20 +1130,28 @@ const readJsonResponse = async <T>(response: Response): Promise<T> => {
 export const loadOperatorConsoleWebPayload = async (
   options: OperatorConsoleRemoteOptions,
 ): Promise<OperatorConsoleWebPayload> => {
-  const response = await requestPublicApi(options, publicApiEndpointPaths.snapshot);
-  if (!response.ok) {
-    const failure = await readJsonResponse<Record<string, unknown>>(response);
+  const [snapshotResponse, certificationResponse] = await Promise.all([
+    requestPublicApi(options, publicApiEndpointPaths.snapshot),
+    requestPublicApi(options, publicApiEndpointPaths.sandboxCertification),
+  ]);
+  if (!snapshotResponse.ok) {
+    const failure = await readJsonResponse<Record<string, unknown>>(snapshotResponse);
     throw new Error(
-      `Unable to load operator console snapshot (${response.status}): ${JSON.stringify(failure)}`,
+      `Unable to load operator console snapshot (${snapshotResponse.status}): ${JSON.stringify(failure)}`,
     );
   }
 
-  const operationSnapshot = await readJsonResponse<OperationSnapshot>(response);
-  const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot);
+  const operationSnapshot = await readJsonResponse<OperationSnapshot>(snapshotResponse);
+  const certification =
+    certificationResponse.ok
+      ? await readJsonResponse<readonly OperatorConsoleSandboxCertification[]>(certificationResponse)
+      : [];
+  const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot, certification);
 
   return {
     generatedAt: snapshot.generatedAt,
     snapshot,
+    certification,
     model: buildOperatorConsoleModel(snapshot),
   };
 };
@@ -2074,18 +2107,26 @@ export const createOperatorConsoleWebServer = (
       }
 
       if (method === "GET" && requestUrl.pathname === "/api/console") {
-        const upstreamResponse = await requestPublicApi(options, publicApiEndpointPaths.snapshot);
-        if (!upstreamResponse.ok) {
-          const failure = await readJsonResponse<Record<string, unknown>>(upstreamResponse);
+        const [snapshotResponse, certificationResponse] = await Promise.all([
+          requestPublicApi(options, publicApiEndpointPaths.snapshot),
+          requestPublicApi(options, publicApiEndpointPaths.sandboxCertification),
+        ]);
+        if (!snapshotResponse.ok) {
+          const failure = await readJsonResponse<Record<string, unknown>>(snapshotResponse);
           writeJsonResponse(response, upstreamResponse.status, failure);
           return;
         }
 
-        const operationSnapshot = await readJsonResponse<OperationSnapshot>(upstreamResponse);
-        const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot);
+        const operationSnapshot = await readJsonResponse<OperationSnapshot>(snapshotResponse);
+        const certification =
+          certificationResponse.ok
+            ? await readJsonResponse<readonly OperatorConsoleSandboxCertification[]>(certificationResponse)
+            : [];
+        const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot, certification);
         const payload: OperatorConsoleWebPayload = {
           generatedAt: snapshot.generatedAt,
           snapshot,
+          certification,
           model: buildOperatorConsoleModel(snapshot),
         };
         writeJsonResponse(response, 200, payload);

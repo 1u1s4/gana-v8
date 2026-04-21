@@ -64,6 +64,7 @@ pnpm install
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:sandbox:certification
 pnpm build
 ```
 
@@ -89,6 +90,24 @@ Variables clave:
 - `GANA_OPERATOR_CONSOLE_PUBLIC_API_TOKEN`
 - `GANA_PUBLIC_API_PORT`
 - `GANA_OPERATOR_CONSOLE_PORT`
+
+## Sandbox y certification
+
+La certificación determinística de sandbox usa goldens versionadas en `fixtures/replays/goldens/` y genera evidence packs en `.artifacts/sandbox-certification/`:
+
+```bash
+pnpm test:sandbox:certification
+```
+
+También podés correr un certificado puntual con el runner:
+
+```bash
+pnpm --filter @gana-v8/sandbox-runner certify -- --mode smoke --profile ci-smoke --pack football-dual-smoke --golden fixtures/replays/goldens/ci-smoke/football-dual-smoke.json --artifact .artifacts/sandbox-certification/ci-smoke/football-dual-smoke.evidence.json
+```
+
+Runbook:
+
+- `runbooks/sandbox-certification.md`
 
 ## Base de datos por defecto
 

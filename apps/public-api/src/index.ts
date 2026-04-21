@@ -1,9 +1,11 @@
+import { readdir, readFile } from "node:fs/promises";
 import {
   createServer,
   type IncomingMessage,
   type Server,
   type ServerResponse,
 } from "node:http";
+import { join, resolve } from "node:path";
 
 import {
   createOperationalObservabilitySummary,
@@ -306,6 +308,7 @@ export interface PublicApiHttpOptions {
   readonly snapshot?: OperationSnapshot;
   readonly unitOfWork?: StorageUnitOfWork;
   readonly queueAdapter?: TaskQueueAdapter;
+  readonly sandboxCertification?: PublicApiSandboxCertificationSourceOptions;
   readonly auth?: PublicApiAuthenticationOptions;
 }
 
@@ -344,6 +347,40 @@ export interface QueueTaskQuarantineActionInput {
 export interface PublicApiResponse {
   readonly status: number;
   readonly body: unknown;
+}
+
+export interface PublicApiSandboxCertificationSourceOptions {
+  readonly goldensRoot?: string;
+  readonly artifactsRoot?: string;
+}
+
+export interface SandboxCertificationDiffEntryReadModel {
+  readonly path: string;
+  readonly kind: "added" | "removed" | "changed";
+  readonly expected?: unknown;
+  readonly actual?: unknown;
+}
+
+export interface SandboxCertificationReadModel {
+  readonly id: string;
+  readonly profileName: string;
+  readonly packId: string;
+  readonly mode: string;
+  readonly status: "passed" | "failed" | "missing";
+  readonly generatedAt?: string;
+  readonly fixtureCount: number;
+  readonly replayEventCount: number;
+  readonly diffEntryCount: number;
+  readonly goldenFingerprint: string;
+  readonly evidenceFingerprint?: string;
+  readonly goldenPath: string;
+  readonly artifactPath?: string;
+}
+
+export interface SandboxCertificationDetailReadModel extends SandboxCertificationReadModel {
+  readonly assertions: readonly string[];
+  readonly allowedHosts: readonly string[];
+  readonly diffEntries: readonly SandboxCertificationDiffEntryReadModel[];
 }
 
 export interface FixtureOpsDetailReadModel {
@@ -424,6 +461,7 @@ export const publicApiEndpointPaths = {
   tasks: "/tasks",
   taskRuns: "/task-runs",
   liveIngestionRuns: "/live-ingestion-runs",
+  sandboxCertification: "/sandbox-certification",
   aiRuns: "/ai-runs",
   providerStates: "/provider-states",
   rawBatches: "/raw-batches",
@@ -891,6 +929,230 @@ export function routePublicApiRequest(
   }
 }
 
+const PUBLIC_API_DEFAULT_GOLDENS_ROOT = "fixtures/replays/goldens";
+const PUBLIC_API_DEFAULT_SANDBOX_ARTIFACTS_ROOT = ".artifacts/sandbox-certification";
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const stableStringify = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+};
+
+const resolveSandboxCertificationSources = (
+  options: PublicApiSandboxCertificationSourceOptions | undefined,
+): Required<PublicApiSandboxCertificationSourceOptions> => ({
+  goldensRoot: resolve(options?.goldensRoot ?? PUBLIC_API_DEFAULT_GOLDENS_ROOT),
+  artifactsRoot: resolve(options?.artifactsRoot ?? PUBLIC_API_DEFAULT_SANDBOX_ARTIFACTS_ROOT),
+});
+
+const listJsonFilesRecursive = async (directory: string): Promise<readonly string[]> => {
+  try {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      const absolutePath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...(await listJsonFilesRecursive(absolutePath)));
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.endsWith(".json")) {
+        files.push(absolutePath);
+      }
+    }
+
+    return files.sort();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const diffSandboxCertificationValues = (
+  expected: unknown,
+  actual: unknown,
+  path: string,
+): SandboxCertificationDiffEntryReadModel[] => {
+  if (Array.isArray(expected) && Array.isArray(actual)) {
+    const entries: SandboxCertificationDiffEntryReadModel[] = [];
+    const maxLength = Math.max(expected.length, actual.length);
+    for (let index = 0; index < maxLength; index += 1) {
+      const childPath = `${path}[${index}]`;
+      if (index >= expected.length) {
+        entries.push({ path: childPath, kind: "added", actual: actual[index] });
+        continue;
+      }
+      if (index >= actual.length) {
+        entries.push({ path: childPath, kind: "removed", expected: expected[index] });
+        continue;
+      }
+      entries.push(...diffSandboxCertificationValues(expected[index], actual[index], childPath));
+    }
+    return entries;
+  }
+
+  if (isPlainObject(expected) && isPlainObject(actual)) {
+    const entries: SandboxCertificationDiffEntryReadModel[] = [];
+    const keys = [...new Set([...Object.keys(expected), ...Object.keys(actual)])].sort();
+    for (const key of keys) {
+      const childPath = `${path}.${key}`;
+      if (!(key in actual)) {
+        entries.push({ path: childPath, kind: "removed", expected: expected[key] });
+        continue;
+      }
+      if (!(key in expected)) {
+        entries.push({ path: childPath, kind: "added", actual: actual[key] });
+        continue;
+      }
+      entries.push(...diffSandboxCertificationValues(expected[key], actual[key], childPath));
+    }
+    return entries;
+  }
+
+  if (stableStringify(expected) !== stableStringify(actual)) {
+    return [{ path, kind: "changed", expected, actual }];
+  }
+
+  return [];
+};
+
+const loadSandboxCertificationBundle = async (
+  sources: Required<PublicApiSandboxCertificationSourceOptions>,
+  goldenPath: string,
+): Promise<SandboxCertificationDetailReadModel> => {
+  const golden = JSON.parse(await readFile(goldenPath, "utf8")) as {
+    readonly mode: string;
+    readonly profileName: string;
+    readonly fixturePackId: string;
+    readonly assertions?: readonly string[];
+    readonly stats?: {
+      readonly fixtureCount?: number;
+      readonly replayEventCount?: number;
+    };
+    readonly golden?: {
+      readonly fingerprint?: string;
+    };
+    readonly safety?: {
+      readonly allowedHosts?: readonly string[];
+    };
+  };
+  const profileName = golden.profileName;
+  const packId = golden.fixturePackId;
+  const artifactPath = join(sources.artifactsRoot, profileName, `${packId}.evidence.json`);
+
+  let generatedAt: string | undefined;
+  let evidenceFingerprint: string | undefined;
+  let diffEntries: readonly SandboxCertificationDiffEntryReadModel[] = [];
+  let status: SandboxCertificationReadModel["status"] = "missing";
+
+  try {
+    const evidence = JSON.parse(await readFile(artifactPath, "utf8")) as {
+      readonly generatedAt?: string;
+      readonly goldenSnapshot?: unknown;
+    };
+    generatedAt = evidence.generatedAt;
+    evidenceFingerprint = stableStringify(evidence.goldenSnapshot);
+    diffEntries = diffSandboxCertificationValues(golden, evidence.goldenSnapshot, "$");
+    status = diffEntries.length === 0 ? "passed" : "failed";
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      status = "missing";
+      diffEntries = [];
+    } else {
+      throw error;
+    }
+  }
+
+  return {
+    id: `${profileName}:${packId}`,
+    profileName,
+    packId,
+    mode: golden.mode,
+    status,
+    ...(generatedAt ? { generatedAt } : {}),
+    fixtureCount: golden.stats?.fixtureCount ?? 0,
+    replayEventCount: golden.stats?.replayEventCount ?? 0,
+    diffEntryCount: diffEntries.length,
+    goldenFingerprint: golden.golden?.fingerprint ?? stableStringify(golden),
+    ...(evidenceFingerprint ? { evidenceFingerprint } : {}),
+    goldenPath,
+    ...(status !== "missing" ? { artifactPath } : {}),
+    assertions: golden.assertions ?? [],
+    allowedHosts: golden.safety?.allowedHosts ?? [],
+    diffEntries,
+  };
+};
+
+export const loadSandboxCertificationReadModels = async (
+  options: PublicApiSandboxCertificationSourceOptions = {},
+): Promise<readonly SandboxCertificationReadModel[]> => {
+  const sources = resolveSandboxCertificationSources(options);
+  const goldenPaths = await listJsonFilesRecursive(sources.goldensRoot);
+  const certifications = await Promise.all(
+    goldenPaths.map((goldenPath) => loadSandboxCertificationBundle(sources, goldenPath)),
+  );
+
+  return certifications.map((certification) => ({
+    id: certification.id,
+    profileName: certification.profileName,
+    packId: certification.packId,
+    mode: certification.mode,
+    status: certification.status,
+    ...(certification.generatedAt ? { generatedAt: certification.generatedAt } : {}),
+    fixtureCount: certification.fixtureCount,
+    replayEventCount: certification.replayEventCount,
+    diffEntryCount: certification.diffEntryCount,
+    goldenFingerprint: certification.goldenFingerprint,
+    ...(certification.evidenceFingerprint ? { evidenceFingerprint: certification.evidenceFingerprint } : {}),
+    goldenPath: certification.goldenPath,
+    ...(certification.artifactPath ? { artifactPath: certification.artifactPath } : {}),
+  }));
+};
+
+export const loadSandboxCertificationDetail = async (
+  profileName: string,
+  packId: string,
+  options: PublicApiSandboxCertificationSourceOptions = {},
+): Promise<SandboxCertificationDetailReadModel | null> => {
+  const sources = resolveSandboxCertificationSources(options);
+  const goldenPath = join(sources.goldensRoot, profileName, `${packId}.json`);
+  try {
+    return await loadSandboxCertificationBundle(sources, goldenPath);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 const PUBLIC_API_DEFAULT_REALM = "gana-v8-public-api";
 
 interface PublicApiAuthorizationOutcome {
@@ -1070,6 +1332,13 @@ const resolvePublicApiQueueAdapter = (
   return createInMemoryTaskQueueAdapter(options.unitOfWork);
 };
 
+const loadPublicApiSandboxCertificationSourcesFromEnv = (
+  env: Readonly<Record<string, string | undefined>>,
+): PublicApiSandboxCertificationSourceOptions => ({
+  ...(env.GANA_SANDBOX_GOLDENS_ROOT ? { goldensRoot: env.GANA_SANDBOX_GOLDENS_ROOT } : {}),
+  ...(env.GANA_SANDBOX_CERT_ARTIFACTS_ROOT ? { artifactsRoot: env.GANA_SANDBOX_CERT_ARTIFACTS_ROOT } : {}),
+});
+
 export const authorizePublicApiRequest = (
   request: IncomingMessage,
   method: string,
@@ -1108,12 +1377,14 @@ export function createPublicApiServer(
     ? null
     : createPublicApiHandlers(options.snapshot ?? createOperationSnapshot());
   const queueAdapter = resolvePublicApiQueueAdapter(options);
+  const sandboxCertification = options.sandboxCertification;
 
   return createServer((request, response) => {
       void handlePublicApiRequest(request, response, {
         ...(staticHandlers ? { handlers: staticHandlers } : {}),
         ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
         ...(queueAdapter ? { queueAdapter } : {}),
+        ...(sandboxCertification ? { sandboxCertification } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
       }).catch((error: unknown) => {
         writeJsonResponse(response, 500, {
@@ -1131,6 +1402,7 @@ export async function handlePublicApiRequest(
     readonly handlers?: PublicApiHandlers;
     readonly unitOfWork?: StorageUnitOfWork;
     readonly queueAdapter?: TaskQueueAdapter;
+    readonly sandboxCertification?: PublicApiSandboxCertificationSourceOptions;
     readonly auth?: PublicApiAuthenticationOptions;
   } = {},
 ): Promise<void> {
@@ -1145,6 +1417,35 @@ export async function handlePublicApiRequest(
   }
 
   if (method === "GET") {
+    if (normalizedRequestPath === publicApiEndpointPaths.sandboxCertification) {
+      writeJsonResponse(
+        response,
+        200,
+        await loadSandboxCertificationReadModels(options.sandboxCertification),
+      );
+      return;
+    }
+
+    const sandboxCertificationDetail = matchSandboxCertificationDetailPath(normalizedRequestPath);
+    if (sandboxCertificationDetail) {
+      const certification = await loadSandboxCertificationDetail(
+        sandboxCertificationDetail.profileName,
+        sandboxCertificationDetail.packId,
+        options.sandboxCertification,
+      );
+      if (!certification) {
+        writeJsonResponse(response, 404, {
+          error: "resource_not_found",
+          resource: "sandbox-certification",
+          resourceId: `${sandboxCertificationDetail.profileName}:${sandboxCertificationDetail.packId}`,
+        });
+        return;
+      }
+
+      writeJsonResponse(response, 200, certification);
+      return;
+    }
+
     const handlers = options.unitOfWork
       ? createPublicApiHandlers(await loadOperationSnapshotFromUnitOfWork(options.unitOfWork))
       : (options.handlers ?? createPublicApiHandlers());
@@ -1382,6 +1683,10 @@ export const startPublicApiServer = async (
   const host = options.host ?? env.GANA_PUBLIC_API_HOST ?? "127.0.0.1";
   const port = options.port ?? parseServerPort(env.GANA_PUBLIC_API_PORT, 3100);
   const authentication = options.auth ?? loadPublicApiTokenAuthenticationFromEnv({ env });
+  const sandboxCertification = {
+    ...loadPublicApiSandboxCertificationSourcesFromEnv(env),
+    ...(options.sandboxCertification ?? {}),
+  };
   const databaseUrl = firstDefinedValue(env.GANA_DATABASE_URL, env.DATABASE_URL);
   const prismaClient =
     !options.snapshot && !options.unitOfWork && databaseUrl
@@ -1395,6 +1700,7 @@ export const startPublicApiServer = async (
         ? { unitOfWork: createPrismaUnitOfWork(prismaClient) }
         : {}),
     ...(options.queueAdapter ? { queueAdapter: options.queueAdapter } : {}),
+    ...(Object.keys(sandboxCertification).length > 0 ? { sandboxCertification } : {}),
     ...(authentication ? { auth: authentication } : {}),
   });
 
@@ -2716,6 +3022,20 @@ function matchTaskQuarantinePath(requestPath: string): { taskId: string } | null
   }
 
   return { taskId: decodeURIComponent(match[1]) };
+}
+
+function matchSandboxCertificationDetailPath(
+  requestPath: string,
+): { profileName: string; packId: string } | null {
+  const match = requestPath.match(/^\/sandbox-certification\/([^/]+)\/([^/]+)$/);
+  if (!match?.[1] || !match?.[2]) {
+    return null;
+  }
+
+  return {
+    profileName: decodeURIComponent(match[1]),
+    packId: decodeURIComponent(match[2]),
+  };
 }
 
 function matchTaskRunDetailPath(requestPath: string): { taskRunId: string } | null {

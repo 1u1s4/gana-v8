@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "sandbox-golden-v1",
+  "mode": "replay",
+  "fixturePackId": "football-replay-late-swing",
+  "profileName": "ci-regression",
+  "assertions": [
+    "namespace-isolation",
+    "provider-routing",
+    "replay-integrity",
+    "cron-validation-dry-run"
+  ],
+  "providerModes": {
+    "fixtures_api": "replay",
+    "odds_api": "replay",
+    "research_api": "replay",
+    "publish_api": "disabled"
+  },
+  "stats": {
+    "fixtureCount": 3,
+    "completedFixtures": 1,
+    "replayEventCount": 12,
+    "replayChannels": [
+      "fixtures",
+      "odds",
+      "research",
+      "validation"
+    ],
+    "cronJobsValidated": 2
+  },
+  "clock": {
+    "mode": "virtual",
+    "startAt": "2026-08-16T18:00:00.000Z",
+    "endAt": "2026-08-16T18:38:00.000Z",
+    "tickCount": 12
+  },
+  "replayTimeline": [
+    {
+      "id": "football-replay-late-swing-fx-1-evt-fixture-upsert",
+      "fixtureId": "football-replay-late-swing-fx-1",
+      "channel": "fixtures",
+      "offsetMinutes": 0,
+      "scheduledAt": "2026-08-16T18:00:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-1-evt-odds-open",
+      "fixtureId": "football-replay-late-swing-fx-1",
+      "channel": "odds",
+      "offsetMinutes": 3,
+      "scheduledAt": "2026-08-16T18:03:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-2-evt-fixture-upsert",
+      "fixtureId": "football-replay-late-swing-fx-2",
+      "channel": "fixtures",
+      "offsetMinutes": 10,
+      "scheduledAt": "2026-08-16T18:10:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-1-evt-research-lineup",
+      "fixtureId": "football-replay-late-swing-fx-1",
+      "channel": "research",
+      "offsetMinutes": 11,
+      "scheduledAt": "2026-08-16T18:11:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-2-evt-odds-open",
+      "fixtureId": "football-replay-late-swing-fx-2",
+      "channel": "odds",
+      "offsetMinutes": 13,
+      "scheduledAt": "2026-08-16T18:13:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-1-evt-validation-close",
+      "fixtureId": "football-replay-late-swing-fx-1",
+      "channel": "validation",
+      "offsetMinutes": 18,
+      "scheduledAt": "2026-08-16T18:18:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-3-evt-fixture-upsert",
+      "fixtureId": "football-replay-late-swing-fx-3",
+      "channel": "fixtures",
+      "offsetMinutes": 20,
+      "scheduledAt": "2026-08-16T18:20:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-2-evt-research-lineup",
+      "fixtureId": "football-replay-late-swing-fx-2",
+      "channel": "research",
+      "offsetMinutes": 21,
+      "scheduledAt": "2026-08-16T18:21:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-3-evt-odds-open",
+      "fixtureId": "football-replay-late-swing-fx-3",
+      "channel": "odds",
+      "offsetMinutes": 23,
+      "scheduledAt": "2026-08-16T18:23:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-2-evt-validation-close",
+      "fixtureId": "football-replay-late-swing-fx-2",
+      "channel": "validation",
+      "offsetMinutes": 28,
+      "scheduledAt": "2026-08-16T18:28:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-3-evt-research-lineup",
+      "fixtureId": "football-replay-late-swing-fx-3",
+      "channel": "research",
+      "offsetMinutes": 31,
+      "scheduledAt": "2026-08-16T18:31:00.000Z"
+    },
+    {
+      "id": "football-replay-late-swing-fx-3-evt-validation-close",
+      "fixtureId": "football-replay-late-swing-fx-3",
+      "channel": "validation",
+      "offsetMinutes": 38,
+      "scheduledAt": "2026-08-16T18:38:00.000Z"
+    }
+  ],
+  "golden": {
+    "packId": "football-replay-late-swing",
+    "version": "2026.08.16",
+    "fingerprint": "{\"id\":\"football-replay-late-swing\",\"version\":\"2026.08.16\",\"fixtures\":[{\"id\":\"football-replay-late-swing-fx-1\",\"status\":\"completed\",\"scheduledAt\":\"2026-05-09T17:30:00.000Z\",\"homeTeam\":\"Inter\",\"awayTeam\":\"Milan\",\"metadata\":{\"seed\":\"replay-seed-2026\",\"scenario\":\"odds-swing\",\"synthetic\":\"true\"}},{\"id\":\"football-replay-late-swing-fx-2\",\"status\":\"scheduled\",\"scheduledAt\":\"2026-05-09T19:00:00.000Z\",\"homeTeam\":\"Boca Juniors\",\"awayTeam\":\"River Plate\",\"metadata\":{\"seed\":\"replay-seed-2026\",\"scenario\":\"odds-swing\",\"synthetic\":\"true\"}},{\"id\":\"football-replay-late-swing-fx-3\",\"status\":\"scheduled\",\"scheduledAt\":\"2026-05-09T20:30:00.000Z\",\"homeTeam\":\"PSG\",\"awayTeam\":\"Marseille\",\"metadata\":{\"seed\":\"replay-seed-2026\",\"scenario\":\"odds-swing\",\"synthetic\":\"true\"}}],\"replayEvents\":[{\"id\":\"football-replay-late-swing-fx-1-evt-fixture-upsert\",\"fixtureId\":\"football-replay-late-swing-fx-1\",\"offsetMinutes\":0,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"completed\"}},{\"id\":\"football-replay-late-swing-fx-1-evt-odds-open\",\"fixtureId\":\"football-replay-late-swing-fx-1\",\"offsetMinutes\":3,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.05,\"awayPrice\":2.72}},{\"id\":\"football-replay-late-swing-fx-1-evt-research-lineup\",\"fixtureId\":\"football-replay-late-swing-fx-1\",\"offsetMinutes\":11,\"channel\":\"research\",\"payload\":{\"event\":\"research.lineup_change\",\"severity\":\"medium\",\"source\":\"synthetic-press-room\"}},{\"id\":\"football-replay-late-swing-fx-1-evt-validation-close\",\"fixtureId\":\"football-replay-late-swing-fx-1\",\"offsetMinutes\":18,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.snapshot\",\"verdict\":\"pass\"}},{\"id\":\"football-replay-late-swing-fx-2-evt-fixture-upsert\",\"fixtureId\":\"football-replay-late-swing-fx-2\",\"offsetMinutes\":10,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"scheduled\"}},{\"id\":\"football-replay-late-swing-fx-2-evt-odds-open\",\"fixtureId\":\"football-replay-late-swing-fx-2\",\"offsetMinutes\":13,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.26,\"awayPrice\":2.46}},{\"id\":\"football-replay-late-swing-fx-2-evt-research-lineup\",\"fixtureId\":\"football-replay-late-swing-fx-2\",\"offsetMinutes\":21,\"channel\":\"research\",\"payload\":{\"event\":\"research.lineup_change\",\"severity\":\"medium\",\"source\":\"synthetic-press-room\"}},{\"id\":\"football-replay-late-swing-fx-2-evt-validation-close\",\"fixtureId\":\"football-replay-late-swing-fx-2\",\"offsetMinutes\":28,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.snapshot\",\"verdict\":\"review\"}},{\"id\":\"football-replay-late-swing-fx-3-evt-fixture-upsert\",\"fixtureId\":\"football-replay-late-swing-fx-3\",\"offsetMinutes\":20,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"scheduled\"}},{\"id\":\"football-replay-late-swing-fx-3-evt-odds-open\",\"fixtureId\":\"football-replay-late-swing-fx-3\",\"offsetMinutes\":23,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":1.76,\"awayPrice\":2.61}},{\"id\":\"football-replay-late-swing-fx-3-evt-research-lineup\",\"fixtureId\":\"football-replay-late-swing-fx-3\",\"offsetMinutes\":31,\"channel\":\"research\",\"payload\":{\"event\":\"research.lineup_change\",\"severity\":\"medium\",\"source\":\"synthetic-press-room\"}},{\"id\":\"football-replay-late-swing-fx-3-evt-validation-close\",\"fixtureId\":\"football-replay-late-swing-fx-3\",\"offsetMinutes\":38,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.snapshot\",\"verdict\":\"review\"}}]}"
+  },
+  "comparison": {
+    "baselinePackId": "football-replay-late-swing",
+    "candidatePackId": "football-replay-late-swing",
+    "changed": false,
+    "fixtureDelta": 0,
+    "replayEventDelta": 0,
+    "changedFixtureIds": []
+  },
+  "safety": {
+    "publishEnabled": false,
+    "allowedHosts": [
+      "sandbox-regression.local"
+    ],
+    "cronDryRunOnly": true
+  }
+}
