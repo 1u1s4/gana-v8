@@ -6,6 +6,14 @@ import { PrismaClient } from "@prisma/client";
 import { createPersistedTaskQueue, enqueuePersistedTask, maybeClaimNextPersistedTask } from "../src/index.js";
 
 const createPrismaClient = (databaseUrl: string) => new PrismaClient({ datasourceUrl: databaseUrl });
+const databaseUrl = process.env.DATABASE_URL;
+const testWithDatabase = (
+  name: string,
+  fn: (databaseUrl: string) => Promise<void> | void,
+) =>
+  test(name, { skip: databaseUrl ? false : "requires DATABASE_URL" }, async () => {
+    await fn(databaseUrl!);
+  });
 
 const cleanupTaskPrefix = async (databaseUrl: string, prefix: string): Promise<void> => {
   const prisma = createPrismaClient(databaseUrl);
@@ -17,8 +25,7 @@ const cleanupTaskPrefix = async (databaseUrl: string, prefix: string): Promise<v
   }
 };
 
-test("persisted queue renewLease extends the lease window and delays recovery", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("persisted queue renewLease extends the lease window and delays recovery", async (databaseUrl) => {
   const prefix = `phase1-renew-${Date.now()}`;
   const queue = createPersistedTaskQueue(databaseUrl);
 
@@ -65,8 +72,7 @@ test("persisted queue renewLease extends the lease window and delays recovery", 
   }
 });
 
-test("persisted queue quarantines exhausted tasks and allows manual redrive", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("persisted queue quarantines exhausted tasks and allows manual redrive", async (databaseUrl) => {
   const prefix = `phase1-quarantine-${Date.now()}`;
   const queue = createPersistedTaskQueue(databaseUrl);
 

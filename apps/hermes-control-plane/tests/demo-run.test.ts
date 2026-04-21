@@ -38,6 +38,14 @@ const TEST_RUNTIME_ENV = {
 } as const;
 
 const createPrismaClient = (databaseUrl: string) => new PrismaClient({ datasourceUrl: databaseUrl });
+const databaseUrl = process.env.DATABASE_URL;
+const testWithDatabase = (
+  name: string,
+  fn: (databaseUrl: string) => Promise<void> | void,
+) =>
+  test(name, { skip: databaseUrl ? false : "requires DATABASE_URL" }, async () => {
+    await fn(databaseUrl!);
+  });
 
 const createAutomationFixtureWithOdds = async (
   databaseUrl: string,
@@ -413,16 +421,15 @@ test("runDemoControlPlane exposes runtime overrides from config-runtime", async 
   assert.equal(summary.results.every((result) => result.status === "succeeded"), true);
 });
 
-test("loadPersistedTaskSummary reads persisted task status buckets", async () => {
-  const summary = await loadPersistedTaskSummary(process.env.DATABASE_URL!);
+testWithDatabase("loadPersistedTaskSummary reads persisted task status buckets", async (databaseUrl) => {
+  const summary = await loadPersistedTaskSummary(databaseUrl);
 
   assert.ok(summary.total >= 1);
   assert.ok(summary.succeeded >= 1);
   assert.ok(summary.latestTasks.length >= 1);
 });
 
-test("createPersistedTaskQueue runs a persisted task lifecycle through the shared queue adapter", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("createPersistedTaskQueue runs a persisted task lifecycle through the shared queue adapter", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-queue-adapter-${Date.now()}`;
   const queue = createPersistedTaskQueue(databaseUrl);
@@ -465,8 +472,7 @@ test("createPersistedTaskQueue runs a persisted task lifecycle through the share
   }
 });
 
-test("maybeClaimNextPersistedTask orders ready queued tasks by scheduledFor, priority, and createdAt", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("maybeClaimNextPersistedTask orders ready queued tasks by scheduledFor, priority, and createdAt", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-enqueue-${Date.now()}`;
 
@@ -546,8 +552,7 @@ test("maybeClaimNextPersistedTask orders ready queued tasks by scheduledFor, pri
   }
 });
 
-test("maybeClaimNextPersistedTask increments attempt number from existing task runs", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("maybeClaimNextPersistedTask increments attempt number from existing task runs", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
   const taskPrefix = `hermes-test-attempt-${Date.now()}`;
@@ -591,8 +596,7 @@ test("maybeClaimNextPersistedTask increments attempt number from existing task r
   }
 });
 
-test("maybeClaimNextPersistedTask recovers expired running tasks whose lease window elapsed", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("maybeClaimNextPersistedTask recovers expired running tasks whose lease window elapsed", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-expired-lease-${Date.now()}`;
   const queue = createPersistedTaskQueue(databaseUrl);
@@ -628,8 +632,7 @@ test("maybeClaimNextPersistedTask recovers expired running tasks whose lease win
   }
 });
 
-test("requeuePersistedTask requeues failed and cancelled tasks without deleting task run history", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("requeuePersistedTask requeues failed and cancelled tasks without deleting task run history", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
   const taskPrefix = `hermes-test-requeue-${Date.now()}`;
@@ -732,8 +735,7 @@ test("requeuePersistedTask requeues failed and cancelled tasks without deleting 
   }
 });
 
-test("requeuePersistedTask rejects succeeded tasks and missing task ids with clear errors", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("requeuePersistedTask rejects succeeded tasks and missing task ids with clear errors", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-requeue-errors-${Date.now()}`;
 
@@ -767,8 +769,7 @@ test("requeuePersistedTask rejects succeeded tasks and missing task ids with cle
   }
 });
 
-test("runNextPersistedTask processes prediction and validation tasks deterministically", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("runNextPersistedTask processes prediction and validation tasks deterministically", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-run-${Date.now()}`;
 
@@ -851,8 +852,7 @@ test("runNextPersistedTask processes prediction and validation tasks determinist
   }
 });
 
-test("runNextPersistedTask supports sandbox replay persisted tasks", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("runNextPersistedTask supports sandbox replay persisted tasks", async (databaseUrl) => {
   const prisma = createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-sandbox-${Date.now()}`;
 
@@ -885,8 +885,7 @@ test("runNextPersistedTask supports sandbox replay persisted tasks", async () =>
   }
 });
 
-test("enqueuePredictionForEligibleFixtures creates deterministic persisted scoring tasks without duplicates", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("enqueuePredictionForEligibleFixtures creates deterministic persisted scoring tasks without duplicates", async (databaseUrl) => {
   const prefix = `hae${Date.now().toString(36)}`;
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
@@ -942,8 +941,7 @@ test("enqueuePredictionForEligibleFixtures creates deterministic persisted scori
   }
 });
 
-test("enqueuePredictionForEligibleFixtures applies coverage watchlists and blocks fixtures below min allowed odd", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("enqueuePredictionForEligibleFixtures applies coverage watchlists and blocks fixtures below min allowed odd", async (databaseUrl) => {
   const prefix = `hacov${Date.now().toString(36)}`;
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
@@ -999,8 +997,7 @@ test("enqueuePredictionForEligibleFixtures applies coverage watchlists and block
   }
 });
 
-test("runAutomationCycle enqueues scoring tasks, persists predictions, publishes a parlay, and executes validation", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("runAutomationCycle enqueues scoring tasks, persists predictions, publishes a parlay, and executes validation", async (databaseUrl) => {
   const prefix = `har${Date.now().toString(36)}`;
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
@@ -1055,8 +1052,7 @@ test("runAutomationCycle enqueues scoring tasks, persists predictions, publishes
   }
 });
 
-test("runAutomationCycle scopes publisher selection to predictions from the current automation cycle only", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("runAutomationCycle scopes publisher selection to predictions from the current automation cycle only", async (databaseUrl) => {
   const prefix = `hars${Date.now().toString(36)}`;
   const historicalPrefix = `${prefix}old`;
 
@@ -1217,8 +1213,7 @@ test("runAutomationCycle scopes publisher selection to predictions from the curr
   }
 });
 
-test("loadAutomationOpsSummary exposes scoring eligibility and recent workflow audit trail via public-api exports", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("loadAutomationOpsSummary exposes scoring eligibility and recent workflow audit trail via public-api exports", async (databaseUrl) => {
   const prefix = `haos${Date.now().toString(36)}`;
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
@@ -1259,8 +1254,7 @@ test("loadAutomationOpsSummary exposes scoring eligibility and recent workflow a
   }
 });
 
-test("loadLiveIngestionOpsSummary exposes persisted live ingestion runs via public-api read models", async () => {
-  const databaseUrl = process.env.DATABASE_URL!;
+testWithDatabase("loadLiveIngestionOpsSummary exposes persisted live ingestion runs via public-api read models", async (databaseUrl) => {
   const prefix = `hlis${Date.now().toString(36)}`;
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
