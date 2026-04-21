@@ -7,6 +7,7 @@ import {
   createFixture,
   createFixtureWorkflow,
   createLeagueCoveragePolicy,
+  createOpaqueTaskRunId,
   createPrediction,
   createTask,
   createTaskRun,
@@ -232,21 +233,34 @@ const createAutomationFixtureWorkflowOps = async (
   }
 };
 
+const createAutomationCoverageKeys = (prefix: string) => ({
+  leagueKey: `league-${prefix}`,
+  teamKey: `team-${prefix}`,
+});
+
 const createAutomationCoveragePolicies = async (
   databaseUrl: string,
   prefix: string,
+  options: {
+    readonly leagueKey?: string;
+    readonly teamKey?: string;
+    readonly leagueName?: string;
+    readonly teamName?: string;
+    readonly season?: number;
+  } = {},
 ): Promise<void> => {
   const prisma = createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
+  const coverageKeys = createAutomationCoverageKeys(prefix);
 
   try {
     await unitOfWork.leagueCoveragePolicies.save(
       createLeagueCoveragePolicy({
         id: `${prefix}-league-policy`,
         provider: "api-football",
-        leagueKey: "39",
-        leagueName: "Premier League",
-        season: 2099,
+        leagueKey: options.leagueKey ?? coverageKeys.leagueKey,
+        leagueName: options.leagueName ?? "Premier League",
+        season: options.season ?? 2099,
         enabled: true,
         alwaysOn: true,
         priority: 90,
@@ -257,8 +271,8 @@ const createAutomationCoveragePolicies = async (
       createTeamCoveragePolicy({
         id: `${prefix}-team-policy`,
         provider: "api-football",
-        teamKey: "40",
-        teamName: "Liverpool",
+        teamKey: options.teamKey ?? coverageKeys.teamKey,
+        teamName: options.teamName ?? "Liverpool",
         enabled: true,
         alwaysTrack: true,
         priority: 95,
@@ -930,11 +944,14 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
       prediction: async () => {
         throw new Error("model unavailable");
       },
+    }, {
+      now: new Date("2026-04-16T11:03:00.000Z"),
     });
 
     assert.ok(secondResult);
     assert.equal(secondResult.task.id, `${taskPrefix}-prediction`);
-    assert.equal(secondResult.task.status, "failed");
+    assert.equal(secondResult.task.status, "queued");
+    assert.equal(secondResult.task.triggerKind, "retry");
     assert.equal(secondResult.taskRun.status, "failed");
     assert.match(secondResult.taskRun.error ?? "", /model unavailable/);
     assert.equal(secondResult.error?.message, "model unavailable");
@@ -943,6 +960,8 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
       research: async () => ({ summary: "unexpected" }),
       prediction: async () => ({ summary: "unexpected" }),
       validation: async () => ({ settledPredictionCount: 3 }),
+    }, {
+      now: new Date("2026-04-16T11:03:30.000Z"),
     });
 
     assert.ok(validationResult);
@@ -958,7 +977,7 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
         prediction: async () => ({}),
         validation: async () => ({}),
       },
-      { now: new Date("2026-04-16T11:05:00.000Z") },
+      { now: new Date("2026-04-16T11:03:31.000Z") },
     );
 
     assert.equal(exhausted, null);
@@ -1004,17 +1023,18 @@ testWithDatabase("runNextPersistedTask supports sandbox replay persisted tasks",
 
 testWithDatabase("enqueuePredictionForEligibleFixtures creates deterministic persisted scoring tasks without duplicates", async (databaseUrl) => {
   const prefix = `hae${Date.now().toString(36)}`;
+  const coverageKeys = createAutomationCoverageKeys(prefix);
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
   try {
-    await createAutomationCoveragePolicies(databaseUrl, prefix);
+    await createAutomationCoveragePolicies(databaseUrl, prefix, coverageKeys);
     const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
       competition: "Premier League",
       homeTeam: "Liverpool",
       awayTeam: "Chelsea",
-      providerLeagueId: "39",
-      providerHomeTeamId: "40",
+      providerLeagueId: coverageKeys.leagueKey,
+      providerHomeTeamId: coverageKeys.teamKey,
       providerAwayTeamId: "49",
       homePrice: 1.8,
       drawPrice: 3.7,
@@ -1024,8 +1044,8 @@ testWithDatabase("enqueuePredictionForEligibleFixtures creates deterministic per
       competition: "Premier League",
       homeTeam: "Liverpool",
       awayTeam: "Arsenal",
-      providerLeagueId: "39",
-      providerHomeTeamId: "40",
+      providerLeagueId: coverageKeys.leagueKey,
+      providerHomeTeamId: coverageKeys.teamKey,
       providerAwayTeamId: "50",
       homePrice: 1.9,
       drawPrice: 3.8,
@@ -1060,17 +1080,18 @@ testWithDatabase("enqueuePredictionForEligibleFixtures creates deterministic per
 
 testWithDatabase("enqueuePredictionForEligibleFixtures applies coverage watchlists and blocks fixtures below min allowed odd", async (databaseUrl) => {
   const prefix = `hacov${Date.now().toString(36)}`;
+  const coverageKeys = createAutomationCoverageKeys(prefix);
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
   try {
-    await createAutomationCoveragePolicies(databaseUrl, prefix);
+    await createAutomationCoveragePolicies(databaseUrl, prefix, coverageKeys);
     const trackedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
       competition: "Premier League",
       homeTeam: "Liverpool",
       awayTeam: "Chelsea",
-      providerLeagueId: "39",
-      providerHomeTeamId: "40",
+      providerLeagueId: coverageKeys.leagueKey,
+      providerHomeTeamId: coverageKeys.teamKey,
       providerAwayTeamId: "49",
       homePrice: 1.11,
       drawPrice: 5.1,
@@ -1116,30 +1137,32 @@ testWithDatabase("enqueuePredictionForEligibleFixtures applies coverage watchlis
 
 testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persists predictions, publishes a parlay, and executes validation", async (databaseUrl) => {
   const prefix = `har${Date.now().toString(36)}`;
+  const coverageKeys = createAutomationCoverageKeys(prefix);
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
   try {
-    await createAutomationCoveragePolicies(databaseUrl, prefix);
+    await createAutomationCoveragePolicies(databaseUrl, prefix, coverageKeys);
 
     const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
       competition: "Premier League",
-      providerLeagueId: "39",
+      providerLeagueId: coverageKeys.leagueKey,
       homeTeam: "Liverpool",
-      providerHomeTeamId: "40",
+      providerHomeTeamId: coverageKeys.teamKey,
       homePrice: 1.85,
       drawPrice: 3.7,
       awayPrice: 4.6,
     });
     const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
       competition: "Premier League",
-      providerLeagueId: "39",
+      providerLeagueId: coverageKeys.leagueKey,
       homePrice: 1.92,
       drawPrice: 3.5,
       awayPrice: 4.1,
     });
 
     const summary = await runAutomationCycle(databaseUrl, {
+      env: TEST_RUNTIME_ENV,
       now: new Date("2099-01-01T10:00:00.000Z"),
       fixtureIds: [fixtureOne.fixtureId, fixtureTwo.fixtureId],
       maxFixtures: 2,
@@ -1218,6 +1241,7 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
 
 testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end without manual fixture seeding", async (databaseUrl) => {
   const prefix = `hail${Date.now().toString(36)}`;
+  const coverageKeys = createAutomationCoverageKeys(prefix);
   const providerFixtureIds = [`${prefix}-fixture-1`, `${prefix}-fixture-2`] as const;
   const fixtureIds = providerFixtureIds.map((providerFixtureId) => `fixture:api-football:${providerFixtureId}`);
   const fixtures: readonly RawFixtureRecord[] = [
@@ -1228,13 +1252,13 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
       status: "scheduled",
       scheduledAt: "2099-01-02T18:00:00.000Z",
       competition: {
-        providerCompetitionId: "39",
+        providerCompetitionId: coverageKeys.leagueKey,
         name: "Premier League",
         country: "England",
         season: "2099",
       },
       homeTeam: {
-        providerTeamId: "40",
+        providerTeamId: coverageKeys.teamKey,
         name: "Liverpool",
         shortName: "LIV",
         country: "England",
@@ -1255,7 +1279,7 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
       status: "scheduled",
       scheduledAt: "2099-01-03T18:00:00.000Z",
       competition: {
-        providerCompetitionId: "39",
+        providerCompetitionId: coverageKeys.leagueKey,
         name: "Premier League",
         country: "England",
         season: "2099",
@@ -1300,7 +1324,7 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
   let batchIds: string[] = [];
 
   try {
-    await createAutomationCoveragePolicies(databaseUrl, prefix);
+    await createAutomationCoveragePolicies(databaseUrl, prefix, coverageKeys);
 
     const ingestionSummary = await runLiveIngestion({
       env: {
@@ -1322,6 +1346,7 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
     );
 
     const summary = await runAutomationCycle(databaseUrl, {
+      env: TEST_RUNTIME_ENV,
       now: new Date("2099-01-01T10:10:00.000Z"),
       fixtureIds,
       maxFixtures: 2,
@@ -1403,6 +1428,7 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
 testWithDatabase("runAutomationCycle scopes publisher selection to predictions from the current automation cycle only", async (databaseUrl) => {
   const prefix = `hars${Date.now().toString(36)}`;
   const historicalPrefix = `${prefix}old`;
+  const coverageKeys = createAutomationCoverageKeys(prefix);
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
   await cleanupAutomationArtifacts(databaseUrl, historicalPrefix);
@@ -1410,23 +1436,23 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
   try {
     const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
       competition: "Premier League",
-      providerLeagueId: "39",
+      providerLeagueId: coverageKeys.leagueKey,
       homeTeam: "Liverpool",
-      providerHomeTeamId: "40",
+      providerHomeTeamId: coverageKeys.teamKey,
       homePrice: 1.85,
       drawPrice: 3.7,
       awayPrice: 4.6,
     });
     const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
       competition: "Premier League",
-      providerLeagueId: "39",
+      providerLeagueId: coverageKeys.leagueKey,
       homePrice: 1.92,
       drawPrice: 3.5,
       awayPrice: 4.1,
     });
     const blockedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "3", {
       competition: "Premier League",
-      providerLeagueId: "39",
+      providerLeagueId: coverageKeys.leagueKey,
       homePrice: 1.12,
       drawPrice: 7.1,
       awayPrice: 16.5,
@@ -1446,7 +1472,7 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
         createLeagueCoveragePolicy({
           id: `${prefix}-league-policy`,
           provider: "api-football",
-          leagueKey: "39",
+          leagueKey: coverageKeys.leagueKey,
           leagueName: "Premier League",
           season: 2099,
           enabled: true,
@@ -1459,7 +1485,7 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
         createTeamCoveragePolicy({
           id: `${prefix}-team-policy`,
           provider: "api-football",
-          teamKey: "40",
+          teamKey: coverageKeys.teamKey,
           teamName: "Liverpool",
           enabled: true,
           alwaysTrack: true,
@@ -1531,6 +1557,7 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
       );
 
       const summary = await runAutomationCycle(databaseUrl, {
+        env: TEST_RUNTIME_ENV,
         now: new Date("2099-01-01T10:00:00.000Z"),
         fixtureIds: [fixtureOne.fixtureId, fixtureTwo.fixtureId, blockedFixture.fixtureId],
         maxFixtures: 3,
@@ -1594,7 +1621,13 @@ testWithDatabase("loadAutomationOpsSummary exposes scoring eligibility and recen
     assert.equal(included?.scoringEligibility.eligible, true);
     assert.match(included?.scoringEligibility.reason ?? "", /force-included/i);
     assert.equal(included?.recentAuditEvents.length, 2);
-    assert.equal(included?.recentAuditEvents[0]?.eventType, "fixture-workflow.manual-selection.updated");
+    assert.deepEqual(
+      [...(included?.recentAuditEvents.map((event) => event.eventType) ?? [])].sort(),
+      [
+        "fixture-workflow.manual-selection.updated",
+        "fixture-workflow.selection-override.updated",
+      ].sort(),
+    );
     assert.equal(excluded?.scoringEligibility.eligible, false);
     assert.match(excluded?.scoringEligibility.reason ?? "", /force-excluded/i);
   } finally {
@@ -1612,7 +1645,7 @@ testWithDatabase("loadLiveIngestionOpsSummary exposes persisted live ingestion r
 
   try {
     const taskId = `${prefix}-task-live-fixtures`;
-    const taskRunId = `${prefix}-trn-live-fixtures`;
+    const taskRunId = createOpaqueTaskRunId(taskId, 1);
     await unitOfWork.tasks.save({
       id: taskId,
       kind: "fixture-ingestion",
@@ -1637,16 +1670,6 @@ testWithDatabase("loadLiveIngestionOpsSummary exposes persisted live ingestion r
       createdAt: "2026-04-20T12:00:00.000Z",
       updatedAt: "2026-04-20T12:01:00.000Z",
     });
-    await unitOfWork.taskRuns.save(createTaskRun({
-      id: taskRunId,
-      taskId,
-      attemptNumber: 1,
-      status: "succeeded",
-      startedAt: "2026-04-20T12:00:00.000Z",
-      finishedAt: "2026-04-20T12:01:00.000Z",
-      createdAt: "2026-04-20T12:00:00.000Z",
-      updatedAt: "2026-04-20T12:01:00.000Z",
-    }));
     await unitOfWork.auditEvents.save({
       id: `${prefix}-audit-live-fixtures`,
       aggregateType: "task",

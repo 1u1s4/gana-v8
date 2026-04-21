@@ -234,6 +234,7 @@ export interface LiveIngestionOpsSummary {
 }
 
 export interface RunAutomationCycleOptions {
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly now?: Date;
   readonly fixtureIds?: readonly string[];
   readonly maxFixtures?: number;
@@ -847,6 +848,7 @@ export const runAutomationCycle = async (
   options: RunAutomationCycleOptions = {},
 ): Promise<AutomationCycleSummary> => {
   const now = options.now ?? new Date();
+  const runtimeEnv = options.env ?? process.env;
   const researchGeneratedAt = options.researchGeneratedAt ?? now.toISOString();
   const scoringGeneratedAt = options.scoringGeneratedAt ?? now.toISOString();
   const parlayGeneratedAt = options.parlayGeneratedAt ?? now.toISOString();
@@ -880,7 +882,7 @@ export const runAutomationCycle = async (
         const result = await runResearchTask({
           fixture,
           generatedAt: researchGeneratedAt,
-          ai: resolveResearchAiConfig(),
+          ai: resolveResearchAiConfig(runtimeEnv),
           persistence: {
             fixtures: unitOfWork.fixtures,
             fixtureWorkflows: unitOfWork.fixtureWorkflows,
@@ -911,6 +913,7 @@ export const runAutomationCycle = async (
         requirePayloadString(task, "fixtureId"),
         task.id,
         {
+          env: runtimeEnv,
           generatedAt: scoringGeneratedAt,
         },
       );
@@ -971,6 +974,7 @@ export const runAutomationCycle = async (
   }
 
   const parlayResult = await runPublisherWorker(databaseUrl, {
+    env: runtimeEnv,
     generatedAt: parlayGeneratedAt,
     predictionTaskIds: predictionExecutions
       .filter((execution) => execution.task.status === "succeeded")
