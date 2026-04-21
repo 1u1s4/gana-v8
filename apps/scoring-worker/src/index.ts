@@ -20,7 +20,6 @@ import {
   type ReasoningLevel,
   type RunStructuredOutputResult,
 } from "@gana-v8/ai-runtime";
-import { summarizePersistedFeatureMetadata } from "@gana-v8/feature-store";
 import { renderPrompt, type PromptRegistryKey } from "@gana-v8/model-registry";
 import {
   buildAtomicPrediction,
@@ -35,6 +34,12 @@ import {
 } from "@gana-v8/storage-adapters";
 import { evaluateFixtureCoverageScope, type FixtureCoverageScopeDecision } from "@gana-v8/policy-engine";
 import { z } from "zod";
+
+import {
+  formatPersistedResearchGateSummary,
+  loadPersistedFixtureResearch,
+  type PersistedFixtureResearch,
+} from "./persisted-research.js";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/scoring-worker",
@@ -114,6 +119,7 @@ export interface LoadEligibleFixturesOptions {
 
 export interface BuildResearchDossierOptions {
   readonly generatedAt?: string;
+  readonly persistedResearch?: PersistedFixtureResearch | null;
 }
 
 export interface ScoreFixturePredictionOptions {
@@ -343,6 +349,70 @@ const persistCoverageBlockedWorkflow = async (
   );
 };
 
+const persistResearchBundleBlockedWorkflow = async (
+  unitOfWork: StorageUnitOfWork,
+  research: PersistedFixtureResearch | null,
+  fixtureId: string,
+  generatedAt: string,
+): Promise<void> => {
+  const current =
+    (await unitOfWork.fixtureWorkflows.findByFixtureId(fixtureId)) ??
+    createFixtureWorkflow({
+      fixtureId,
+      ingestionStatus: "pending",
+      oddsStatus: "pending",
+      enrichmentStatus: "pending",
+      candidateStatus: "pending",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: false,
+    });
+
+  const persistedWorkflow = await unitOfWork.fixtureWorkflows.save(
+    transitionFixtureWorkflowStage(current, "prediction", {
+      status: "blocked",
+      occurredAt: generatedAt,
+      isCandidate: false,
+      diagnostics: {
+        ...(current.diagnostics ?? {}),
+        researchBundleDecision: research
+          ? {
+              status: research.status,
+              publishable: research.publishable,
+              gateReasons: research.gateReasons,
+              latestBundleGeneratedAt: research.latestBundleGeneratedAt,
+              latestSnapshotGeneratedAt: research.latestSnapshotGeneratedAt ?? null,
+            }
+          : {
+              status: "hold",
+              publishable: false,
+              gateReasons: [],
+              latestBundleGeneratedAt: null,
+              latestSnapshotGeneratedAt: null,
+            },
+      },
+    }),
+  );
+
+  await unitOfWork.auditEvents.save(
+    createAuditEvent({
+      id: `audit:fixture-workflow:${fixtureId}:research-bundle-blocked:prediction:${persistedWorkflow.updatedAt}`,
+      aggregateType: "fixture-workflow",
+      aggregateId: fixtureId,
+      eventType: "fixture-workflow.research-bundle.blocked",
+      actor: "scoring-worker",
+      payload: {
+        stage: "prediction",
+        status: research?.status ?? "hold",
+        publishable: research?.publishable ?? false,
+        gateReasons: research?.gateReasons ?? [],
+      },
+      occurredAt: persistedWorkflow.updatedAt,
+    }),
+  );
+};
+
 const persistScoringWorkflow = async (
   unitOfWork: StorageUnitOfWork,
   fixtureId: string,
@@ -441,32 +511,31 @@ const buildOutcomeScores = (impliedProbabilities: ImpliedProbabilities): Implied
 
 const blendResearchLean = (
   baseLean: ResearchDossierLike["recommendedLean"],
-  fixture: FixtureEntity,
+  persistedResearch: PersistedFixtureResearch | null | undefined,
   directionalScore: ImpliedProbabilities,
 ): {
   readonly recommendedLean: ResearchDossierLike["recommendedLean"];
   readonly directionalScore: ImpliedProbabilities;
-  readonly researchMetadataUsed: boolean;
   readonly summarySuffix: string;
   readonly researchEvidence: Array<{ readonly id: string }>;
 } => {
-  const persistedResearch = summarizePersistedFeatureMetadata(fixture);
   if (
+    !persistedResearch ||
+    !persistedResearch.publishable ||
     persistedResearch.featureReadinessStatus !== "ready" ||
-    !persistedResearch.researchRecommendedLean ||
-    persistedResearch.researchGeneratedAt === undefined
+    !persistedResearch.recommendedLean ||
+    persistedResearch.latestSnapshotGeneratedAt === undefined
   ) {
     return {
       recommendedLean: baseLean,
       directionalScore,
-      researchMetadataUsed: false,
       summarySuffix: "",
       researchEvidence: [],
     };
   }
 
   const boostedScores: { home: number; draw: number; away: number } = { ...directionalScore };
-  const researchLean = persistedResearch.researchRecommendedLean;
+  const researchLean = persistedResearch.recommendedLean;
   boostedScores[researchLean] = round(Math.max(boostedScores[researchLean], 0) + 0.7);
   const reranked = (["home", "draw", "away"] as Array<ResearchDossierLike["recommendedLean"]>).sort(
     (left, right) => boostedScores[right] - boostedScores[left],
@@ -476,13 +545,12 @@ const blendResearchLean = (
   return {
     recommendedLean,
     directionalScore: boostedScores,
-    researchMetadataUsed: true,
     summarySuffix:
-      ` Research snapshot leans ${researchLean} from ${persistedResearch.researchGeneratedAt}` +
-      (persistedResearch.researchTopEvidenceTitles[0]
-        ? ` with top signal ${persistedResearch.researchTopEvidenceTitles[0]}.`
+      ` Research snapshot leans ${researchLean} from ${persistedResearch.latestSnapshotGeneratedAt}` +
+      (persistedResearch.topEvidenceTitles[0]
+        ? ` with top signal ${persistedResearch.topEvidenceTitles[0]}.`
         : "."),
-    researchEvidence: [{ id: `research:${fixture.id}` }],
+    researchEvidence: [{ id: `research:${persistedResearch.fixtureId}` }],
   };
 };
 
@@ -504,7 +572,11 @@ export const buildResearchDossierFromFixture = (
   ranked.sort((left, right) => right[1] - left[1]);
 
   const baseLean = (ranked[0]?.[0] ?? "draw") as ResearchDossierLike["recommendedLean"];
-  const blended = blendResearchLean(baseLean, fixture, buildOutcomeScores(impliedProbabilities));
+  const blended = blendResearchLean(
+    baseLean,
+    options.persistedResearch,
+    buildOutcomeScores(impliedProbabilities),
+  );
 
   return {
     fixtureId: fixture.id,
@@ -882,6 +954,43 @@ export const scoreFixturePrediction = async (
       };
     }
 
+    const persistedResearch = await loadPersistedFixtureResearch({
+      fixtureId: fixture.id,
+      unitOfWork: runtime.unitOfWork,
+      client: runtime.client as unknown as Record<string, unknown>,
+    });
+    if (!persistedResearch) {
+      await persistResearchBundleBlockedWorkflow(
+        runtime.unitOfWork,
+        null,
+        fixture.id,
+        generatedAt,
+      );
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: "No persisted research bundle found for fixture.",
+      };
+    }
+
+    if (!persistedResearch.publishable) {
+      await persistResearchBundleBlockedWorkflow(
+        runtime.unitOfWork,
+        persistedResearch,
+        fixture.id,
+        generatedAt,
+      );
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason:
+          `Research bundle status ${persistedResearch.status} is not publishable.` +
+          (formatPersistedResearchGateSummary(persistedResearch)
+            ? ` ${formatPersistedResearchGateSummary(persistedResearch)}`
+            : ""),
+      };
+    }
+
     const latestOddsSnapshot = await findLatestH2hSnapshot(runtime.client, fixture);
     if (!latestOddsSnapshot) {
       return {
@@ -933,7 +1042,10 @@ export const scoreFixturePrediction = async (
       ...fixture,
       metadata: enrichFixtureMetadata(fixture, impliedProbabilities),
     };
-    const dossier = buildResearchDossierFromFixture(enrichedFixture, latestOddsSnapshot, { generatedAt });
+    const dossier = buildResearchDossierFromFixture(enrichedFixture, latestOddsSnapshot, {
+      generatedAt,
+      persistedResearch,
+    });
     const task = await ensureTask(
       runtime.unitOfWork,
       fixture.id,

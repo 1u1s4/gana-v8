@@ -9,6 +9,7 @@ import {
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
+  createIngestionTaskEnvelope,
   createIngestionWorkerRouter,
   createIngestionWorkerRuntime,
   describeWorkspace,
@@ -34,7 +35,10 @@ test("runtime config resolves ingestion-worker defaults", () => {
 test("router registers the ingestion intents", () => {
   const router = createIngestionWorkerRouter({ env: TEST_RUNTIME_ENV });
 
-  assert.deepEqual([...router.intents()].sort(), ["ingest-fixtures", "ingest-odds"]);
+  assert.deepEqual(
+    [...router.intents()].sort(),
+    ["ingest-availability", "ingest-fixtures", "ingest-lineups", "ingest-odds"],
+  );
   assert.match(describeWorkspace(), /ingestion-worker/);
 });
 
@@ -380,7 +384,7 @@ test("runLiveIngestion supports declarative odds fixture and market overrides in
   assert.match(requests[1] ?? "", /fixture=1000/);
 });
 
-test("runtime drains queued fixture and odds tasks into canonical snapshots", async () => {
+test("runtime drains fixture, availability, lineups, and odds tasks into canonical snapshots", async () => {
   const queue = new SimpleInMemoryQueue();
   const runtime = createIngestionWorkerRuntime({
     env: TEST_RUNTIME_ENV,
@@ -411,6 +415,50 @@ test("runtime drains queued fixture and odds tasks into canonical snapshots", as
   );
 
   queue.enqueue(
+    createIngestionTaskEnvelope({
+      intent: "ingest-availability",
+      metadata: {
+        labels: ["test", "availability"],
+        source: "tests/runtime",
+      },
+      payload: {
+        fixtureIds: ["fix-100"],
+        window: {
+          end: "2026-04-15T18:30:00.000Z",
+          granularity: "intraday",
+          start: "2026-04-15T17:30:00.000Z",
+        },
+      },
+      scheduledFor: "2026-04-15T12:00:00.000Z",
+      taskKind: "fixture-ingestion",
+      traceId: "trace-availability",
+      workflowId: "wf-availability",
+    }),
+  );
+
+  queue.enqueue(
+    createIngestionTaskEnvelope({
+      intent: "ingest-lineups",
+      metadata: {
+        labels: ["test", "lineups"],
+        source: "tests/runtime",
+      },
+      payload: {
+        fixtureIds: ["fix-100"],
+        window: {
+          end: "2026-04-15T18:45:00.000Z",
+          granularity: "intraday",
+          start: "2026-04-15T18:00:00.000Z",
+        },
+      },
+      scheduledFor: "2026-04-15T12:00:00.000Z",
+      taskKind: "fixture-ingestion",
+      traceId: "trace-lineups",
+      workflowId: "wf-lineups",
+    }),
+  );
+
+  queue.enqueue(
     createTaskEnvelope({
       intent: "ingest-odds",
       metadata: {
@@ -435,18 +483,29 @@ test("runtime drains queued fixture and odds tasks into canonical snapshots", as
   const drained = await runtime.drainQueue(new Date("2026-04-15T12:00:00.000Z"));
   const snapshots = runtime.pipeline.repository.listSnapshots();
   const matches = runtime.pipeline.repository.listMatches();
-  const fixtureResult = drained.find((item) => item.envelope.intent === "ingest-fixtures");
-  const oddsResult = drained.find((item) => item.envelope.intent === "ingest-odds");
+  const fixtureResult = drained.find((item) => item.execution.output?.intent === "ingest-fixtures");
+  const availabilityResult = drained.find((item) => item.execution.output?.intent === "ingest-availability");
+  const lineupsResult = drained.find((item) => item.execution.output?.intent === "ingest-lineups");
+  const oddsResult = drained.find((item) => item.execution.output?.intent === "ingest-odds");
 
-  assert.equal(drained.length, 2);
-  assert.equal(queue.stats().completed, 2);
-  assert.equal(snapshots.length, 2);
+  assert.equal(drained.length, 4);
+  assert.equal(queue.stats().completed, 4);
+  assert.equal(snapshots.length, 4);
   assert.equal(matches.length, 1);
+  assert.equal(matches[0]?.availability.length, 2);
+  assert.equal(matches[0]?.lineups.length, 2);
   assert.equal(matches[0]?.odds.length, 1);
   assert.equal(fixtureResult?.execution.status, "succeeded");
   assert.equal(fixtureResult?.execution.output?.insertedCompetitions, 1);
   assert.equal(fixtureResult?.execution.output?.insertedTeams, 2);
   assert.equal(fixtureResult?.execution.output?.canonicalMatches, 1);
+  assert.equal(availabilityResult?.execution.status, "succeeded");
+  assert.equal(availabilityResult?.execution.output?.insertedPlayers, 2);
+  assert.equal(availabilityResult?.execution.output?.upsertedAvailabilityEntries, 2);
+  assert.equal(availabilityResult?.execution.output?.canonicalAvailabilityEntries, 2);
+  assert.equal(lineupsResult?.execution.status, "succeeded");
+  assert.equal(lineupsResult?.execution.output?.upsertedLineups, 2);
+  assert.equal(lineupsResult?.execution.output?.canonicalLineups, 2);
   assert.equal(oddsResult?.execution.status, "succeeded");
   assert.equal(oddsResult?.execution.output?.upsertedMarkets, 1);
   assert.equal(oddsResult?.execution.output?.canonicalMarkets, 1);
@@ -686,10 +745,66 @@ test("runtime persists raw batches and odds snapshots when a prisma client is wi
     }),
   );
 
-  await runtime.drainQueue(new Date("2026-04-15T12:00:00.000Z"));
+  queue.enqueue(
+    createIngestionTaskEnvelope({
+      createdAt: "2026-04-15T12:00:00.000Z",
+      intent: "ingest-availability",
+      metadata: {
+        labels: ["test", "availability", "raw-batch"],
+        source: "tests/runtime",
+      },
+      payload: {
+        fixtureIds: ["fix-100"],
+        window: {
+          end: "2026-04-15T18:30:00.000Z",
+          granularity: "intraday",
+          start: "2026-04-15T17:30:00.000Z",
+        },
+      },
+      scheduledFor: "2026-04-15T12:00:00.000Z",
+      taskKind: "fixture-ingestion",
+      traceId: "trace-availability-raw-batch",
+      workflowId: "wf-availability-raw-batch",
+    }),
+  );
 
-  assert.equal(rawBatchUpserts.length, 2);
+  queue.enqueue(
+    createIngestionTaskEnvelope({
+      createdAt: "2026-04-15T12:00:00.000Z",
+      intent: "ingest-lineups",
+      metadata: {
+        labels: ["test", "lineups", "raw-batch"],
+        source: "tests/runtime",
+      },
+      payload: {
+        fixtureIds: ["fix-100"],
+        window: {
+          end: "2026-04-15T18:45:00.000Z",
+          granularity: "intraday",
+          start: "2026-04-15T18:00:00.000Z",
+        },
+      },
+      scheduledFor: "2026-04-15T12:00:00.000Z",
+      taskKind: "fixture-ingestion",
+      traceId: "trace-lineups-raw-batch",
+      workflowId: "wf-lineups-raw-batch",
+    }),
+  );
+
+  await runtime.drainQueue(new Date("2026-04-15T12:00:00.000Z"));
+  const persistedFixtures = await unitOfWork.fixtures.list();
+  const availabilitySnapshots = await unitOfWork.availabilitySnapshots.list();
+  const lineupSnapshots = await unitOfWork.lineupSnapshots.list();
+  const lineupParticipants = await unitOfWork.lineupParticipants.list();
+
+  assert.equal(rawBatchUpserts.length, 4);
   assert.equal(oddsSnapshotUpserts.length, 1);
+  assert.equal(persistedFixtures[0]?.metadata.providerHomeTeamId, "che");
+  assert.equal(persistedFixtures[0]?.metadata.providerAwayTeamId, "ars");
+  assert.equal(availabilitySnapshots.length, 2);
+  assert.equal(lineupSnapshots.length, 2);
+  assert.equal(lineupParticipants.length > 0, true);
+  assert.equal(lineupSnapshots.every((snapshot) => snapshot.teamSide === "home" || snapshot.teamSide === "away"), true);
   const oddsUpsert = oddsSnapshotUpserts[0] as {
     create: {
       selections: {
@@ -773,9 +888,9 @@ test("demo run materializes snapshots and honors runtime overrides", async () =>
     now: () => new Date("2026-04-15T12:00:00.000Z"),
   });
 
-  assert.equal(summary.queuedBeforeRun, 2);
-  assert.equal(summary.completedCount, 2);
-  assert.equal(summary.snapshotCount, 2);
+  assert.equal(summary.queuedBeforeRun, 4);
+  assert.equal(summary.completedCount, 4);
+  assert.equal(summary.snapshotCount, 4);
   assert.equal(summary.runtime.appEnv, "test");
   assert.equal(summary.runtime.profile, "ci-regression");
   assert.equal(summary.runtime.providerSource, "replay");
@@ -788,8 +903,26 @@ test("demo run materializes snapshots and honors runtime overrides", async () =>
   assert.equal(
     summary.results.some(
       (result) =>
+        result.intent === "ingest-availability" &&
+        result.canonicalAvailabilityEntries === 2 &&
+        result.observedRecords > 0,
+    ),
+    true,
+  );
+  assert.equal(
+    summary.results.some(
+      (result) =>
         result.intent === "ingest-fixtures" &&
         result.canonicalMatches === 1 &&
+        result.observedRecords > 0,
+    ),
+    true,
+  );
+  assert.equal(
+    summary.results.some(
+      (result) =>
+        result.intent === "ingest-lineups" &&
+        result.canonicalLineups === 2 &&
         result.observedRecords > 0,
     ),
     true,

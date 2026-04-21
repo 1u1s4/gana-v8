@@ -37,6 +37,7 @@ import {
   type AiRunEntity,
   type AuditEventEntity,
   type DailyAutomationPolicyEntity,
+  type FeatureSnapshotEntity,
   type FixtureEntity,
   type FixtureSelectionOverride,
   type FixtureWorkflowManualSelectionInput,
@@ -45,6 +46,7 @@ import {
   type LeagueCoveragePolicyEntity,
   type ParlayEntity,
   type PredictionEntity,
+  type ResearchBundleEntity,
   type TaskEntity,
   type TaskRunEntity,
   type TaskStatus,
@@ -109,6 +111,56 @@ export interface OddsSnapshotReadModel {
   readonly marketKey: string;
   readonly capturedAt: string;
   readonly selectionCount: number;
+}
+
+export type FixtureResearchBundleStatus = "publishable" | "degraded" | "hold";
+
+export interface FixtureResearchGateReasonReadModel {
+  readonly code?: string | null;
+  readonly severity?: string | null;
+  readonly message: string;
+}
+
+export interface FixtureResearchTraceReadModel {
+  readonly synthesisMode: "deterministic" | "ai-assisted" | "ai-fallback";
+  readonly aiRunId?: string;
+  readonly aiProvider?: string;
+  readonly aiModel?: string;
+  readonly aiPromptVersion?: string;
+  readonly providerRequestId?: string;
+  readonly fallbackSummary?: string;
+  readonly plannerVersion?: string;
+  readonly assignmentIds?: readonly string[];
+}
+
+export interface FixtureResearchSnapshotReadModel {
+  readonly bundleId?: string | null;
+  readonly generatedAt: string;
+  readonly bundleStatus: FixtureResearchBundleStatus;
+  readonly gateReasons: readonly FixtureResearchGateReasonReadModel[];
+  readonly recommendedLean?: string | null;
+  readonly evidenceCount?: number | null;
+  readonly topEvidenceTitles: readonly string[];
+  readonly risks: readonly string[];
+  readonly featureReadinessStatus?: string | null;
+  readonly featureReadinessReasons: readonly string[];
+  readonly researchTrace: FixtureResearchTraceReadModel | null;
+}
+
+export interface FixtureResearchReadModel {
+  readonly fixtureId: string;
+  readonly status: FixtureResearchBundleStatus;
+  readonly publishable: boolean;
+  readonly gateReasons: readonly FixtureResearchGateReasonReadModel[];
+  readonly latestBundle: {
+    readonly id?: string | null;
+    readonly generatedAt: string;
+    readonly summary?: string | null;
+    readonly recommendedLean?: string | null;
+    readonly aiRunId?: string | null;
+  };
+  readonly latestSnapshot: FixtureResearchSnapshotReadModel | null;
+  readonly researchTrace: FixtureResearchTraceReadModel | null;
 }
 
 export interface OperationalSummary {
@@ -234,6 +286,7 @@ export interface ParlayDetailReadModel extends Omit<ParlayEntity, "legs"> {
 export interface FixtureOpsDetailReadModel {
   readonly fixture: FixtureEntity;
   readonly workflow?: FixtureWorkflowEntity;
+  readonly research: FixtureResearchReadModel | null;
   readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
   readonly scoringEligibility: {
     readonly eligible: boolean;
@@ -251,6 +304,7 @@ export interface CoverageDailyScopeReadModel extends FixtureCoverageScopeDecisio
 export interface OperationSnapshot {
   readonly generatedAt: string;
   readonly fixtures: readonly FixtureEntity[];
+  readonly fixtureResearch: readonly FixtureResearchReadModel[];
   readonly fixtureWorkflows: readonly FixtureWorkflowEntity[];
   readonly leagueCoveragePolicies: readonly LeagueCoveragePolicyEntity[];
   readonly teamCoveragePolicies: readonly TeamCoveragePolicyEntity[];
@@ -386,6 +440,7 @@ export interface SandboxCertificationDetailReadModel extends SandboxCertificatio
 export interface FixtureOpsDetailReadModel {
   readonly fixture: FixtureEntity;
   readonly workflow?: FixtureWorkflowEntity;
+  readonly research: FixtureResearchReadModel | null;
   readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
   readonly scoringEligibility: {
     readonly eligible: boolean;
@@ -499,6 +554,521 @@ export const workspaceInfo = {
 export function describeWorkspace() {
   return `${workspaceInfo.workspaceName} (${workspaceInfo.category})`;
 }
+
+interface FixtureResearchRepositoryCollectionLike {
+  readonly researchBundles?: {
+    list(): Promise<ResearchBundleEntity[]>;
+    findLatestByFixtureId?(fixtureId: string): Promise<ResearchBundleEntity | null>;
+  };
+  readonly featureSnapshots?: {
+    list(): Promise<FeatureSnapshotEntity[]>;
+    findLatestByFixtureId?(fixtureId: string): Promise<FeatureSnapshotEntity | null>;
+  };
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const asString = (value: unknown): string | null =>
+  typeof value === "string" && value.trim().length > 0 ? value : null;
+
+const asNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const asStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => (typeof item === "string" && item.trim().length > 0 ? [item] : []));
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split("|")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
+  return [];
+};
+
+const asBundleStatus = (value: unknown): FixtureResearchBundleStatus | null => {
+  const normalized = asString(value)?.trim().toLowerCase();
+  return normalized === "publishable" || normalized === "degraded" || normalized === "hold"
+    ? normalized
+    : null;
+};
+
+const defaultGateSeverity = (
+  status: FixtureResearchBundleStatus,
+): string | null =>
+  status === "hold" ? "block" : status === "degraded" ? "warn" : "info";
+
+const normalizeGateReasons = (
+  value: unknown,
+  fallbackStatus: FixtureResearchBundleStatus,
+  fallbackMessages: readonly string[] = [],
+): FixtureResearchGateReasonReadModel[] => {
+  const normalizedFromArray: FixtureResearchGateReasonReadModel[] = [];
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry === "string" && entry.trim().length > 0) {
+        normalizedFromArray.push({
+          message: entry,
+          severity: defaultGateSeverity(fallbackStatus),
+        });
+        continue;
+      }
+
+      const record = asRecord(entry);
+      const message = asString(record?.message);
+      if (!message) {
+        continue;
+      }
+
+      const code = asString(record?.code);
+      const severity = asString(record?.severity);
+      normalizedFromArray.push({
+        message,
+        ...(code ? { code } : {}),
+        ...(severity ? { severity } : {}),
+      });
+    }
+  }
+
+  if (normalizedFromArray.length > 0) {
+    return normalizedFromArray;
+  }
+
+  return fallbackMessages.map<FixtureResearchGateReasonReadModel>((message) => ({
+    message,
+    severity: defaultGateSeverity(fallbackStatus),
+  }));
+};
+
+const normalizeResearchTrace = (
+  value: unknown,
+  aiRun?: {
+    readonly id: string;
+    readonly provider: string;
+    readonly model: string;
+    readonly promptVersion: string;
+    readonly providerRequestId?: string;
+    readonly status: string;
+    readonly error?: string;
+  } | null,
+): FixtureResearchTraceReadModel | null => {
+  const record = asRecord(value);
+  const synthesisMode = asString(record?.synthesisMode);
+  const inferredMode =
+    synthesisMode === "deterministic" || synthesisMode === "ai-assisted" || synthesisMode === "ai-fallback"
+      ? synthesisMode
+      : aiRun?.status === "failed"
+        ? "ai-fallback"
+        : aiRun
+          ? "ai-assisted"
+          : null;
+
+  if (!inferredMode) {
+    return null;
+  }
+
+  const aiRunId = asString(record?.aiRunId) ?? aiRun?.id;
+  const aiProvider = asString(record?.aiProvider) ?? aiRun?.provider;
+  const aiModel = asString(record?.aiModel) ?? aiRun?.model;
+  const aiPromptVersion =
+    asString(record?.aiPromptVersion) ?? aiRun?.promptVersion;
+  const providerRequestId =
+    asString(record?.providerRequestId) ?? aiRun?.providerRequestId;
+  const fallbackSummary = asString(record?.fallbackSummary) ?? aiRun?.error;
+  const plannerVersion = asString(record?.plannerVersion);
+  const assignmentIds = asStringArray(record?.assignmentIds);
+
+  return {
+    synthesisMode: inferredMode,
+    ...(aiRunId ? { aiRunId } : {}),
+    ...(aiProvider ? { aiProvider } : {}),
+    ...(aiModel ? { aiModel } : {}),
+    ...(aiPromptVersion ? { aiPromptVersion } : {}),
+    ...(providerRequestId ? { providerRequestId } : {}),
+    ...(fallbackSummary ? { fallbackSummary } : {}),
+    ...(plannerVersion ? { plannerVersion } : {}),
+    ...(assignmentIds.length > 0 ? { assignmentIds } : {}),
+  };
+};
+
+const createFixtureResearchSnapshotReadModel = (input: {
+  readonly bundleId?: string | null;
+  readonly generatedAt: string;
+  readonly bundleStatus: FixtureResearchBundleStatus;
+  readonly gateReasons: readonly FixtureResearchGateReasonReadModel[];
+  readonly recommendedLean?: string | null;
+  readonly evidenceCount?: number | null;
+  readonly topEvidenceTitles?: readonly string[];
+  readonly risks?: readonly string[];
+  readonly featureReadinessStatus?: string | null;
+  readonly featureReadinessReasons?: readonly string[];
+  readonly researchTrace?: FixtureResearchTraceReadModel | null;
+}): FixtureResearchSnapshotReadModel => ({
+  ...(input.bundleId ? { bundleId: input.bundleId } : {}),
+  generatedAt: input.generatedAt,
+  bundleStatus: input.bundleStatus,
+  gateReasons: input.gateReasons,
+  ...(input.recommendedLean ? { recommendedLean: input.recommendedLean } : {}),
+  ...(input.evidenceCount !== undefined && input.evidenceCount !== null ? { evidenceCount: input.evidenceCount } : {}),
+  topEvidenceTitles: [...(input.topEvidenceTitles ?? [])],
+  risks: [...(input.risks ?? [])],
+  ...(input.featureReadinessStatus ? { featureReadinessStatus: input.featureReadinessStatus } : {}),
+  featureReadinessReasons: [...(input.featureReadinessReasons ?? [])],
+  researchTrace: input.researchTrace ?? null,
+});
+
+const createFixtureResearchReadModelFromDedicatedRecords = (
+  fixtureId: string,
+  latestBundle: ResearchBundleEntity | null,
+  latestSnapshot: FeatureSnapshotEntity | null,
+  aiRunsById: ReadonlyMap<string, AiRunEntity>,
+): FixtureResearchReadModel | null => {
+  if (!latestBundle && !latestSnapshot) {
+    return null;
+  }
+
+  const resolvedStatus = latestSnapshot?.bundleStatus ?? latestBundle?.gateResult.status ?? "hold";
+  const resolvedSnapshotTrace =
+    latestSnapshot
+      ? normalizeResearchTrace(
+          latestSnapshot.researchTrace,
+          latestSnapshot.researchTrace?.aiRunId ? aiRunsById.get(latestSnapshot.researchTrace.aiRunId) : null,
+        )
+      : null;
+  const resolvedBundleAiRun =
+    latestBundle?.aiRunId ? aiRunsById.get(latestBundle.aiRunId) ?? null : null;
+  const resolvedBundleTrace = latestBundle
+    ? normalizeResearchTrace(latestBundle.trace, resolvedBundleAiRun)
+    : null;
+  const resolvedSnapshot = latestSnapshot
+    ? createFixtureResearchSnapshotReadModel({
+        bundleId: latestSnapshot.bundleId,
+        generatedAt: latestSnapshot.generatedAt,
+        bundleStatus: latestSnapshot.bundleStatus,
+        gateReasons: normalizeGateReasons(latestSnapshot.gateReasons, latestSnapshot.bundleStatus),
+        recommendedLean: latestSnapshot.recommendedLean,
+        evidenceCount: latestSnapshot.evidenceCount,
+        topEvidenceTitles: latestSnapshot.topEvidence.map((item) => item.title),
+        risks: latestSnapshot.risks,
+        featureReadinessStatus: latestSnapshot.readiness.status,
+        featureReadinessReasons: latestSnapshot.readiness.reasons,
+        researchTrace: resolvedSnapshotTrace,
+      })
+    : null;
+  const gateReasons = resolvedSnapshot?.gateReasons ??
+    normalizeGateReasons(
+      latestBundle?.gateResult.reasons,
+      resolvedStatus,
+      latestSnapshot?.readiness.reasons ?? [],
+    );
+  const generatedAt =
+    resolvedSnapshot?.generatedAt ??
+    latestBundle?.generatedAt ??
+    latestBundle?.updatedAt;
+
+  if (!generatedAt) {
+    return null;
+  }
+
+  const latestRecommendedLean =
+    latestSnapshot?.recommendedLean ?? latestBundle?.recommendedLean;
+  const latestBundleAiRunId = latestBundle?.aiRunId;
+
+  return {
+    fixtureId,
+    status: resolvedStatus,
+    publishable: resolvedStatus === "publishable",
+    gateReasons,
+    latestBundle: {
+      id: latestBundle?.id ?? resolvedSnapshot?.bundleId ?? null,
+      generatedAt,
+      ...(latestBundle?.summary ? { summary: latestBundle.summary } : {}),
+      ...(latestRecommendedLean ? { recommendedLean: latestRecommendedLean } : {}),
+      ...(latestBundleAiRunId ? { aiRunId: latestBundleAiRunId } : {}),
+    },
+    latestSnapshot: resolvedSnapshot,
+    researchTrace: resolvedSnapshot?.researchTrace ?? resolvedBundleTrace,
+  };
+};
+
+const createFixtureResearchReadModelFromTaskArtifacts = (input: {
+  readonly fixtureId: string;
+  readonly task: TaskEntity;
+  readonly taskRun: TaskRunEntity;
+  readonly aiRuns: readonly AiRunEntity[];
+}): FixtureResearchReadModel | null => {
+  const result = asRecord(input.taskRun.result);
+  if (!result) {
+    return null;
+  }
+
+  const bundleRecord = asRecord(result.latestBundle ?? result.bundle);
+  const bundleGateResult = asRecord(bundleRecord?.gateResult);
+  const snapshotRecord = asRecord(result.latestSnapshot ?? result.featureSnapshot ?? result.snapshot);
+  const snapshotReadiness = asRecord(snapshotRecord?.readiness);
+  const topLevelTrace = asRecord(result.researchTrace ?? result.trace);
+  if (bundleRecord === null && snapshotRecord === null) {
+    return null;
+  }
+
+  const aiRunsById = new Map(input.aiRuns.map((aiRun) => [aiRun.id, aiRun]));
+  const explicitAiRunId =
+    asString(bundleRecord?.aiRunId) ??
+    asString(asRecord(snapshotRecord?.researchTrace)?.aiRunId) ??
+    asString(asRecord(bundleRecord?.trace)?.aiRunId) ??
+    asString(snapshotRecord?.aiRunId) ??
+    asString(topLevelTrace?.aiRunId) ??
+    asString(result.aiRunId);
+  const aiRun =
+    (explicitAiRunId ? aiRunsById.get(explicitAiRunId) : null) ??
+    sortByIsoDescending(input.aiRuns, (candidate) => candidate.updatedAt)[0] ??
+    null;
+  const resolvedStatus =
+    asBundleStatus(bundleGateResult?.status) ??
+    asBundleStatus(snapshotRecord?.bundleStatus) ??
+    null;
+  if (resolvedStatus === null) {
+    return null;
+  }
+  const readinessReasons =
+    asStringArray(snapshotReadiness?.reasons);
+  const gateReasons =
+    normalizeGateReasons(
+      snapshotRecord?.gateReasons ?? bundleGateResult?.reasons,
+      resolvedStatus,
+      readinessReasons,
+    );
+  const snapshotGeneratedAt =
+    asString(snapshotRecord?.generatedAt) ??
+    null;
+  const researchTrace = normalizeResearchTrace(
+    snapshotRecord?.researchTrace ?? bundleRecord?.trace ?? result.researchTrace ?? result.trace,
+    aiRun,
+  );
+  const latestSnapshot =
+    snapshotRecord !== null && snapshotGeneratedAt
+      ? createFixtureResearchSnapshotReadModel({
+          bundleId: asString(snapshotRecord?.bundleId) ?? asString(bundleRecord?.id),
+          generatedAt: snapshotGeneratedAt,
+          bundleStatus: resolvedStatus,
+          gateReasons,
+          recommendedLean:
+            asString(snapshotRecord?.recommendedLean) ??
+            asString(bundleRecord?.recommendedLean),
+          evidenceCount: asNumber(snapshotRecord?.evidenceCount),
+          topEvidenceTitles: Array.isArray(snapshotRecord?.topEvidence)
+            ? snapshotRecord.topEvidence.flatMap((entry) => asString(asRecord(entry)?.title) ? [asString(asRecord(entry)?.title)!] : [])
+            : [],
+          risks: asStringArray(snapshotRecord?.risks),
+          featureReadinessStatus:
+            asString(snapshotReadiness?.status),
+          featureReadinessReasons: readinessReasons,
+          researchTrace,
+        })
+      : null;
+  const bundleGeneratedAt =
+    asString(bundleRecord?.generatedAt) ??
+    latestSnapshot?.generatedAt ??
+    input.taskRun.finishedAt ??
+    input.taskRun.updatedAt ??
+    input.task.updatedAt;
+
+  if (!bundleGeneratedAt) {
+    return null;
+  }
+
+  return {
+    fixtureId: input.fixtureId,
+    status: resolvedStatus,
+    publishable: resolvedStatus === "publishable",
+    gateReasons,
+    latestBundle: {
+      id: asString(bundleRecord?.id) ?? input.taskRun.id,
+      generatedAt: bundleGeneratedAt,
+      ...(asString(bundleRecord?.summary) ? { summary: asString(bundleRecord?.summary) } : {}),
+      ...((latestSnapshot?.recommendedLean ??
+      asString(bundleRecord?.recommendedLean))
+        ? {
+            recommendedLean:
+              latestSnapshot?.recommendedLean ??
+              asString(bundleRecord?.recommendedLean)
+          }
+        : {}),
+      ...(explicitAiRunId ?? aiRun?.id ? { aiRunId: explicitAiRunId ?? aiRun?.id ?? null } : {}),
+    },
+    latestSnapshot,
+    researchTrace: latestSnapshot?.researchTrace ?? researchTrace,
+  };
+};
+
+const findLatestByGeneratedAt = <T extends { readonly fixtureId: string; readonly generatedAt: string }>(
+  records: readonly T[],
+  fixtureId: string,
+): T | null =>
+  sortByIsoDescending(
+    records.filter((record) => record.fixtureId === fixtureId),
+    (record) => record.generatedAt,
+  )[0] ?? null;
+
+const loadFixtureResearchFromRepositories = async (
+  fixtures: readonly FixtureEntity[],
+  repositories: FixtureResearchRepositoryCollectionLike,
+  aiRuns: readonly AiRunEntity[],
+): Promise<FixtureResearchReadModel[]> => {
+  if (!repositories.researchBundles && !repositories.featureSnapshots) {
+    return [];
+  }
+
+  const [bundles, snapshots] = await Promise.all([
+    repositories.researchBundles?.list() ?? Promise.resolve([]),
+    repositories.featureSnapshots?.list() ?? Promise.resolve([]),
+  ]);
+  const aiRunsById = new Map(aiRuns.map((aiRun) => [aiRun.id, aiRun]));
+
+  return fixtures.flatMap((fixture) => {
+    const latestBundle = findLatestByGeneratedAt(bundles, fixture.id);
+    const latestSnapshot = findLatestByGeneratedAt(snapshots, fixture.id);
+    const research = createFixtureResearchReadModelFromDedicatedRecords(
+      fixture.id,
+      latestBundle,
+      latestSnapshot,
+      aiRunsById,
+    );
+    return research ? [research] : [];
+  });
+};
+
+const extractFixtureIdFromTask = (task: TaskEntity): string | null =>
+  asString(asRecord(task.payload)?.fixtureId);
+
+const loadFixtureResearchFromTaskArtifacts = async (
+  fixtures: readonly FixtureEntity[],
+  tasks: readonly TaskEntity[],
+  taskRuns: readonly TaskRunEntity[],
+  aiRuns: readonly AiRunEntity[],
+): Promise<FixtureResearchReadModel[]> => {
+  const researchTasks = tasks.filter((task) => task.kind === "research");
+  const taskRunsByTaskId = new Map(
+    researchTasks.map((task) => [
+      task.id,
+      sortByIsoDescending(
+        taskRuns.filter((taskRun) => taskRun.taskId === task.id),
+        (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
+      )[0] ?? null,
+    ]),
+  );
+  const aiRunsByTaskId = new Map(
+    researchTasks.map((task) => [
+      task.id,
+      sortByIsoDescending(
+        aiRuns.filter((aiRun) => aiRun.taskId === task.id),
+        (aiRun) => aiRun.updatedAt,
+      ),
+    ]),
+  );
+
+  return fixtures.flatMap((fixture) => {
+    const candidate = sortByIsoDescending(
+      researchTasks
+        .filter((task) => extractFixtureIdFromTask(task) === fixture.id)
+        .flatMap((task) => {
+          const taskRun = taskRunsByTaskId.get(task.id);
+          if (!taskRun) {
+            return [];
+          }
+
+          const research = createFixtureResearchReadModelFromTaskArtifacts({
+            fixtureId: fixture.id,
+            task,
+            taskRun,
+            aiRuns: aiRunsByTaskId.get(task.id) ?? [],
+          });
+
+          return research ? [research] : [];
+        }),
+      (research) => research.latestBundle.generatedAt,
+    )[0];
+
+    return candidate ? [candidate] : [];
+  });
+};
+
+const loadOptionalClientReadModels = async (
+  client: Record<string, unknown>,
+  modelName: string,
+): Promise<unknown[]> => {
+  const model = asRecord(Reflect.get(client, modelName));
+  const findMany = model?.findMany;
+  if (typeof findMany !== "function") {
+    return [];
+  }
+
+  const result = await (findMany as (args: Record<string, unknown>) => Promise<unknown[]> )({
+    orderBy: { generatedAt: "desc" },
+    take: 200,
+  });
+  return Array.isArray(result) ? result : [];
+};
+
+const loadFixtureResearchReadModels = async (input: {
+  readonly fixtures: readonly FixtureEntity[];
+  readonly tasks: readonly TaskEntity[];
+  readonly taskRuns: readonly TaskRunEntity[];
+  readonly aiRuns: readonly AiRunEntity[];
+  readonly repositories?: FixtureResearchRepositoryCollectionLike;
+  readonly researchBundles?: readonly ResearchBundleEntity[];
+  readonly featureSnapshots?: readonly FeatureSnapshotEntity[];
+}): Promise<FixtureResearchReadModel[]> => {
+  const repositoryReadModels =
+    input.researchBundles || input.featureSnapshots
+      ? input.fixtures.flatMap((fixture) => {
+          const latestBundle = input.researchBundles
+            ? findLatestByGeneratedAt(input.researchBundles, fixture.id)
+            : null;
+          const latestSnapshot = input.featureSnapshots
+            ? findLatestByGeneratedAt(input.featureSnapshots, fixture.id)
+            : null;
+          const readModel = createFixtureResearchReadModelFromDedicatedRecords(
+            fixture.id,
+            latestBundle,
+            latestSnapshot,
+            new Map(input.aiRuns.map((aiRun) => [aiRun.id, aiRun])),
+          );
+          return readModel ? [readModel] : [];
+        })
+      : await loadFixtureResearchFromRepositories(
+          input.fixtures,
+          input.repositories ?? {},
+          input.aiRuns,
+        );
+
+  if (repositoryReadModels.length > 0) {
+    return repositoryReadModels;
+  }
+
+  return loadFixtureResearchFromTaskArtifacts(
+    input.fixtures,
+    input.tasks,
+    input.taskRuns,
+    input.aiRuns,
+  );
+};
+
+const summarizeResearchGateReasons = (
+  research: FixtureResearchReadModel | null,
+): string | null => {
+  if (!research || research.gateReasons.length === 0) {
+    return null;
+  }
+
+  return research.gateReasons.map((reason) => reason.message).join("; ");
+};
 
 export function summarizeValidations(
   validations: readonly ValidationEntity[],
@@ -629,6 +1199,7 @@ export function createHealthReport(input: {
 export function createOperationSnapshot(input: {
   readonly generatedAt?: string;
   readonly fixtures?: readonly FixtureEntity[];
+  readonly fixtureResearch?: readonly FixtureResearchReadModel[];
   readonly fixtureWorkflows?: readonly FixtureWorkflowEntity[];
   readonly leagueCoveragePolicies?: readonly LeagueCoveragePolicyEntity[];
   readonly teamCoveragePolicies?: readonly TeamCoveragePolicyEntity[];
@@ -646,6 +1217,7 @@ export function createOperationSnapshot(input: {
 } = {}): OperationSnapshot {
   const generatedAt = input.generatedAt ?? "2026-04-15T01:00:00.000Z";
   const fixtures = [...(input.fixtures ?? createDemoFixtures())];
+  const fixtureResearch = [...(input.fixtureResearch ?? [])];
   const fixtureWorkflows = [...(input.fixtureWorkflows ?? createDemoFixtureWorkflows(fixtures))];
   const leagueCoveragePolicies = [...(input.leagueCoveragePolicies ?? [])];
   const teamCoveragePolicies = [...(input.teamCoveragePolicies ?? [])];
@@ -665,6 +1237,7 @@ export function createOperationSnapshot(input: {
   return {
     generatedAt,
     fixtures,
+    fixtureResearch,
     fixtureWorkflows,
     leagueCoveragePolicies,
     teamCoveragePolicies,
@@ -1783,6 +2356,13 @@ export function findFixtureById(
   return snapshot.fixtures.find((fixture) => fixture.id === fixtureId) ?? null;
 }
 
+export function findFixtureResearchById(
+  snapshot: OperationSnapshot,
+  fixtureId: string,
+): FixtureResearchReadModel | null {
+  return snapshot.fixtureResearch.find((research) => research.fixtureId === fixtureId) ?? null;
+}
+
 export function findFixtureOpsById(
   snapshot: OperationSnapshot,
   fixtureId: string,
@@ -1793,6 +2373,7 @@ export function findFixtureOpsById(
   }
 
   const workflow = snapshot.fixtureWorkflows.find((candidate) => candidate.fixtureId === fixtureId);
+  const research = findFixtureResearchById(snapshot, fixtureId);
   const latestOddsSnapshot =
     sortByIsoDescending(
       snapshot.oddsSnapshots.filter((oddsSnapshot) => oddsSnapshot.fixtureId === fixtureId),
@@ -1814,6 +2395,7 @@ export function findFixtureOpsById(
     (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
   ).slice(0, 5);
   const recentAuditEvents = findFixtureAuditEventsById(snapshot, fixtureId) ?? [];
+  const researchBlockReason = summarizeResearchGateReasons(research);
 
   const scoringEligibility =
     workflow?.selectionOverride === "force-exclude" || workflow?.manualSelectionStatus === "rejected"
@@ -1821,11 +2403,23 @@ export function findFixtureOpsById(
           eligible: false,
           reason: "Fixture is force-excluded by workflow ops.",
         }
-      : workflow?.selectionOverride === "force-include"
+      : !research
         ? {
-            eligible: true,
-            reason: "Fixture is force-included by workflow ops.",
+            eligible: false,
+            reason: "No persisted research bundle found for fixture.",
           }
+        : !research.publishable
+          ? {
+              eligible: false,
+              reason:
+                `Research bundle status ${research.status} is not publishable.` +
+                (researchBlockReason ? ` ${researchBlockReason}` : ""),
+            }
+        : workflow?.selectionOverride === "force-include"
+          ? {
+              eligible: true,
+              reason: "Fixture is force-included by workflow ops.",
+            }
         : workflow?.manualSelectionStatus === "selected"
           ? {
               eligible: true,
@@ -1848,6 +2442,7 @@ export function findFixtureOpsById(
 
   return {
     fixture,
+    research,
     ...(workflow ? { workflow } : {}),
     latestOddsSnapshot,
     scoringEligibility,
@@ -2701,6 +3296,10 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
       ORDER BY os.capturedAt DESC
       LIMIT 100
     `);
+    const [researchBundles, featureSnapshots] = await Promise.all([
+      loadOptionalClientReadModels(client as unknown as Record<string, unknown>, "researchBundle"),
+      loadOptionalClientReadModels(client as unknown as Record<string, unknown>, "featureSnapshot"),
+    ]);
 
     const snapshot = await loadOperationSnapshotFromUnitOfWork(unitOfWork, {
       generatedAt: new Date().toISOString(),
@@ -2721,6 +3320,8 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
         providerFixtureId: snapshot.providerFixtureId,
         selectionCount: Number(snapshot.selectionCount),
       })),
+      researchBundles: researchBundles as ResearchBundleEntity[],
+      featureSnapshots: featureSnapshots as FeatureSnapshotEntity[],
     });
 
     return snapshot;
@@ -2744,11 +3345,13 @@ export async function loadOperationSnapshotFromUnitOfWork(
     | "predictions"
     | "parlays"
     | "validations"
-  >,
+  > & FixtureResearchRepositoryCollectionLike,
   input: {
     readonly generatedAt?: string;
     readonly rawBatches?: readonly RawIngestionBatchReadModel[];
     readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
+    readonly researchBundles?: readonly ResearchBundleEntity[];
+    readonly featureSnapshots?: readonly FeatureSnapshotEntity[];
   } = {},
 ): Promise<OperationSnapshot> {
   const [
@@ -2781,7 +3384,15 @@ export async function loadOperationSnapshotFromUnitOfWork(
 
   const rawBatches = [...(input.rawBatches ?? [])];
   const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
-  const aiRunMap = new Map(aiRuns.map((aiRun) => [aiRun.id, aiRun]));
+  const fixtureResearch = await loadFixtureResearchReadModels({
+    fixtures,
+    tasks,
+    taskRuns,
+    aiRuns,
+    repositories: unitOfWork,
+    ...(input.researchBundles ? { researchBundles: input.researchBundles } : {}),
+    ...(input.featureSnapshots ? { featureSnapshots: input.featureSnapshots } : {}),
+  });
   const mappedAiRuns = aiRuns.map((aiRun) => ({
     id: aiRun.id,
     taskId: aiRun.taskId,
@@ -2800,6 +3411,7 @@ export async function loadOperationSnapshotFromUnitOfWork(
 
   return createOperationSnapshot({
     fixtures,
+    fixtureResearch,
     fixtureWorkflows,
     leagueCoveragePolicies,
     teamCoveragePolicies,

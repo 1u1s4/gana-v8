@@ -216,6 +216,141 @@ test("ApiFootballHttpClient maps and filters odds window responses", async () =>
   assert.deepEqual(records[0]?.selections.map((selection) => selection.priceDecimal), [2.1, 3.4, 3.2]);
 });
 
+test("ApiFootballHttpClient maps availability window responses into raw availability records", async () => {
+  const requests: string[] = [];
+  const client = new ApiFootballHttpClient({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v3",
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+
+      return createJsonResponse({
+        response: [
+          {
+            fixture: {
+              id: 123,
+            },
+            player: {
+              id: 9001,
+              name: "Reece James",
+              number: 24,
+              pos: "D",
+            },
+            reason: "Hamstring discomfort",
+            team: {
+              code: "CHE",
+              id: 41,
+              name: "Chelsea",
+            },
+            type: "Doubtful",
+            update: "2026-04-15T17:55:00.000Z",
+          },
+          {
+            fixture: {
+              id: 999,
+            },
+            player: {
+              id: 9002,
+              name: "Other Player",
+            },
+            reason: "Suspended 1 match",
+            team: {
+              id: 55,
+              name: "Other Team",
+            },
+            type: "Suspension",
+          },
+        ],
+      });
+    },
+  });
+
+  const records = await client.fetchAvailabilityWindow({
+    fixtureIds: ["123"],
+    teamIds: ["41"],
+    window: {
+      end: "2026-04-15T20:00:00.000Z",
+      granularity: "intraday",
+      start: "2026-04-15T18:00:00.000Z",
+    },
+  });
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.providerFixtureId, "123");
+  assert.equal(records[0]?.team.providerTeamId, "41");
+  assert.equal(records[0]?.player.providerPlayerId, "9001");
+  assert.equal(records[0]?.status, "doubtful");
+  assert.equal(records[0]?.reasonCode, "hamstring-discomfort");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0] ?? "", /injuries\?fixture=123/);
+});
+
+test("ApiFootballHttpClient maps fixture lineups into raw lineup records", async () => {
+  const requests: string[] = [];
+  const client = new ApiFootballHttpClient({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v3",
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+
+      return createJsonResponse({
+        response: [
+          {
+            formation: "4-3-3",
+            startXI: [
+              {
+                player: {
+                  grid: "1:1",
+                  id: 100,
+                  name: "David Raya",
+                  number: 22,
+                  pos: "G",
+                },
+              },
+            ],
+            substitutes: [
+              {
+                player: {
+                  id: 101,
+                  name: "Leandro Trossard",
+                  number: 19,
+                  pos: "F",
+                },
+              },
+            ],
+            team: {
+              code: "ARS",
+              id: 42,
+              name: "Arsenal",
+            },
+            update: "2026-04-15T18:25:00.000Z",
+          },
+        ],
+      });
+    },
+  });
+
+  const records = await client.fetchLineupsWindow({
+    fixtureIds: ["123"],
+    teamIds: ["42"],
+    window: {
+      end: "2026-04-15T19:00:00.000Z",
+      granularity: "intraday",
+      start: "2026-04-15T18:00:00.000Z",
+    },
+  });
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.providerFixtureId, "123");
+  assert.equal(records[0]?.team.providerTeamId, "42");
+  assert.equal(records[0]?.status, "confirmed");
+  assert.equal(records[0]?.formation, "4-3-3");
+  assert.deepEqual(records[0]?.players.map((player) => player.role), ["starter", "bench"]);
+  assert.equal(records[0]?.players[0]?.positionSlot, "1:1");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0] ?? "", /fixtures\/lineups\?fixture=123/);
+});
+
 test("ApiFootballHttpClient rejects provider-level errors with structured metadata", async () => {
   const client = new ApiFootballHttpClient({
     apiKey: "test-key",

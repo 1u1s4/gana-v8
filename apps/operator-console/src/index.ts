@@ -240,6 +240,25 @@ const latestTasks = (tasks: readonly OperatorConsoleTask[], limit = 5): Operator
 const failedTaskRuns = (taskRuns: readonly OperatorConsoleTaskRun[]): OperatorConsoleTaskRun[] =>
   latestTaskRuns(taskRuns.filter((taskRun) => taskRun.status === "failed"), 3);
 
+const summarizeFixtureResearchReasons = (
+  research: OperationSnapshot["fixtureResearch"][number] | undefined,
+): string | null => {
+  if (!research) {
+    return null;
+  }
+
+  const readinessReasons = research.latestSnapshot?.featureReadinessReasons ?? [];
+  if (readinessReasons.length > 0) {
+    return readinessReasons.join("; ");
+  }
+
+  if (research.gateReasons.length > 0) {
+    return research.gateReasons.map((reason) => reason.message).join("; ");
+  }
+
+  return null;
+};
+
 export function createOperatorConsoleSnapshotFromOperation(
   operationSnapshot: OperationSnapshot,
   certification: readonly OperatorConsoleSandboxCertification[] = [],
@@ -267,6 +286,7 @@ export function createOperatorConsoleSnapshotFromOperation(
   const latestOddsSnapshot =
     sortByNewest(operationSnapshot.oddsSnapshots, (snapshot) => snapshot.capturedAt)[0] ?? null;
   const fixtureWorkflows = operationSnapshot.fixtureWorkflows ?? [];
+  const fixtureResearch = operationSnapshot.fixtureResearch ?? [];
   const coverageDailyScope = listCoverageDailyScope(operationSnapshot);
   const dailyAutomationPolicy = getDailyAutomationPolicy(operationSnapshot);
 
@@ -274,6 +294,7 @@ export function createOperatorConsoleSnapshotFromOperation(
     generatedAt: operationSnapshot.generatedAt,
     fixtures: operationSnapshot.fixtures.map((fixture) => {
       const workflow = fixtureWorkflows.find((candidate) => candidate.fixtureId === fixture.id);
+      const research = fixtureResearch.find((candidate) => candidate.fixtureId === fixture.id);
       const latestFixtureOddsSnapshot =
         sortByNewest(
           operationSnapshot.oddsSnapshots.filter((snapshot) => snapshot.fixtureId === fixture.id),
@@ -282,6 +303,13 @@ export function createOperatorConsoleSnapshotFromOperation(
       const scoringEligibilityReason =
         workflow?.selectionOverride === "force-exclude" || workflow?.manualSelectionStatus === "rejected"
           ? "Fixture is force-excluded by workflow ops."
+          : !research
+            ? "No persisted research bundle found for fixture."
+            : !research.publishable
+              ? `Research bundle status ${research.status} is not publishable.` +
+                (research.gateReasons.length > 0
+                  ? ` ${research.gateReasons.map((reason) => reason.message).join("; ")}`
+                  : "")
           : workflow?.selectionOverride === "force-include"
             ? "Fixture is force-included by workflow ops."
             : workflow?.manualSelectionStatus === "selected"
@@ -309,10 +337,17 @@ export function createOperatorConsoleSnapshotFromOperation(
         homeTeam: fixture.homeTeam,
         awayTeam: fixture.awayTeam,
         status: fixture.status,
-        researchRecommendedLean: fixture.metadata.researchRecommendedLean ?? null,
-        featureReadinessStatus: fixture.metadata.featureReadinessStatus ?? null,
-        featureReadinessReasons: fixture.metadata.featureReadinessReasons ?? null,
-        researchGeneratedAt: fixture.metadata.researchGeneratedAt ?? null,
+        researchRecommendedLean:
+          research?.latestSnapshot?.recommendedLean ??
+          research?.latestBundle.recommendedLean ??
+          null,
+        featureReadinessStatus:
+          research?.latestSnapshot?.featureReadinessStatus ?? null,
+        featureReadinessReasons: summarizeFixtureResearchReasons(research ?? undefined),
+        researchGeneratedAt:
+          research?.latestSnapshot?.generatedAt ??
+          research?.latestBundle.generatedAt ??
+          null,
         manualSelectionStatus: workflow?.manualSelectionStatus ?? null,
         manualSelectionBy: workflow?.manualSelectionBy ?? null,
         selectionOverride: workflow?.selectionOverride ?? null,

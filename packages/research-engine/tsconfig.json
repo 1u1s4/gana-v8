@@ -3,7 +3,10 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "paths": {
+      "@gana-v8/research-contracts": ["../research-contracts/dist/index.d.ts"]
+    }
   },
   "include": [
     "src/**/*.ts"

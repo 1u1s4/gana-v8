@@ -9,11 +9,13 @@ import {
   createAuditEvent,
   createFixtureWorkflow,
   createAiRun,
+  createFeatureSnapshot,
   createDailyAutomationPolicy,
   createFixture,
   createLeagueCoveragePolicy,
   createParlay,
   createPrediction,
+  createResearchBundle,
   createTask,
   createTaskRun,
   createTeamCoveragePolicy,
@@ -157,6 +159,115 @@ const createSandboxCertificationFixture = async (input: {
   }
 
   return { goldensRoot, artifactsRoot };
+};
+
+const createFixtureResearchReadModel = (fixtureId: string) => ({
+  fixtureId,
+  status: "publishable" as const,
+  publishable: true,
+  gateReasons: [],
+  latestBundle: {
+    id: `bundle:${fixtureId}`,
+    generatedAt: "2026-04-15T15:20:00.000Z",
+    summary: "Research bundle ready",
+    recommendedLean: "home",
+  },
+  latestSnapshot: {
+    bundleId: `bundle:${fixtureId}`,
+    generatedAt: "2026-04-15T15:20:00.000Z",
+    bundleStatus: "publishable" as const,
+    gateReasons: [],
+    recommendedLean: "home",
+    evidenceCount: 1,
+    topEvidenceTitles: ["Confirmed availability edge"],
+    risks: [],
+    featureReadinessStatus: "ready",
+    featureReadinessReasons: [],
+    researchTrace: {
+      synthesisMode: "deterministic" as const,
+    },
+  },
+  researchTrace: {
+    synthesisMode: "deterministic" as const,
+  },
+});
+
+const seedPublishableResearch = async (
+  unitOfWork: ReturnType<typeof createInMemoryUnitOfWork>,
+  fixtureId: string,
+  generatedAt = "2026-04-15T15:20:00.000Z",
+): Promise<void> => {
+  const bundleId = `bundle:${fixtureId}:${generatedAt}`;
+  await unitOfWork.researchBundles.save(
+    createResearchBundle({
+      id: bundleId,
+      fixtureId,
+      generatedAt,
+      brief: {
+        headline: `Research brief for ${fixtureId}`,
+        context: "Public API test bundle",
+        questions: ["Who has the edge?"],
+        assumptions: ["Use persisted research."],
+      },
+      summary: "Research bundle ready",
+      recommendedLean: "home",
+      directionalScore: { home: 0.71, draw: 0.18, away: 0.22 },
+      risks: [],
+      gateResult: {
+        status: "publishable",
+        reasons: [],
+        gatedAt: generatedAt,
+      },
+      trace: {
+        synthesisMode: "deterministic",
+      },
+      createdAt: generatedAt,
+      updatedAt: generatedAt,
+    }),
+  );
+  await unitOfWork.featureSnapshots.save(
+    createFeatureSnapshot({
+      id: `feature:${fixtureId}:${generatedAt}`,
+      fixtureId,
+      bundleId,
+      generatedAt,
+      bundleStatus: "publishable",
+      gateReasons: [],
+      recommendedLean: "home",
+      evidenceCount: 1,
+      topEvidence: [
+        {
+          id: `research:${fixtureId}`,
+          title: "Confirmed availability edge",
+          direction: "home",
+          weightedScore: 0.88,
+        },
+      ],
+      risks: [],
+      features: {
+        researchScoreHome: 0.71,
+        researchScoreDraw: 0.18,
+        researchScoreAway: 0.22,
+        formHome: 0.6,
+        formAway: 0.4,
+        restHomeDays: 5,
+        restAwayDays: 4,
+        injuriesHome: 0,
+        injuriesAway: 1,
+        derby: 0,
+        hoursUntilKickoff: 3,
+      },
+      readiness: {
+        status: "ready",
+        reasons: [],
+      },
+      researchTrace: {
+        synthesisMode: "deterministic",
+      },
+      createdAt: generatedAt,
+      updatedAt: generatedAt,
+    }),
+  );
 };
 
 test("public api exposes ai runs and provider states", () => {
@@ -800,6 +911,7 @@ test("public api exposes fixture-centric ops detail", () => {
   });
   const snapshot = createOperationSnapshot({
     fixtures: [fixture],
+    fixtureResearch: [createFixtureResearchReadModel(fixture.id)],
     fixtureWorkflows: [createFixtureWorkflow({ fixtureId: fixture.id, ingestionStatus: "succeeded", oddsStatus: "succeeded", enrichmentStatus: "succeeded", candidateStatus: "succeeded", predictionStatus: "succeeded", parlayStatus: "pending", validationStatus: "pending", isCandidate: true, manualSelectionStatus: "selected", selectionOverride: "force-include" })],
     auditEvents: [
       {
@@ -869,6 +981,7 @@ test("public api loads recent fixture workflow audit events from the unit of wor
   });
   const unitOfWork = createInMemoryUnitOfWork();
   await unitOfWork.fixtures.save(fixture);
+  await seedPublishableResearch(unitOfWork, fixture.id);
   await unitOfWork.fixtureWorkflows.save(
     createFixtureWorkflow({
       fixtureId: fixture.id,
@@ -1307,6 +1420,7 @@ test("public api server accepts POST fixture ops actions when backed by a unit o
   });
 
   await unitOfWork.fixtures.save(fixture);
+  await seedPublishableResearch(unitOfWork, fixture.id, "2026-04-22T00:10:00.000Z");
 
   const server = createPublicApiServer({ unitOfWork });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -1609,7 +1723,7 @@ test("public api server can revert manual selection and selection override", asy
   }
 });
 
-test("loadOperationSnapshotFromUnitOfWork preserves research metadata and ai-run linkage in persisted read models", async () => {
+test("loadOperationSnapshotFromUnitOfWork preserves persisted research read models and ai-run linkage", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   const prefix = `public-api-linking-${Date.now()}`;
   const fixtureId = `${prefix}-fixture`;
@@ -1625,10 +1739,6 @@ test("loadOperationSnapshotFromUnitOfWork preserves research metadata and ai-run
       status: "scheduled",
       metadata: {
         providerFixtureId: `${prefix}-provider-fixture`,
-        researchGeneratedAt: "2026-04-20T10:00:00.000Z",
-        researchRecommendedLean: "away",
-        researchEvidenceCount: "5",
-        featureReadinessStatus: "ready",
       },
       createdAt: "2026-04-20T10:00:00.000Z",
       updatedAt: "2026-04-20T10:00:00.000Z",
@@ -1713,6 +1823,78 @@ test("loadOperationSnapshotFromUnitOfWork preserves research metadata and ai-run
     });
 
     await unitOfWork.fixtures.save(fixture);
+    await unitOfWork.researchBundles.save(
+      createResearchBundle({
+        id: `${prefix}-bundle`,
+        fixtureId: fixture.id,
+        generatedAt: "2026-04-20T10:00:00.000Z",
+        brief: {
+          headline: "Research brief Inter vs Milan",
+          context: "Serie A derby",
+          questions: ["Who carries the edge?"],
+          assumptions: ["Persisted for API test."],
+        },
+        summary: "Persisted research bundle leans away",
+        recommendedLean: "away",
+        directionalScore: { home: 0.21, draw: 0.19, away: 0.74 },
+        risks: [],
+        gateResult: {
+          status: "publishable",
+          reasons: [],
+          gatedAt: "2026-04-20T10:00:00.000Z",
+        },
+        trace: {
+          synthesisMode: "deterministic",
+          aiRunId: aiRun.id,
+        },
+        createdAt: "2026-04-20T10:00:00.000Z",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+      }),
+    );
+    await unitOfWork.featureSnapshots.save(
+      createFeatureSnapshot({
+        id: `${prefix}-feature`,
+        fixtureId: fixture.id,
+        bundleId: `${prefix}-bundle`,
+        generatedAt: "2026-04-20T10:00:00.000Z",
+        bundleStatus: "publishable",
+        gateReasons: [],
+        recommendedLean: "away",
+        evidenceCount: 5,
+        topEvidence: [
+          {
+            id: `${prefix}-evidence`,
+            title: "Away side availability edge",
+            direction: "away",
+            weightedScore: 0.9,
+          },
+        ],
+        risks: [],
+        features: {
+          researchScoreHome: 0.21,
+          researchScoreDraw: 0.19,
+          researchScoreAway: 0.74,
+          formHome: 0.52,
+          formAway: 0.66,
+          restHomeDays: 4,
+          restAwayDays: 5,
+          injuriesHome: 2,
+          injuriesAway: 0,
+          derby: 1,
+          hoursUntilKickoff: 8,
+        },
+        readiness: {
+          status: "ready",
+          reasons: [],
+        },
+        researchTrace: {
+          synthesisMode: "deterministic",
+          aiRunId: aiRun.id,
+        },
+        createdAt: "2026-04-20T10:00:00.000Z",
+        updatedAt: "2026-04-20T10:00:00.000Z",
+      }),
+    );
     await unitOfWork.fixtureWorkflows.save(
       createFixtureWorkflow({
         fixtureId: fixture.id,
@@ -1744,8 +1926,10 @@ test("loadOperationSnapshotFromUnitOfWork preserves research metadata and ai-run
     const predictionDetail = findPredictionById(snapshot, prediction.id);
     const parlayDetail = findParlayById(snapshot, parlay.id);
 
-    assert.equal(loadedFixture?.metadata.researchRecommendedLean, "away");
-    assert.equal(loadedFixture?.metadata.featureReadinessStatus, "ready");
+    assert.equal(loadedFixture?.metadata.researchRecommendedLean, undefined);
+    assert.equal(loadedFixture?.metadata.featureReadinessStatus, undefined);
+    assert.equal(snapshot.fixtureResearch[0]?.latestBundle.recommendedLean, "away");
+    assert.equal(snapshot.fixtureResearch[0]?.latestSnapshot?.featureReadinessStatus, "ready");
     assert.equal(aiRunDetail?.linkedPredictions[0]?.id, prediction.id);
     assert.equal(aiRunDetail?.linkedParlays[0]?.id, parlay.id);
     assert.equal(predictionDetail?.linkedParlays[0]?.id, parlay.id);
@@ -1758,6 +1942,8 @@ test("loadOperationSnapshotFromUnitOfWork preserves research metadata and ai-run
       unitOfWork.parlays.delete(`${prefix}-parlay`),
       unitOfWork.predictions.delete(`${prefix}-prediction`),
       unitOfWork.aiRuns.delete(`${prefix}-ai-run`),
+      unitOfWork.featureSnapshots.delete(`${prefix}-feature`),
+      unitOfWork.researchBundles.delete(`${prefix}-bundle`),
       unitOfWork.taskRuns.delete(`${prefix}-task-run`),
       unitOfWork.tasks.delete(`${prefix}-task`),
       unitOfWork.fixtureWorkflows.delete(fixtureId),

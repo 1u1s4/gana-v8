@@ -1191,6 +1191,12 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
       const workflows = await prisma.fixtureWorkflow.findMany({
         where: { fixtureId: { in: [fixtureOne.fixtureId, fixtureTwo.fixtureId] } },
       });
+      const researchBundles = await prisma.researchBundle.findMany({
+        where: { fixtureId: { in: [fixtureOne.fixtureId, fixtureTwo.fixtureId] } },
+      });
+      const featureSnapshots = await prisma.featureSnapshot.findMany({
+        where: { fixtureId: { in: [fixtureOne.fixtureId, fixtureTwo.fixtureId] } },
+      });
       const fixtures = await prisma.fixture.findMany({
         where: { id: { in: [fixtureOne.fixtureId, fixtureTwo.fixtureId] } },
       });
@@ -1198,11 +1204,29 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
       assert.equal(summary.enqueuedResearch.enqueuedCount, 2);
       assert.equal(summary.processedResearchCount, 2);
       assert.equal(summary.researchExecutions.every((execution) => execution.task.status === "succeeded"), true);
+      assert.equal(
+        summary.researchExecutions.every((execution) =>
+          execution.output.latestBundle && execution.output.latestSnapshot &&
+          execution.output.fixtureId &&
+          execution.output.generatedAt === "2099-01-01T10:04:00.000Z"
+        ),
+        true,
+      );
       assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
       assert.equal(summary.processedPredictionCount, 2);
       assert.equal(summary.predictionExecutions.every((execution) => execution.task.status === "succeeded"), true);
       assert.equal(predictions.length, 2);
       assert.equal(predictions.every((prediction) => prediction.status === "published"), true);
+      assert.equal(researchBundles.length, 2);
+      assert.equal(featureSnapshots.length, 2);
+      assert.equal(
+        researchBundles.every((bundle) => bundle.generatedAt.toISOString() === "2099-01-01T10:04:00.000Z"),
+        true,
+      );
+      assert.equal(
+        featureSnapshots.every((snapshot) => snapshot.generatedAt.toISOString() === "2099-01-01T10:04:00.000Z"),
+        true,
+      );
       assert.equal(workflows.length, 2);
       assert.equal(
         workflows.every(
@@ -1217,9 +1241,10 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
         fixtures.every((fixture) => {
           const metadata = fixture.metadata as Record<string, unknown>;
           return (
-            metadata.researchGeneratedAt === "2099-01-01T10:04:00.000Z" &&
-            typeof metadata.researchRecommendedLean === "string" &&
-            typeof metadata.featureScoreHome === "string"
+            metadata.researchGeneratedAt === undefined &&
+            metadata.researchRecommendedLean === undefined &&
+            metadata.featureScoreHome === undefined &&
+            metadata.featureReadinessStatus === undefined
           );
         }),
         true,
@@ -1376,6 +1401,12 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
       },
       include: { legs: true },
     });
+    const researchBundles = await prisma.researchBundle.findMany({
+      where: { fixtureId: { in: fixtureIds } },
+    });
+    const featureSnapshots = await prisma.featureSnapshot.findMany({
+      where: { fixtureId: { in: fixtureIds } },
+    });
 
     assert.equal(ingestionSummary.runtime.persistenceMode, "mysql");
     assert.equal(ingestionSummary.results.every((result) => result.status === "succeeded"), true);
@@ -1383,18 +1414,27 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
     assert.equal(summary.enqueuedResearch.enqueuedCount, 2);
     assert.equal(summary.processedResearchCount, 2);
     assert.equal(summary.researchExecutions.every((execution) => execution.task.status === "succeeded"), true);
+    assert.equal(
+      summary.researchExecutions.every((execution) =>
+        execution.output.latestBundle && execution.output.latestSnapshot &&
+        execution.output.generatedAt === "2099-01-01T10:11:00.000Z"
+      ),
+      true,
+    );
     assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
     assert.equal(summary.processedPredictionCount, 2);
     assert.equal(summary.predictionExecutions.every((execution) => execution.task.status === "succeeded"), true);
     assert.equal(persistedFixtures.length, 2);
+    assert.equal(researchBundles.length, 2);
+    assert.equal(featureSnapshots.length, 2);
     assert.equal(
       persistedFixtures.every((fixture) => {
         const metadata = fixture.metadata as Record<string, unknown>;
         return (
           metadata.providerFixtureId !== undefined &&
-          metadata.researchGeneratedAt === "2099-01-01T10:11:00.000Z" &&
-          metadata.researchSynthesisMode === "deterministic" &&
-          typeof metadata.featureScoreHome === "string"
+          metadata.researchGeneratedAt === undefined &&
+          metadata.researchSynthesisMode === undefined &&
+          metadata.featureScoreHome === undefined
         );
       }),
       true,

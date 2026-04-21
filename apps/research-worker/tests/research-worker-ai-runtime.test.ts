@@ -123,7 +123,7 @@ test("runResearchSynthesisAi persists rich AiRun metadata on successful structur
   assert.equal(persistence.savedTasks.length, 1);
 });
 
-test("runResearchTask uses AI structured output and leaves fixture trace metadata", async () => {
+test("runResearchTask uses AI structured output and persists trace artifacts without fixture metadata", async () => {
   const persistence = createPersistence();
   const result = await runResearchTask({
     fixture,
@@ -149,9 +149,12 @@ test("runResearchTask uses AI structured output and leaves fixture trace metadat
   assert.deepEqual(result.dossier.risks, ["Separación pequeña entre señales."]);
   assert.equal(result.aiRun?.status, "completed");
   assert.equal(result.featureSnapshot.researchTrace?.synthesisMode, "ai-assisted");
-  assert.equal(result.fixture.metadata.researchSynthesisMode, "ai-assisted");
-  assert.equal(result.fixture.metadata.researchAiProvider, "codex");
-  assert.ok(result.fixture.metadata.researchAiRunId);
+  assert.equal(result.persistableFeatureSnapshot.researchTrace?.synthesisMode, "ai-assisted");
+  assert.equal(result.persistableResearchBundle.trace?.aiProvider, "codex");
+  assert.equal(result.persistableResearchBundle.trace?.aiRunId, result.aiRun?.id);
+  assert.equal(result.fixture.metadata.researchSynthesisMode, undefined);
+  assert.equal(result.fixture.metadata.researchAiProvider, undefined);
+  assert.equal(result.fixture.metadata.researchAiRunId, undefined);
   assert.equal(persistence.savedFixtures.length, 1);
 });
 
@@ -176,7 +179,8 @@ test("runResearchTask falls back deterministically when structured output is inv
   assert.equal(result.aiRun?.model, "gpt-5.4-mini");
   assert.match(result.aiRun?.error ?? "", /json/i);
   assert.equal(result.featureSnapshot.researchTrace?.synthesisMode, "ai-fallback");
-  assert.match(result.fixture.metadata.researchFallbackSummary ?? "", /json/i);
+  assert.match(result.persistableFeatureSnapshot.researchTrace?.fallbackSummary ?? "", /json/i);
+  assert.equal(result.fixture.metadata.researchFallbackSummary, undefined);
   assert.ok(result.dossier.summary.includes("lean"));
   assert.ok(result.dossier.risks.some((risk) => risk.includes("fallback")));
 });

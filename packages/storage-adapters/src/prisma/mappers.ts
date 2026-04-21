@@ -1,15 +1,26 @@
 import type {
+  AvailabilitySnapshotEntity,
   AiRunEntity,
   AuditEventEntity,
   DailyAutomationPolicyEntity,
+  FeatureSnapshotEntity,
   FixtureEntity,
   FixtureManualSelectionStatus,
   FixtureSelectionOverride,
   FixtureWorkflowEntity,
   LeagueCoveragePolicyEntity,
+  LineupParticipantEntity,
+  LineupSnapshotEntity,
   ParlayEntity,
   ParlayLeg,
   PredictionEntity,
+  ResearchAssignmentEntity,
+  ResearchBundleEntity,
+  ResearchClaimEntity,
+  ResearchClaimSourceEntity,
+  ResearchConflictEntity,
+  ResearchGateReason,
+  ResearchSourceEntity,
   SandboxNamespace,
   TaskAttempt,
   TaskEntity,
@@ -27,19 +38,29 @@ import type {
 import { createOpaqueTaskRunId } from "@gana-v8/domain-core";
 import {
   Prisma,
+  type AvailabilitySnapshot,
   type AiRun,
   type AuditEvent,
   type DailyAutomationPolicy,
   type Environment as PrismaEnvironment,
+  type FeatureSnapshot,
   type Fixture,
   type FixtureManualSelectionStatus as PrismaFixtureManualSelectionStatus,
   type FixtureSelectionOverride as PrismaFixtureSelectionOverride,
   type FixtureWorkflow,
   type LeagueCoveragePolicy,
+  type LineupParticipant,
+  type LineupSnapshot,
   type Parlay,
   type ParlayLeg as PrismaParlayLeg,
   type Prediction,
   type PredictionMarket as PrismaPredictionMarket,
+  type ResearchAssignment,
+  type ResearchBundle,
+  type ResearchClaim,
+  type ResearchClaimSource,
+  type ResearchConflict,
+  type ResearchSource,
   type SandboxNamespace as PrismaSandboxNamespace,
   type Task,
   type TaskKind as PrismaTaskKind,
@@ -61,6 +82,10 @@ const asStringRecord = (
 
 const asStringArray = (value: Prisma.JsonValue | null | undefined): string[] =>
   ((value ?? []) as unknown as string[]).slice();
+
+const asArray = <T>(
+  value: Prisma.JsonValue | null | undefined,
+): T[] => ((value ?? []) as unknown as T[]).slice();
 
 const asValidationChecks = (
   value: Prisma.JsonValue | null | undefined,
@@ -182,6 +207,42 @@ export type DailyAutomationPolicyRecord = Prisma.DailyAutomationPolicyGetPayload
 export const sandboxNamespaceInclude = Prisma.validator<Prisma.SandboxNamespaceDefaultArgs>()({});
 export type SandboxNamespaceRecord = Prisma.SandboxNamespaceGetPayload<
   typeof sandboxNamespaceInclude
+>;
+
+export const researchBundleInclude = Prisma.validator<Prisma.ResearchBundleDefaultArgs>()({});
+export type ResearchBundleRecord = Prisma.ResearchBundleGetPayload<typeof researchBundleInclude>;
+
+export const researchSourceInclude = Prisma.validator<Prisma.ResearchSourceDefaultArgs>()({});
+export type ResearchSourceRecord = Prisma.ResearchSourceGetPayload<typeof researchSourceInclude>;
+
+export const researchClaimInclude = Prisma.validator<Prisma.ResearchClaimDefaultArgs>()({});
+export type ResearchClaimRecord = Prisma.ResearchClaimGetPayload<typeof researchClaimInclude>;
+
+export const researchClaimSourceInclude = Prisma.validator<Prisma.ResearchClaimSourceDefaultArgs>()({});
+export type ResearchClaimSourceRecord = Prisma.ResearchClaimSourceGetPayload<
+  typeof researchClaimSourceInclude
+>;
+
+export const researchConflictInclude = Prisma.validator<Prisma.ResearchConflictDefaultArgs>()({});
+export type ResearchConflictRecord = Prisma.ResearchConflictGetPayload<typeof researchConflictInclude>;
+
+export const featureSnapshotInclude = Prisma.validator<Prisma.FeatureSnapshotDefaultArgs>()({});
+export type FeatureSnapshotRecord = Prisma.FeatureSnapshotGetPayload<typeof featureSnapshotInclude>;
+
+export const availabilitySnapshotInclude = Prisma.validator<Prisma.AvailabilitySnapshotDefaultArgs>()({});
+export type AvailabilitySnapshotRecord = Prisma.AvailabilitySnapshotGetPayload<
+  typeof availabilitySnapshotInclude
+>;
+
+export const lineupSnapshotInclude = Prisma.validator<Prisma.LineupSnapshotDefaultArgs>()({});
+export type LineupSnapshotRecord = Prisma.LineupSnapshotGetPayload<typeof lineupSnapshotInclude>;
+
+export const lineupParticipantInclude = Prisma.validator<Prisma.LineupParticipantDefaultArgs>()({});
+export type LineupParticipantRecord = Prisma.LineupParticipantGetPayload<typeof lineupParticipantInclude>;
+
+export const researchAssignmentInclude = Prisma.validator<Prisma.ResearchAssignmentDefaultArgs>()({});
+export type ResearchAssignmentRecord = Prisma.ResearchAssignmentGetPayload<
+  typeof researchAssignmentInclude
 >;
 
 export const taskAttemptToTaskRunInput = (
@@ -696,6 +757,419 @@ export const sandboxNamespaceDomainToCreateInput = (
   storagePrefix: entity.storagePrefix,
   queuePrefix: entity.queuePrefix,
   metadata: entity.metadata,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const researchBundleRecordToDomain = (
+  record: ResearchBundle | ResearchBundleRecord,
+): ResearchBundleEntity => ({
+  id: record.id,
+  fixtureId: record.fixtureId,
+  generatedAt: record.generatedAt.toISOString(),
+  brief: {
+    headline: record.briefHeadline,
+    context: record.briefContext,
+    questions: asStringArray(record.briefQuestions),
+    assumptions: asStringArray(record.briefAssumptions),
+  },
+  summary: record.summary,
+  recommendedLean: record.recommendedLean as ResearchBundleEntity["recommendedLean"],
+  directionalScore: asRecord(record.directionalScore) as unknown as ResearchBundleEntity["directionalScore"],
+  risks: asStringArray(record.risks),
+  gateResult: {
+    status: record.status as ResearchBundleEntity["gateResult"]["status"],
+    reasons: asArray<ResearchGateReason>(record.gateReasons),
+    gatedAt: record.gatedAt.toISOString(),
+  },
+  ...(record.trace ? { trace: asRecord(record.trace) } : {}),
+  ...(record.aiRunId ? { aiRunId: record.aiRunId } : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const researchBundleDomainToCreateInput = (
+  entity: ResearchBundleEntity,
+): Prisma.ResearchBundleUncheckedCreateInput => ({
+  id: entity.id,
+  fixtureId: entity.fixtureId,
+  generatedAt: new Date(entity.generatedAt),
+  gatedAt: new Date(entity.gateResult.gatedAt),
+  status: entity.gateResult.status,
+  briefHeadline: entity.brief.headline,
+  briefContext: entity.brief.context,
+  briefQuestions: entity.brief.questions as unknown as Prisma.InputJsonValue,
+  briefAssumptions: entity.brief.assumptions as unknown as Prisma.InputJsonValue,
+  summary: entity.summary,
+  recommendedLean: entity.recommendedLean,
+  directionalScore: entity.directionalScore as unknown as Prisma.InputJsonValue,
+  risks: entity.risks as unknown as Prisma.InputJsonValue,
+  gateReasons: entity.gateResult.reasons as unknown as Prisma.InputJsonValue,
+  trace:
+    entity.trace !== undefined ? (entity.trace as Prisma.InputJsonValue) : Prisma.JsonNull,
+  aiRunId: entity.aiRunId ?? null,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const researchSourceRecordToDomain = (
+  record: ResearchSource | ResearchSourceRecord,
+): ResearchSourceEntity => ({
+  id: record.id,
+  bundleId: record.bundleId,
+  fixtureId: record.fixtureId,
+  provider: record.provider,
+  reference: record.reference,
+  sourceType: record.sourceType,
+  ...(record.title ? { title: record.title } : {}),
+  ...(record.url ? { url: record.url } : {}),
+  admissibility: record.admissibility as ResearchSourceEntity["admissibility"],
+  independenceKey: record.independenceKey,
+  capturedAt: record.capturedAt.toISOString(),
+  ...(record.publishedAt ? { publishedAt: record.publishedAt.toISOString() } : {}),
+  ...(record.freshnessExpiresAt
+    ? { freshnessExpiresAt: record.freshnessExpiresAt.toISOString() }
+    : {}),
+  metadata: asRecord(record.metadata),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const researchSourceDomainToCreateInput = (
+  entity: ResearchSourceEntity,
+): Prisma.ResearchSourceUncheckedCreateInput => ({
+  id: entity.id,
+  bundleId: entity.bundleId,
+  fixtureId: entity.fixtureId,
+  provider: entity.provider,
+  reference: entity.reference,
+  sourceType: entity.sourceType,
+  title: entity.title ?? null,
+  url: entity.url ?? null,
+  admissibility: entity.admissibility,
+  independenceKey: entity.independenceKey,
+  capturedAt: new Date(entity.capturedAt),
+  publishedAt: toDate(entity.publishedAt) ?? null,
+  freshnessExpiresAt: toDate(entity.freshnessExpiresAt) ?? null,
+  metadata: entity.metadata as Prisma.InputJsonValue,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const researchClaimRecordToDomain = (
+  record: ResearchClaim | ResearchClaimRecord,
+): ResearchClaimEntity => ({
+  id: record.id,
+  bundleId: record.bundleId,
+  fixtureId: record.fixtureId,
+  ...(record.assignmentId ? { assignmentId: record.assignmentId } : {}),
+  kind: record.kind as ResearchClaimEntity["kind"],
+  title: record.title,
+  summary: record.summary,
+  direction: record.direction as ResearchClaimEntity["direction"],
+  confidence: record.confidence,
+  impact: record.impact,
+  significance: record.significance as ResearchClaimEntity["significance"],
+  status: record.status as ResearchClaimEntity["status"],
+  corroborationStatus: record.corroborationStatus as ResearchClaimEntity["corroborationStatus"],
+  requiredSourceCount: record.requiredSourceCount,
+  matchedSourceIds: asStringArray(record.matchedSourceIds),
+  freshnessWindowHours: record.freshnessWindowHours,
+  extractedAt: record.extractedAt.toISOString(),
+  ...(record.freshnessExpiresAt
+    ? { freshnessExpiresAt: record.freshnessExpiresAt.toISOString() }
+    : {}),
+  metadata: asStringRecord(record.metadata),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const researchClaimDomainToCreateInput = (
+  entity: ResearchClaimEntity,
+): Prisma.ResearchClaimUncheckedCreateInput => ({
+  id: entity.id,
+  bundleId: entity.bundleId,
+  fixtureId: entity.fixtureId,
+  assignmentId: entity.assignmentId ?? null,
+  kind: entity.kind,
+  title: entity.title,
+  summary: entity.summary,
+  direction: entity.direction,
+  confidence: entity.confidence,
+  impact: entity.impact,
+  significance: entity.significance,
+  status: entity.status,
+  corroborationStatus: entity.corroborationStatus,
+  requiredSourceCount: entity.requiredSourceCount,
+  matchedSourceIds: entity.matchedSourceIds as unknown as Prisma.InputJsonValue,
+  freshnessWindowHours: entity.freshnessWindowHours,
+  extractedAt: new Date(entity.extractedAt),
+  freshnessExpiresAt: toDate(entity.freshnessExpiresAt) ?? null,
+  metadata: entity.metadata,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const researchClaimSourceRecordToDomain = (
+  record: ResearchClaimSource | ResearchClaimSourceRecord,
+): ResearchClaimSourceEntity => ({
+  id: record.id,
+  claimId: record.claimId,
+  sourceId: record.sourceId,
+  orderIndex: record.orderIndex,
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const researchClaimSourceDomainToCreateInput = (
+  entity: ResearchClaimSourceEntity,
+): Prisma.ResearchClaimSourceUncheckedCreateInput => ({
+  id: entity.id,
+  claimId: entity.claimId,
+  sourceId: entity.sourceId,
+  orderIndex: entity.orderIndex,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const researchConflictRecordToDomain = (
+  record: ResearchConflict | ResearchConflictRecord,
+): ResearchConflictEntity => ({
+  id: record.id,
+  bundleId: record.bundleId,
+  fixtureId: record.fixtureId,
+  claimIds: asStringArray(record.claimIds),
+  summary: record.summary,
+  severity: record.severity as ResearchConflictEntity["severity"],
+  status: record.status as ResearchConflictEntity["status"],
+  ...(record.resolutionNote ? { resolutionNote: record.resolutionNote } : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const researchConflictDomainToCreateInput = (
+  entity: ResearchConflictEntity,
+): Prisma.ResearchConflictUncheckedCreateInput => ({
+  id: entity.id,
+  bundleId: entity.bundleId,
+  fixtureId: entity.fixtureId,
+  claimIds: entity.claimIds as unknown as Prisma.InputJsonValue,
+  summary: entity.summary,
+  severity: entity.severity,
+  status: entity.status,
+  resolutionNote: entity.resolutionNote ?? null,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const featureSnapshotRecordToDomain = (
+  record: FeatureSnapshot | FeatureSnapshotRecord,
+): FeatureSnapshotEntity => {
+  const base: FeatureSnapshotEntity = {
+    id: record.id,
+    fixtureId: record.fixtureId,
+    bundleId: record.bundleId,
+    generatedAt: record.generatedAt.toISOString(),
+    bundleStatus: record.bundleStatus as FeatureSnapshotEntity["bundleStatus"],
+    gateReasons: asArray<ResearchGateReason>(record.gateReasons),
+    recommendedLean: record.recommendedLean as FeatureSnapshotEntity["recommendedLean"],
+    evidenceCount: record.evidenceCount,
+    topEvidence: asArray<FeatureSnapshotEntity["topEvidence"][number]>(record.topEvidence),
+    risks: asStringArray(record.risks),
+    features: asRecord(record.features) as unknown as FeatureSnapshotEntity["features"],
+    readiness: {
+      status: record.readinessStatus as FeatureSnapshotEntity["readiness"]["status"],
+      reasons: asStringArray(record.readinessReasons),
+    },
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+
+  if (!record.researchTrace) {
+    return base;
+  }
+
+  return {
+    ...base,
+    researchTrace: asRecord(record.researchTrace) as unknown as NonNullable<
+      FeatureSnapshotEntity["researchTrace"]
+    >,
+  };
+};
+
+export const featureSnapshotDomainToCreateInput = (
+  entity: FeatureSnapshotEntity,
+): Prisma.FeatureSnapshotUncheckedCreateInput => ({
+  id: entity.id,
+  fixtureId: entity.fixtureId,
+  bundleId: entity.bundleId,
+  generatedAt: new Date(entity.generatedAt),
+  bundleStatus: entity.bundleStatus,
+  gateReasons: entity.gateReasons as unknown as Prisma.InputJsonValue,
+  recommendedLean: entity.recommendedLean,
+  evidenceCount: entity.evidenceCount,
+  topEvidence: entity.topEvidence as unknown as Prisma.InputJsonValue,
+  risks: entity.risks as unknown as Prisma.InputJsonValue,
+  features: entity.features as unknown as Prisma.InputJsonValue,
+  readinessStatus: entity.readiness.status,
+  readinessReasons: entity.readiness.reasons as unknown as Prisma.InputJsonValue,
+  researchTrace:
+    entity.researchTrace !== undefined
+      ? (entity.researchTrace as unknown as Prisma.InputJsonValue)
+      : Prisma.JsonNull,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const availabilitySnapshotRecordToDomain = (
+  record: AvailabilitySnapshot | AvailabilitySnapshotRecord,
+): AvailabilitySnapshotEntity => {
+  const base: AvailabilitySnapshotEntity = {
+    id: record.id,
+    batchId: record.batchId,
+    providerFixtureId: record.providerFixtureId,
+    providerCode: record.providerCode,
+    subjectType: record.subjectType as AvailabilitySnapshotEntity["subjectType"],
+    subjectName: record.subjectName,
+    status: record.status as AvailabilitySnapshotEntity["status"],
+    capturedAt: record.capturedAt.toISOString(),
+    summary: record.summary,
+    payload: asRecord(record.payload),
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+    ...(record.fixtureId ? { fixtureId: record.fixtureId } : {}),
+  };
+
+  return {
+    ...base,
+    ...(record.teamSide ? { teamSide: record.teamSide as AvailabilitySnapshotEntity["teamSide"] } : {}),
+    ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt.toISOString() } : {}),
+  } as AvailabilitySnapshotEntity;
+};
+
+export const availabilitySnapshotDomainToCreateInput = (
+  entity: AvailabilitySnapshotEntity,
+): Prisma.AvailabilitySnapshotUncheckedCreateInput => ({
+  id: entity.id,
+  batchId: entity.batchId,
+  fixtureId: entity.fixtureId ?? null,
+  providerFixtureId: entity.providerFixtureId,
+  providerCode: entity.providerCode,
+  teamSide: entity.teamSide ?? null,
+  subjectType: entity.subjectType,
+  subjectName: entity.subjectName,
+  status: entity.status,
+  capturedAt: new Date(entity.capturedAt),
+  sourceUpdatedAt: toDate(entity.sourceUpdatedAt) ?? null,
+  summary: entity.summary,
+  payload: entity.payload as Prisma.InputJsonValue,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const lineupSnapshotRecordToDomain = (
+  record: LineupSnapshot | LineupSnapshotRecord,
+): LineupSnapshotEntity => ({
+  id: record.id,
+  batchId: record.batchId,
+  ...(record.fixtureId ? { fixtureId: record.fixtureId } : {}),
+  providerFixtureId: record.providerFixtureId,
+  providerCode: record.providerCode,
+  teamSide: record.teamSide as LineupSnapshotEntity["teamSide"],
+  lineupStatus: record.lineupStatus as LineupSnapshotEntity["lineupStatus"],
+  ...(record.formation ? { formation: record.formation } : {}),
+  capturedAt: record.capturedAt.toISOString(),
+  ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt.toISOString() } : {}),
+  payload: asRecord(record.payload),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const lineupSnapshotDomainToCreateInput = (
+  entity: LineupSnapshotEntity,
+): Prisma.LineupSnapshotUncheckedCreateInput => ({
+  id: entity.id,
+  batchId: entity.batchId,
+  fixtureId: entity.fixtureId ?? null,
+  providerFixtureId: entity.providerFixtureId,
+  providerCode: entity.providerCode,
+  teamSide: entity.teamSide,
+  lineupStatus: entity.lineupStatus,
+  formation: entity.formation ?? null,
+  capturedAt: new Date(entity.capturedAt),
+  sourceUpdatedAt: toDate(entity.sourceUpdatedAt) ?? null,
+  payload: entity.payload as Prisma.InputJsonValue,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const lineupParticipantRecordToDomain = (
+  record: LineupParticipant | LineupParticipantRecord,
+): LineupParticipantEntity => ({
+  id: record.id,
+  lineupSnapshotId: record.lineupSnapshotId,
+  index: record.index,
+  participantName: record.participantName,
+  role: record.role as LineupParticipantEntity["role"],
+  ...(record.position ? { position: record.position } : {}),
+  ...(record.jerseyNumber !== null ? { jerseyNumber: record.jerseyNumber } : {}),
+  ...(record.availabilityStatus
+    ? {
+        availabilityStatus:
+          record.availabilityStatus as NonNullable<LineupParticipantEntity["availabilityStatus"]>,
+      }
+    : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const lineupParticipantDomainToCreateInput = (
+  entity: LineupParticipantEntity,
+): Prisma.LineupParticipantUncheckedCreateInput => ({
+  id: entity.id,
+  lineupSnapshotId: entity.lineupSnapshotId,
+  index: entity.index,
+  participantName: entity.participantName,
+  role: entity.role,
+  position: entity.position ?? null,
+  jerseyNumber: entity.jerseyNumber ?? null,
+  availabilityStatus: entity.availabilityStatus ?? null,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const researchAssignmentRecordToDomain = (
+  record: ResearchAssignment | ResearchAssignmentRecord,
+): ResearchAssignmentEntity => ({
+  id: record.id,
+  fixtureId: record.fixtureId,
+  ...(record.bundleId ? { bundleId: record.bundleId } : {}),
+  dimension: record.dimension as ResearchAssignmentEntity["dimension"],
+  status: record.status as ResearchAssignmentEntity["status"],
+  attemptNumber: record.attemptNumber,
+  ...(record.startedAt ? { startedAt: record.startedAt.toISOString() } : {}),
+  ...(record.finishedAt ? { finishedAt: record.finishedAt.toISOString() } : {}),
+  ...(record.error ? { error: record.error } : {}),
+  ...(record.summary ? { summary: record.summary } : {}),
+  metadata: asRecord(record.metadata),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const researchAssignmentDomainToCreateInput = (
+  entity: ResearchAssignmentEntity,
+): Prisma.ResearchAssignmentUncheckedCreateInput => ({
+  id: entity.id,
+  fixtureId: entity.fixtureId,
+  bundleId: entity.bundleId ?? null,
+  dimension: entity.dimension,
+  status: entity.status,
+  attemptNumber: entity.attemptNumber,
+  startedAt: toDate(entity.startedAt) ?? null,
+  finishedAt: toDate(entity.finishedAt) ?? null,
+  error: entity.error ?? null,
+  summary: entity.summary ?? null,
+  metadata: entity.metadata as Prisma.InputJsonValue,
   createdAt: new Date(entity.createdAt),
   updatedAt: new Date(entity.updatedAt),
 });

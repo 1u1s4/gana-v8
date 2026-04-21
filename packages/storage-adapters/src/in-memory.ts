@@ -1,4 +1,6 @@
 import type {
+  AvailabilitySnapshotEntity,
+  AvailabilitySnapshotRepository,
   AiRunEntity,
   AiRunRepository,
   AuditEventEntity,
@@ -7,16 +9,34 @@ import type {
   DailyAutomationPolicyEntity,
   DailyAutomationPolicyRepository,
   EntityId,
+  FeatureSnapshotEntity,
+  FeatureSnapshotRepository,
   FixtureEntity,
   FixtureRepository,
   FixtureWorkflowEntity,
   FixtureWorkflowRepository,
   LeagueCoveragePolicyEntity,
   LeagueCoveragePolicyRepository,
+  LineupParticipantEntity,
+  LineupParticipantRepository,
+  LineupSnapshotEntity,
+  LineupSnapshotRepository,
   ParlayEntity,
   ParlayRepository,
   PredictionEntity,
   PredictionRepository,
+  ResearchAssignmentEntity,
+  ResearchAssignmentRepository,
+  ResearchBundleEntity,
+  ResearchBundleRepository,
+  ResearchClaimEntity,
+  ResearchClaimRepository,
+  ResearchClaimSourceEntity,
+  ResearchClaimSourceRepository,
+  ResearchConflictEntity,
+  ResearchConflictRepository,
+  ResearchSourceEntity,
+  ResearchSourceRepository,
   SandboxNamespace,
   SandboxNamespaceRepository,
   TaskEntity,
@@ -188,5 +208,156 @@ export class InMemorySandboxNamespaceRepository
   ): Promise<SandboxNamespace[]> {
     const items = await this.list();
     return items.filter((item) => item.environment === environment);
+  }
+}
+
+export class InMemoryResearchBundleRepository
+  extends InMemoryRepository<ResearchBundleEntity>
+  implements ResearchBundleRepository
+{
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchBundleEntity[]> {
+    const items = await this.list();
+    return items
+      .filter((item) => item.fixtureId === fixtureId)
+      .sort((left, right) => left.generatedAt.localeCompare(right.generatedAt));
+  }
+
+  async findLatestByFixtureId(fixtureId: EntityId): Promise<ResearchBundleEntity | null> {
+    const items = await this.findByFixtureId(fixtureId);
+    return items.at(-1) ?? null;
+  }
+}
+
+export class InMemoryResearchClaimRepository
+  extends InMemoryRepository<ResearchClaimEntity>
+  implements ResearchClaimRepository
+{
+  async findByBundleId(bundleId: EntityId): Promise<ResearchClaimEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.bundleId === bundleId);
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchClaimEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.fixtureId === fixtureId);
+  }
+}
+
+export class InMemoryResearchSourceRepository
+  extends InMemoryRepository<ResearchSourceEntity>
+  implements ResearchSourceRepository
+{
+  async findByBundleId(bundleId: EntityId): Promise<ResearchSourceEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.bundleId === bundleId);
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchSourceEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.fixtureId === fixtureId);
+  }
+}
+
+export class InMemoryResearchClaimSourceRepository
+  extends InMemoryRepository<ResearchClaimSourceEntity>
+  implements ResearchClaimSourceRepository
+{
+  async findByClaimId(claimId: EntityId): Promise<ResearchClaimSourceEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.claimId === claimId);
+  }
+
+  async findBySourceId(sourceId: EntityId): Promise<ResearchClaimSourceEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.sourceId === sourceId);
+  }
+}
+
+export class InMemoryResearchConflictRepository
+  extends InMemoryRepository<ResearchConflictEntity>
+  implements ResearchConflictRepository
+{
+  async findByBundleId(bundleId: EntityId): Promise<ResearchConflictEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.bundleId === bundleId);
+  }
+}
+
+export class InMemoryFeatureSnapshotRepository
+  extends InMemoryRepository<FeatureSnapshotEntity>
+  implements FeatureSnapshotRepository
+{
+  async findByFixtureId(fixtureId: EntityId): Promise<FeatureSnapshotEntity[]> {
+    const items = await this.list();
+    return items
+      .filter((item) => item.fixtureId === fixtureId)
+      .sort((left, right) => left.generatedAt.localeCompare(right.generatedAt));
+  }
+
+  async findByBundleId(bundleId: EntityId): Promise<FeatureSnapshotEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.bundleId === bundleId);
+  }
+
+  async findLatestByFixtureId(fixtureId: EntityId): Promise<FeatureSnapshotEntity | null> {
+    const items = await this.findByFixtureId(fixtureId);
+    return items.at(-1) ?? null;
+  }
+}
+
+export class InMemoryAvailabilitySnapshotRepository
+  extends InMemoryRepository<AvailabilitySnapshotEntity>
+  implements AvailabilitySnapshotRepository
+{
+  async findByFixtureId(fixtureId: EntityId): Promise<AvailabilitySnapshotEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.fixtureId === fixtureId);
+  }
+
+  async findByBatchId(batchId: EntityId): Promise<AvailabilitySnapshotEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.batchId === batchId);
+  }
+}
+
+export class InMemoryLineupSnapshotRepository
+  extends InMemoryRepository<LineupSnapshotEntity>
+  implements LineupSnapshotRepository
+{
+  async findByFixtureId(fixtureId: EntityId): Promise<LineupSnapshotEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.fixtureId === fixtureId);
+  }
+
+  async findByBatchId(batchId: EntityId): Promise<LineupSnapshotEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.batchId === batchId);
+  }
+}
+
+export class InMemoryLineupParticipantRepository
+  extends InMemoryRepository<LineupParticipantEntity>
+  implements LineupParticipantRepository
+{
+  async findByLineupSnapshotId(lineupSnapshotId: EntityId): Promise<LineupParticipantEntity[]> {
+    const items = await this.list();
+    return items
+      .filter((item) => item.lineupSnapshotId === lineupSnapshotId)
+      .sort((left, right) => left.index - right.index);
+  }
+}
+
+export class InMemoryResearchAssignmentRepository
+  extends InMemoryRepository<ResearchAssignmentEntity>
+  implements ResearchAssignmentRepository
+{
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchAssignmentEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.fixtureId === fixtureId);
+  }
+
+  async findByBundleId(bundleId: EntityId): Promise<ResearchAssignmentEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.bundleId === bundleId);
   }
 }

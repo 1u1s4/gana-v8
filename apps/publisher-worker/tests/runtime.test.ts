@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createFeatureSnapshot,
   createDailyAutomationPolicy,
   createFixture,
   createFixtureWorkflow,
   createLeagueCoveragePolicy,
   createPrediction,
+  createResearchBundle,
 } from "@gana-v8/domain-core";
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
@@ -111,6 +113,86 @@ const createClient = (
   },
 });
 
+const seedPublishableResearch = async (
+  unitOfWork: ReturnType<typeof createInMemoryUnitOfWork>,
+  fixtureIds: readonly string[],
+  generatedAt = "2026-04-16T12:00:00.000Z",
+): Promise<void> => {
+  for (const fixtureId of fixtureIds) {
+    const bundleId = `bundle:${fixtureId}:${generatedAt}`;
+    await unitOfWork.researchBundles.save(
+      createResearchBundle({
+        id: bundleId,
+        fixtureId,
+        generatedAt,
+        brief: {
+          headline: `Research brief for ${fixtureId}`,
+          context: "Publisher test research",
+          questions: ["Should the fixture be publishable?"],
+          assumptions: ["Use persisted research."],
+        },
+        summary: "Publishable research bundle",
+        recommendedLean: "home",
+        directionalScore: { home: 0.71, draw: 0.18, away: 0.22 },
+        risks: [],
+        gateResult: {
+          status: "publishable",
+          reasons: [],
+          gatedAt: generatedAt,
+        },
+        trace: {
+          synthesisMode: "deterministic",
+        },
+        createdAt: generatedAt,
+        updatedAt: generatedAt,
+      }),
+    );
+    await unitOfWork.featureSnapshots.save(
+      createFeatureSnapshot({
+        id: `feature:${fixtureId}:${generatedAt}`,
+        fixtureId,
+        bundleId,
+        generatedAt,
+        bundleStatus: "publishable",
+        gateReasons: [],
+        recommendedLean: "home",
+        evidenceCount: 1,
+        topEvidence: [
+          {
+            id: `research:${fixtureId}`,
+            title: "Confirmed publishable bundle",
+            direction: "home",
+            weightedScore: 0.84,
+          },
+        ],
+        risks: [],
+        features: {
+          researchScoreHome: 0.71,
+          researchScoreDraw: 0.18,
+          researchScoreAway: 0.22,
+          formHome: 0.55,
+          formAway: 0.44,
+          restHomeDays: 5,
+          restAwayDays: 4,
+          injuriesHome: 0,
+          injuriesAway: 1,
+          derby: 0,
+          hoursUntilKickoff: 4,
+        },
+        readiness: {
+          status: "ready",
+          reasons: [],
+        },
+        researchTrace: {
+          synthesisMode: "deterministic",
+        },
+        createdAt: generatedAt,
+        updatedAt: generatedAt,
+      }),
+    );
+  }
+};
+
 test("toAtomicCandidateFromPrediction derives decimal price from implied probability", () => {
   const candidate = toAtomicCandidateFromPrediction(predictionRecord("pred-1", "fx-1"));
 
@@ -122,6 +204,7 @@ test("toAtomicCandidateFromPrediction derives decimal price from implied probabi
 
 test("publishParlayMvp persists a two-leg parlay from published moneyline predictions", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2", "fx-4"]);
   const result = await publishParlayMvp(undefined, {
     client: createClient([
       predictionRecord("pred-1", "fx-1", {
@@ -194,6 +277,7 @@ test("publishParlayMvp returns scorecard and reasons when not enough valid predi
 
 test("publishParlayMvp respects workflow overrides when selecting parlay legs", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2", "fx-3", "fx-4"]);
   await unitOfWork.fixtureWorkflows.save(
     createFixtureWorkflow({
       fixtureId: "fx-1",
@@ -267,6 +351,7 @@ test("publishParlayMvp respects workflow overrides when selecting parlay legs", 
 
 test("publishParlayMvp excludes predictions blocked by coverage policy and records blocked parlay workflow audit", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-blocked", "fx-2", "fx-3"]);
   await unitOfWork.leagueCoveragePolicies.save(
     createLeagueCoveragePolicy({
       id: "league-pl",
@@ -402,6 +487,7 @@ test("publishParlayMvp excludes predictions blocked by coverage policy and recor
 
 test("publishParlayMvp scopes parlay selection to the current prediction task ids and excludes historical predictions", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2", "fx-old"]);
 
   const result = await publishParlayMvp(undefined, {
     client: createClient([
@@ -514,6 +600,11 @@ test("publishParlayMvp scopes parlay selection to the current prediction task id
 
 test("publishParlayMvp excludes far-future demo predictions when live candidates are available", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, [
+    "fixture:api-football:1499245",
+    "fixture:api-football:1499240",
+    "haemo4orszd-fixture-1",
+  ]);
 
   const result = await publishParlayMvp(undefined, {
     client: createClient([
@@ -576,6 +667,10 @@ test("publishParlayMvp excludes far-future demo predictions when live candidates
 
 test("publishParlayMvp generates a persisted parlay id that fits the database column", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, [
+    "fixture:api-football:1499245",
+    "fixture:api-football:1499240",
+  ]);
 
   const result = await publishParlayMvp(undefined, {
     client: createClient([
@@ -627,6 +722,7 @@ test("publishParlayMvp generates a persisted parlay id that fits the database co
 
 test("publishParlayMvp blocks live publication when selected predictions carry demo lineage", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2"]);
 
   const result = await publishParlayMvp(undefined, {
     client: createClient([
@@ -672,6 +768,7 @@ test("publishParlayMvp blocks live publication when selected predictions carry d
 
 test("publishParlayMvp respects per-channel publication pauses without touching candidate selection", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2"]);
   const liveLineage = {
     environment: "production",
     profile: "production",
@@ -715,6 +812,7 @@ test("publishParlayMvp respects per-channel publication pauses without touching 
 
 test("publishParlayMvp requires channel capability for sensitive publication targets", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2"]);
   const liveLineage = {
     environment: "production",
     profile: "production",

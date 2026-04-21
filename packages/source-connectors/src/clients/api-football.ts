@@ -1,10 +1,16 @@
 import type {
+  FetchAvailabilityWindowInput,
   FetchFixturesWindowInput,
+  FetchLineupsWindowInput,
   FetchOddsWindowInput,
   FootballApiClient,
+  RawAvailabilityRecord,
   RawFixtureRecord,
+  RawLineupPlayer,
+  RawLineupRecord,
   RawOddsMarketRecord,
   RawOddsSelection,
+  RawPlayer,
 } from "../models/raw.js";
 
 export interface ApiFootballFetchRequest {
@@ -108,6 +114,16 @@ interface ApiFootballTeamResponse {
   readonly name?: string;
 }
 
+interface ApiFootballPlayerResponse {
+  readonly id?: number | string;
+  readonly name?: string;
+  readonly nationality?: string;
+  readonly number?: number | string;
+  readonly photo?: string;
+  readonly pos?: string;
+  readonly grid?: string;
+}
+
 interface ApiFootballOddsResponse {
   readonly bookmakers?: readonly ApiFootballBookmakerResponse[];
   readonly fixture?: {
@@ -124,6 +140,34 @@ interface ApiFootballOddsResponse {
     readonly home?: ApiFootballTeamResponse;
   };
   readonly update?: string;
+}
+
+interface ApiFootballInjuriesResponse {
+  readonly fixture?: {
+    readonly id?: number | string;
+  };
+  readonly player?: ApiFootballPlayerResponse;
+  readonly team?: ApiFootballTeamResponse;
+  readonly type?: string;
+  readonly reason?: string;
+  readonly fixtureUpdate?: string;
+  readonly update?: string;
+}
+
+interface ApiFootballLineupsResponse {
+  readonly coach?: {
+    readonly id?: number | string;
+    readonly name?: string;
+  };
+  readonly formation?: string;
+  readonly startXI?: readonly ApiFootballLineupPlayerResponse[];
+  readonly substitutes?: readonly ApiFootballLineupPlayerResponse[];
+  readonly team?: ApiFootballTeamResponse;
+  readonly update?: string;
+}
+
+interface ApiFootballLineupPlayerResponse {
+  readonly player?: ApiFootballPlayerResponse;
 }
 
 interface ApiFootballBookmakerResponse {
@@ -166,6 +210,15 @@ const toUrl = (baseUrl: string, path: string, query: Readonly<Record<string, str
 
 const toProviderId = (value: string | number | undefined, fallback: string): string =>
   value === undefined ? fallback : String(value);
+
+const toOptionalNumber = (value: string | number | undefined): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 
 const toStatus = (rawShortStatus: string | undefined): RawFixtureRecord["status"] => {
   const status = rawShortStatus?.trim().toUpperCase();
@@ -218,6 +271,19 @@ const toTeam = (team: ApiFootballTeamResponse | undefined, fallbackLabel: string
   ...(team?.country ? { country: team.country } : {}),
   ...(team?.code ? { shortName: team.code } : {}),
 });
+
+const toPlayer = (player: ApiFootballPlayerResponse | undefined, fallbackLabel: string): RawPlayer => {
+  const shirtNumber = toOptionalNumber(player?.number);
+
+  return {
+    name: player?.name ?? fallbackLabel,
+    providerPlayerId: toProviderId(player?.id, slugify(player?.name ?? fallbackLabel)),
+    ...(player?.nationality ? { country: player.nationality } : {}),
+    ...(player?.pos ? { position: player.pos } : {}),
+    ...(player?.name ? { shortName: player.name } : {}),
+    ...(shirtNumber !== undefined ? { shirtNumber } : {}),
+  };
+};
 
 const toFixtureScore = (fixture: ApiFootballFixtureResponse): RawFixtureRecord["score"] => {
   const home = fixture.goals?.home ?? fixture.score?.fulltime?.home;
@@ -298,6 +364,57 @@ const toSelections = (
 
 const normalizeMarketKeys = (marketKeys: readonly string[] | undefined): ReadonlySet<string> =>
   new Set((marketKeys ?? []).map((marketKey) => marketKey.trim().toLowerCase()).filter(Boolean));
+
+const normalizeIds = (ids: readonly string[] | undefined): readonly string[] =>
+  (ids ?? []).map((id) => id.trim()).filter(Boolean);
+
+const matchesIdFilter = (candidate: string, allowedIds: readonly string[]): boolean =>
+  allowedIds.length === 0 || allowedIds.includes(candidate);
+
+const toAvailabilityStatus = (
+  type: string | undefined,
+  reason: string | undefined,
+): RawAvailabilityRecord["status"] => {
+  const normalized = `${type ?? ""} ${reason ?? ""}`.trim().toLowerCase();
+
+  if (normalized.includes("susp")) {
+    return "suspended";
+  }
+
+  if (normalized.includes("doubt") || normalized.includes("question")) {
+    return "doubtful";
+  }
+
+  if (normalized.includes("probable")) {
+    return "probable";
+  }
+
+  if (normalized.includes("confirmed out") || normalized.includes("ruled out")) {
+    return "confirmed_out";
+  }
+
+  if (normalized.includes("available") || normalized.includes("fit")) {
+    return "available";
+  }
+
+  return "injured";
+};
+
+const toReasonCode = (reason: string | undefined): string | undefined => {
+  const normalized = reason?.trim();
+  return normalized ? slugify(normalized) : undefined;
+};
+
+const toLineupPlayer = (
+  entry: ApiFootballLineupPlayerResponse,
+  role: RawLineupPlayer["role"],
+  fallbackLabel: string,
+): RawLineupPlayer => ({
+  player: toPlayer(entry.player, fallbackLabel),
+  ...(entry.player?.grid ? { positionSlot: entry.player.grid } : {}),
+  ...(entry.player?.pos ? { position: entry.player.pos } : {}),
+  role,
+});
 
 const uniqueDateWindow = (start: string, end: string): readonly string[] => {
   const dates: string[] = [];
@@ -439,6 +556,114 @@ export class ApiFootballHttpClient implements FootballApiClient {
         });
       }),
     );
+  }
+
+  async fetchAvailabilityWindow(input: FetchAvailabilityWindowInput): Promise<readonly RawAvailabilityRecord[]> {
+    const fixtureIds = normalizeIds(input.fixtureIds);
+    const teamIds = normalizeIds(input.teamIds);
+    const responses = fixtureIds.length > 0
+      ? (
+          await Promise.all(
+            fixtureIds.map(async (fixtureId) =>
+              this.request<ApiFootballInjuriesResponse>("injuries", {
+                fixture: fixtureId,
+                timezone: "UTC",
+              }),
+            ),
+          )
+        ).flat()
+      : (
+          await Promise.all(
+            uniqueDateWindow(input.window.start, input.window.end).map(async (date) =>
+              this.request<ApiFootballInjuriesResponse>("injuries", {
+                date,
+                timezone: "UTC",
+              }),
+            ),
+          )
+        ).flat();
+
+    return responses.flatMap((entry, index) => {
+      const providerFixtureId = toProviderId(entry.fixture?.id, `fixture-${index}`);
+      const team = toTeam(entry.team, `team-${index}`);
+      const reasonCode = toReasonCode(entry.reason);
+      const sourceUpdatedAt = entry.update ?? entry.fixtureUpdate;
+
+      if (!matchesIdFilter(providerFixtureId, fixtureIds) || !matchesIdFilter(team.providerTeamId, teamIds)) {
+        return [];
+      }
+
+      return [
+        {
+          payload: entry as Record<string, unknown>,
+          player: toPlayer(entry.player, `player-${index}`),
+          providerCode: this.providerCode,
+          providerFixtureId,
+          recordType: "availability",
+          ...(reasonCode ? { reasonCode } : {}),
+          ...(sourceUpdatedAt ? { sourceUpdatedAt } : {}),
+          status: toAvailabilityStatus(entry.type, entry.reason),
+          team,
+        } satisfies RawAvailabilityRecord,
+      ];
+    });
+  }
+
+  async fetchLineupsWindow(input: FetchLineupsWindowInput): Promise<readonly RawLineupRecord[]> {
+    const fixtureIds = normalizeIds(input.fixtureIds);
+    const teamIds = normalizeIds(input.teamIds);
+
+    if (fixtureIds.length === 0) {
+      return [];
+    }
+
+    const responses = await Promise.all(
+      fixtureIds.map(async (fixtureId) =>
+        this.request<ApiFootballLineupsResponse>("fixtures/lineups", {
+          fixture: fixtureId,
+          timezone: "UTC",
+        }),
+      ),
+    );
+
+    return responses.flatMap((items, responseIndex) => {
+      const providerFixtureId = fixtureIds[responseIndex] ?? `fixture-${responseIndex}`;
+
+      return items.flatMap((entry, entryIndex) => {
+        const team = toTeam(entry.team, `team-${entryIndex}`);
+        if (!matchesIdFilter(team.providerTeamId, teamIds)) {
+          return [];
+        }
+
+        const players = [
+          ...ensureArray(entry.startXI).map((player, playerIndex) =>
+            toLineupPlayer(player, "starter", `starter-${responseIndex}-${entryIndex}-${playerIndex}`),
+          ),
+          ...ensureArray(entry.substitutes).map((player, playerIndex) =>
+            toLineupPlayer(player, "bench", `bench-${responseIndex}-${entryIndex}-${playerIndex}`),
+          ),
+        ];
+
+        if (players.length === 0) {
+          return [];
+        }
+
+        return [
+          {
+            ...(entry.formation ? { formation: entry.formation } : {}),
+            payload: entry as Record<string, unknown>,
+            players,
+            providerCode: this.providerCode,
+            providerFixtureId,
+            recordType: "lineup",
+            ...(entry.update ? { sourceUpdatedAt: entry.update } : {}),
+            sourceConfidence: 1,
+            status: "confirmed",
+            team,
+          } satisfies RawLineupRecord,
+        ];
+      });
+    });
   }
 
   private async request<TResponse>(

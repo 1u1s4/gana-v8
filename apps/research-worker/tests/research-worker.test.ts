@@ -41,12 +41,18 @@ test("runResearchTask produces a deterministic dossier and frozen feature snapsh
   assert.equal(result.featureSnapshot.recommendedLean, result.dossier.recommendedLean);
   assert.equal(result.featureSnapshot.readiness.status, "ready");
   assert.equal(result.featureSnapshot.researchTrace?.synthesisMode, "deterministic");
-  assert.equal(result.fixture.metadata.researchGeneratedAt, "2026-04-16T12:00:00.000Z");
-  assert.equal(result.fixture.metadata.researchRecommendedLean, result.featureSnapshot.recommendedLean);
-  assert.equal(result.fixture.metadata.featureReadinessStatus, "ready");
-  assert.equal(result.fixture.metadata.researchSynthesisMode, "deterministic");
+  assert.equal(result.persistableResearchBundle.generatedAt, "2026-04-16T12:00:00.000Z");
+  assert.equal(result.persistableResearchBundle.gateResult.status, "degraded");
+  assert.equal(result.persistableFeatureSnapshot.generatedAt, "2026-04-16T12:00:00.000Z");
+  assert.equal(result.persistableFeatureSnapshot.recommendedLean, result.featureSnapshot.recommendedLean);
+  assert.equal(result.persistableFeatureSnapshot.readiness.status, "needs-review");
+  assert.equal(result.persistableFeatureSnapshot.researchTrace?.synthesisMode, "deterministic");
+  assert.equal(result.fixture.metadata.researchGeneratedAt, undefined);
+  assert.equal(result.fixture.metadata.researchRecommendedLean, undefined);
+  assert.equal(result.fixture.metadata.featureReadinessStatus, undefined);
+  assert.equal(result.fixture.metadata.researchSynthesisMode, undefined);
   assert.equal(result.workflow?.enrichmentStatus, "succeeded");
-  assert.equal(result.workflow?.candidateStatus, "succeeded");
+  assert.equal(result.workflow?.candidateStatus, "blocked");
   assert.equal(result.workflow?.lastEnrichedAt, "2026-04-16T12:00:00.000Z");
 });
 
@@ -117,7 +123,10 @@ test("AI fallback preserves deterministic dossier baseline when synthesis fails"
   assert.equal(result.dossier.summary, deterministic.summary);
   assert.equal(result.featureSnapshot.researchTrace?.synthesisMode, "ai-fallback");
   assert.match(result.featureSnapshot.researchTrace?.fallbackSummary ?? "", /provider timeout/i);
-  assert.match(result.fixture.metadata.researchFallbackSummary ?? "", /provider timeout/i);
+  assert.equal(result.persistableFeatureSnapshot.researchTrace?.synthesisMode, "ai-fallback");
+  assert.match(result.persistableFeatureSnapshot.researchTrace?.fallbackSummary ?? "", /provider timeout/i);
+  assert.match(result.persistableResearchBundle.trace?.fallbackSummary ?? "", /provider timeout/i);
+  assert.equal(result.fixture.metadata.researchFallbackSummary, undefined);
   assert.ok(result.dossier.risks.some((risk) => risk.includes("fallback")));
   assert.equal(result.aiRun?.status, "failed");
 });

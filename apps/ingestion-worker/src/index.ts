@@ -5,8 +5,11 @@ import {
   type CanonicalMatchSnapshot,
 } from "@gana-v8/canonical-pipeline";
 import {
+  createAvailabilitySnapshot,
   createAuditEvent,
   createFixture,
+  createLineupParticipant,
+  createLineupSnapshot,
   createTask,
   createTaskRun,
   type FixtureEntity,
@@ -32,14 +35,22 @@ import {
   buildChecksum,
   FakeFootballApiClient,
   FootballApiFacade,
+  ingestAvailabilityWindow,
   ingestFixturesWindow,
+  ingestLineupsWindow,
   ingestOddsWindow,
+  sampleAvailability,
   sampleFixtures,
+  sampleLineups,
   sampleOdds,
+  type FetchAvailabilityWindowInput,
   type FetchFixturesWindowInput,
+  type FetchLineupsWindowInput,
   type FetchOddsWindowInput,
   type FootballApiClient,
+  type RawAvailabilityRecord,
   type RawFixtureRecord,
+  type RawLineupRecord,
   type RawOddsMarketRecord,
   type SourceCoverageWindow,
 } from "@gana-v8/source-connectors";
@@ -71,7 +82,20 @@ export function describeWorkspace() {
   return `${workspaceInfo.workspaceName} (${workspaceInfo.category})`;
 }
 
-export type IngestionWorkerIntent = Extract<WorkflowIntent, "ingest-fixtures" | "ingest-odds">;
+export type IngestionWorkerIntent =
+  | Extract<WorkflowIntent, "ingest-fixtures" | "ingest-odds">
+  | "ingest-availability"
+  | "ingest-lineups";
+
+export const createIngestionTaskEnvelope = <TPayload extends Record<string, unknown>>(
+  input: Omit<Parameters<typeof createTaskEnvelope<TPayload>>[0], "intent"> & {
+    readonly intent: IngestionWorkerIntent;
+  },
+): TaskEnvelope<TPayload> =>
+  createTaskEnvelope({
+    ...input,
+    intent: input.intent as WorkflowIntent,
+  });
 
 export interface IngestionWorkerRuntimeSummary {
   readonly appEnv: RuntimeConfig["app"]["env"];
@@ -95,9 +119,14 @@ export interface IngestionWorkerTaskOutput {
   readonly snapshotId: string;
   readonly canonicalMatches: number;
   readonly canonicalMarkets: number;
+  readonly canonicalAvailabilityEntries: number;
+  readonly canonicalLineups: number;
   readonly insertedCompetitions: number;
+  readonly insertedPlayers: number;
   readonly insertedTeams: number;
   readonly upsertedMatches: number;
+  readonly upsertedAvailabilityEntries: number;
+  readonly upsertedLineups: number;
   readonly upsertedMarkets: number;
 }
 
@@ -112,7 +141,7 @@ export interface IngestionExecutionManifest {
   readonly provider: {
     readonly providerSource: RuntimeConfig["provider"]["source"];
     readonly providerBaseUrl: string;
-    readonly endpointFamily: "fixtures" | "odds";
+    readonly endpointFamily: "fixtures" | "odds" | "availability" | "lineups";
     readonly requestKind: "live-runner" | "runtime";
   };
   readonly request?: {
@@ -120,6 +149,7 @@ export interface IngestionExecutionManifest {
     readonly league?: string;
     readonly season?: number;
     readonly fixtureIds?: readonly string[];
+    readonly teamIds?: readonly string[];
     readonly marketKeys?: readonly string[];
     readonly quirksApplied: readonly string[];
   };
@@ -184,10 +214,12 @@ export interface IngestionWorkerRuntime {
 }
 
 export interface IngestionWorkerRuntimeOptions {
+  readonly availability?: readonly RawAvailabilityRecord[];
   readonly apiFootballFetch?: typeof fetch;
   readonly client?: FootballApiClient;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly fixtures?: readonly RawFixtureRecord[];
+  readonly lineups?: readonly RawLineupRecord[];
   readonly now?: () => Date;
   readonly odds?: readonly RawOddsMarketRecord[];
   readonly pipeline?: CanonicalPipeline;
@@ -222,6 +254,8 @@ export interface DemoIngestionWorkerResult {
   readonly batchId?: string;
   readonly checksum?: string;
   readonly snapshotId?: string;
+  readonly canonicalAvailabilityEntries?: number;
+  readonly canonicalLineups?: number;
   readonly canonicalMatches?: number;
   readonly canonicalMarkets?: number;
   readonly warnings: readonly string[];
@@ -261,8 +295,20 @@ const toRuntimeSummary = (
   providerSource: runtimeConfig.provider.source,
 });
 
-const toEndpointFamily = (intent: IngestionWorkerIntent): "fixtures" | "odds" =>
-  intent === "ingest-odds" ? "odds" : "fixtures";
+const toEndpointFamily = (
+  intent: IngestionWorkerIntent,
+): "fixtures" | "odds" | "availability" | "lineups" => {
+  switch (intent) {
+    case "ingest-odds":
+      return "odds";
+    case "ingest-availability":
+      return "availability";
+    case "ingest-lineups":
+      return "lineups";
+    case "ingest-fixtures":
+      return "fixtures";
+  }
+};
 
 const toProviderErrorManifest = (
   execution: TaskExecutionResult<IngestionWorkerTaskOutput>,
@@ -391,6 +437,12 @@ const resolveApiFootballConfig = (
 const countMarkets = (snapshot: CanonicalMatchSnapshot): number =>
   snapshot.matches.reduce((total, match) => total + match.odds.length, 0);
 
+const countAvailabilityEntries = (snapshot: CanonicalMatchSnapshot): number =>
+  snapshot.matches.reduce((total, match) => total + match.availability.length, 0);
+
+const countLineups = (snapshot: CanonicalMatchSnapshot): number =>
+  snapshot.matches.reduce((total, match) => total + match.lineups.length, 0);
+
 const toFixtureStatus = (status: RawFixtureRecord["status"]): FixtureEntity["status"] => {
   switch (status) {
     case "scheduled":
@@ -406,6 +458,9 @@ const toFixtureStatus = (status: RawFixtureRecord["status"]): FixtureEntity["sta
 
 const toFixtureId = (record: RawFixtureRecord): string =>
   `fixture:${record.providerCode}:${record.providerFixtureId}`;
+
+const toFixtureIdFromProvider = (providerCode: string, providerFixtureId: string): string =>
+  `fixture:${providerCode}:${providerFixtureId}`;
 
 const toPersistedFixture = (
   record: RawFixtureRecord,
@@ -437,12 +492,233 @@ const toPersistedFixture = (
       extractionStatus: batch.extractionStatus,
       providerCode: record.providerCode,
       providerCompetitionId: record.competition.providerCompetitionId,
+      providerHomeTeamId: record.homeTeam.providerTeamId,
+      providerAwayTeamId: record.awayTeam.providerTeamId,
       providerFixtureId: record.providerFixtureId,
       sourceEndpoint: batch.sourceEndpoint,
       sourceName: batch.sourceName,
       ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt } : {}),
     },
   });
+
+const resolveFixtureTeamSide = (
+  fixture: FixtureEntity | null,
+  team: RawAvailabilityRecord["team"] | RawLineupRecord["team"],
+): "home" | "away" | undefined => {
+  if (!fixture) {
+    return undefined;
+  }
+
+  const providerHomeTeamId =
+    typeof fixture.metadata.providerHomeTeamId === "string" ? fixture.metadata.providerHomeTeamId : undefined;
+  const providerAwayTeamId =
+    typeof fixture.metadata.providerAwayTeamId === "string" ? fixture.metadata.providerAwayTeamId : undefined;
+  if (providerHomeTeamId && team.providerTeamId === providerHomeTeamId) {
+    return "home";
+  }
+  if (providerAwayTeamId && team.providerTeamId === providerAwayTeamId) {
+    return "away";
+  }
+  if (fixture.homeTeam === team.name) {
+    return "home";
+  }
+  if (fixture.awayTeam === team.name) {
+    return "away";
+  }
+
+  return undefined;
+};
+
+const toAvailabilitySnapshotStatus = (
+  status: RawAvailabilityRecord["status"],
+): "available" | "questionable" | "out" => {
+  switch (status) {
+    case "available":
+      return "available";
+    case "probable":
+    case "doubtful":
+      return "questionable";
+    case "injured":
+    case "suspended":
+    case "confirmed_out":
+      return "out";
+  }
+};
+
+const persistAvailabilitySnapshots = async (
+  prismaClient: PrismaClient | undefined,
+  unitOfWork: StorageUnitOfWork | undefined,
+  batch: {
+    readonly batchId: string;
+    readonly checksum: string;
+    readonly coverageWindow: {
+      readonly start: string;
+      readonly end: string;
+      readonly granularity: "daily" | "intraday";
+    };
+    readonly extractionStatus: string;
+    readonly extractionTime: string;
+    readonly lineage: {
+      readonly endpointFamily: string;
+      readonly fetchedAt: string;
+      readonly providerCode: string;
+      readonly runId: string;
+      readonly schemaVersion: string;
+    };
+    readonly rawObjectRefs: readonly string[];
+    readonly records: readonly RawAvailabilityRecord[];
+    readonly sourceEndpoint: string;
+    readonly sourceName: string;
+    readonly sourceQualityScore: number;
+    readonly warnings: readonly string[];
+  },
+): Promise<void> => {
+  if (!unitOfWork) {
+    return;
+  }
+
+  await persistRawBatch(prismaClient, batch);
+
+  const fixtureCache = new Map<string, FixtureEntity | null>();
+  for (const record of batch.records) {
+    const fixtureId = toFixtureIdFromProvider(record.providerCode, record.providerFixtureId);
+    if (!fixtureCache.has(fixtureId)) {
+      fixtureCache.set(fixtureId, await unitOfWork.fixtures.getById(fixtureId));
+    }
+    const fixture = fixtureCache.get(fixtureId) ?? null;
+    const teamSide = resolveFixtureTeamSide(fixture, record.team);
+    const status = toAvailabilitySnapshotStatus(record.status);
+    const subjectName = record.player.name;
+    const id = buildChecksum({
+      batchId: batch.batchId,
+      fixtureId,
+      providerCode: record.providerCode,
+      providerFixtureId: record.providerFixtureId,
+      subjectName,
+      subjectType: "player",
+      teamSide: teamSide ?? null,
+    });
+
+    await unitOfWork.availabilitySnapshots.save(createAvailabilitySnapshot({
+      id,
+      batchId: batch.batchId,
+      fixtureId,
+      providerFixtureId: record.providerFixtureId,
+      providerCode: record.providerCode,
+      ...(teamSide ? { teamSide } : {}),
+      subjectType: "player",
+      subjectName,
+      status,
+      capturedAt: record.sourceUpdatedAt ?? batch.extractionTime,
+      ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt } : {}),
+      summary: `${record.team.name} | ${record.player.name} | ${status}`,
+      payload: record.payload,
+      createdAt: batch.extractionTime,
+      updatedAt: batch.extractionTime,
+    }));
+  }
+};
+
+const persistLineupSnapshots = async (
+  prismaClient: PrismaClient | undefined,
+  unitOfWork: StorageUnitOfWork | undefined,
+  batch: {
+    readonly batchId: string;
+    readonly checksum: string;
+    readonly coverageWindow: {
+      readonly start: string;
+      readonly end: string;
+      readonly granularity: "daily" | "intraday";
+    };
+    readonly extractionStatus: string;
+    readonly extractionTime: string;
+    readonly lineage: {
+      readonly endpointFamily: string;
+      readonly fetchedAt: string;
+      readonly providerCode: string;
+      readonly runId: string;
+      readonly schemaVersion: string;
+    };
+    readonly rawObjectRefs: readonly string[];
+    readonly records: readonly RawLineupRecord[];
+    readonly sourceEndpoint: string;
+    readonly sourceName: string;
+    readonly sourceQualityScore: number;
+    readonly warnings: readonly string[];
+  },
+): Promise<void> => {
+  if (!unitOfWork) {
+    return;
+  }
+
+  await persistRawBatch(prismaClient, batch);
+
+  const fixtureCache = new Map<string, FixtureEntity | null>();
+  for (const record of batch.records) {
+    const fixtureId = toFixtureIdFromProvider(record.providerCode, record.providerFixtureId);
+    if (!fixtureCache.has(fixtureId)) {
+      fixtureCache.set(fixtureId, await unitOfWork.fixtures.getById(fixtureId));
+    }
+    const fixture = fixtureCache.get(fixtureId) ?? null;
+    const teamSide = resolveFixtureTeamSide(fixture, record.team);
+    if (!teamSide) {
+      continue;
+    }
+
+    const snapshotId = buildChecksum({
+      batchId: batch.batchId,
+      fixtureId,
+      lineupStatus: record.status,
+      providerCode: record.providerCode,
+      providerFixtureId: record.providerFixtureId,
+      teamSide,
+    });
+    await unitOfWork.lineupSnapshots.save(createLineupSnapshot({
+      id: snapshotId,
+      batchId: batch.batchId,
+      fixtureId,
+      providerFixtureId: record.providerFixtureId,
+      providerCode: record.providerCode,
+      teamSide,
+      lineupStatus: record.status,
+      ...(record.formation ? { formation: record.formation } : {}),
+      capturedAt: record.sourceUpdatedAt ?? batch.extractionTime,
+      ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt } : {}),
+      payload: record.payload,
+      createdAt: batch.extractionTime,
+      updatedAt: batch.extractionTime,
+    }));
+
+    const existingParticipants = await unitOfWork.lineupParticipants.findByLineupSnapshotId(snapshotId);
+    for (const participant of existingParticipants) {
+      await unitOfWork.lineupParticipants.delete(participant.id);
+    }
+
+    const participants = record.players
+      .filter((player) => player.role === "starter" || player.role === "bench")
+      .map((player, index) =>
+        createLineupParticipant({
+          id: buildChecksum({
+            index,
+            lineupSnapshotId: snapshotId,
+            participantName: player.player.name,
+          }),
+          lineupSnapshotId: snapshotId,
+          index,
+          participantName: player.player.name,
+          role: player.role === "starter" ? "starting" : "bench",
+          ...(player.position ? { position: player.position } : {}),
+          ...(player.player.shirtNumber !== undefined ? { jerseyNumber: player.player.shirtNumber } : {}),
+          createdAt: batch.extractionTime,
+          updatedAt: batch.extractionTime,
+        }),
+      );
+
+    for (const participant of participants) {
+      await unitOfWork.lineupParticipants.save(participant);
+    }
+  }
+};
 
 const createPersistenceContext = (
   config: RuntimeConfig,
@@ -763,6 +1039,9 @@ const persistTaskExecution = async (
         ...(Array.isArray(envelope.payload.fixtureIds)
           ? { fixtureIds: envelope.payload.fixtureIds.filter((value): value is string => typeof value === "string") }
           : {}),
+        ...(Array.isArray(envelope.payload.teamIds)
+          ? { teamIds: envelope.payload.teamIds.filter((value): value is string => typeof value === "string") }
+          : {}),
         ...(Array.isArray(envelope.payload.marketKeys)
           ? { marketKeys: envelope.payload.marketKeys.filter((value): value is string => typeof value === "string") }
           : {}),
@@ -781,6 +1060,8 @@ const persistTaskExecution = async (
       actor: "ingestion-worker",
       payload: {
         batchId: output?.batchId ?? null,
+        canonicalAvailabilityEntries: output?.canonicalAvailabilityEntries ?? null,
+        canonicalLineups: output?.canonicalLineups ?? null,
         canonicalMarkets: output?.canonicalMarkets ?? null,
         canonicalMatches: output?.canonicalMatches ?? null,
         checksum: output?.checksum ?? null,
@@ -796,7 +1077,7 @@ const persistTaskExecution = async (
         warnings: output?.warnings ?? [],
         workflowId: envelope.workflowId,
         provider: {
-          endpointFamily: envelope.intent === "ingest-odds" ? "odds" : "fixtures",
+          endpointFamily: toEndpointFamily(envelope.intent as IngestionWorkerIntent),
           providerBaseUrl: runtimeConfig.provider.baseUrl,
           providerSource: runtimeConfig.provider.source,
           requestKind: envelope.metadata.source === "ingestion-worker/live-runner" ? "live-runner" : "runtime",
@@ -822,22 +1103,30 @@ const toTaskOutput = (
   canonical: {
     readonly snapshot: CanonicalMatchSnapshot;
     readonly insertedCompetitions: number;
+    readonly insertedPlayers: number;
     readonly insertedTeams: number;
+    readonly upsertedAvailabilityEntries: number;
+    readonly upsertedLineups: number;
     readonly upsertedMatches: number;
     readonly upsertedMarkets: number;
   },
 ): IngestionWorkerTaskOutput => ({
   batchId: batch.batchId,
+  canonicalAvailabilityEntries: countAvailabilityEntries(canonical.snapshot),
+  canonicalLineups: countLineups(canonical.snapshot),
   canonicalMarkets: countMarkets(canonical.snapshot),
   canonicalMatches: canonical.snapshot.matches.length,
   checksum: batch.checksum,
   insertedCompetitions: canonical.insertedCompetitions,
+  insertedPlayers: canonical.insertedPlayers,
   insertedTeams: canonical.insertedTeams,
   intent,
   jobName,
   observedRecords,
   rawRefs: batch.rawObjectRefs,
   snapshotId: canonical.snapshot.snapshotId,
+  upsertedAvailabilityEntries: canonical.upsertedAvailabilityEntries,
+  upsertedLineups: canonical.upsertedLineups,
   upsertedMarkets: canonical.upsertedMarkets,
   upsertedMatches: canonical.upsertedMatches,
   warnings: batch.warnings,
@@ -872,6 +1161,38 @@ const toOddsPayload = (
   };
 };
 
+const toAvailabilityPayload = (
+  payload: Record<string, unknown>,
+  fallbackFixtureIds: readonly string[],
+): FetchAvailabilityWindowInput => {
+  const input = payload as Partial<FetchAvailabilityWindowInput>;
+  if (!input.window) {
+    throw new Error("ingest-availability payload requires window");
+  }
+
+  return {
+    ...(input.fixtureIds ? { fixtureIds: input.fixtureIds } : { fixtureIds: fallbackFixtureIds }),
+    ...(input.teamIds ? { teamIds: input.teamIds } : {}),
+    window: input.window,
+  };
+};
+
+const toLineupsPayload = (
+  payload: Record<string, unknown>,
+  fallbackFixtureIds: readonly string[],
+): FetchLineupsWindowInput => {
+  const input = payload as Partial<FetchLineupsWindowInput>;
+  if (!input.window) {
+    throw new Error("ingest-lineups payload requires window");
+  }
+
+  return {
+    ...(input.fixtureIds ? { fixtureIds: input.fixtureIds } : { fixtureIds: fallbackFixtureIds }),
+    ...(input.teamIds ? { teamIds: input.teamIds } : {}),
+    window: input.window,
+  };
+};
+
 const createClient = (
   runtimeConfig: RuntimeConfig,
   options: IngestionWorkerRuntimeOptions,
@@ -894,6 +1215,8 @@ const createClient = (
   return new FakeFootballApiClient(
     options.fixtures ?? sampleFixtures(),
     options.odds ?? sampleOdds(),
+    options.availability ?? sampleAvailability(),
+    options.lineups ?? sampleLineups(),
   );
 };
 
@@ -975,6 +1298,44 @@ export const createIngestionWorkerRuntime = (
         );
       },
     },
+    {
+      intent: "ingest-availability" as WorkflowIntent,
+      async handle(envelope: TaskEnvelope<Record<string, unknown>>) {
+        const facade = createFacade(client, config, now, `${workspaceInfo.workspaceName}:${envelope.id}`);
+        const result = await ingestAvailabilityWindow(
+          facade,
+          toAvailabilityPayload(envelope.payload, fallbackFixtureIds),
+        );
+        const canonical = pipeline.ingestAvailabilityBatch(result.batch);
+        await persistAvailabilitySnapshots(persistence.prismaClient, persistence.unitOfWork, result.batch);
+        return toTaskOutput(
+          "ingest-availability",
+          result.jobName,
+          result.observedRecords,
+          result.batch,
+          canonical,
+        );
+      },
+    },
+    {
+      intent: "ingest-lineups" as WorkflowIntent,
+      async handle(envelope: TaskEnvelope<Record<string, unknown>>) {
+        const facade = createFacade(client, config, now, `${workspaceInfo.workspaceName}:${envelope.id}`);
+        const result = await ingestLineupsWindow(
+          facade,
+          toLineupsPayload(envelope.payload, fallbackFixtureIds),
+        );
+        const canonical = pipeline.ingestLineupsBatch(result.batch);
+        await persistLineupSnapshots(persistence.prismaClient, persistence.unitOfWork, result.batch);
+        return toTaskOutput(
+          "ingest-lineups",
+          result.jobName,
+          result.observedRecords,
+          result.batch,
+          canonical,
+        );
+      },
+    },
   ]);
 
   return {
@@ -1021,9 +1382,10 @@ const buildDemoTaskEnvelopes = (
   fixtures: readonly RawFixtureRecord[],
 ): readonly TaskEnvelope[] => {
   const scheduledFor = scheduledAt.toISOString();
+  const fixtureIds = fixtures.map((fixture) => fixture.providerFixtureId);
 
   return [
-    createTaskEnvelope({
+    createIngestionTaskEnvelope({
       createdAt: scheduledFor,
       intent: "ingest-fixtures",
       metadata: {
@@ -1044,7 +1406,49 @@ const buildDemoTaskEnvelopes = (
       traceId: `demo:fixtures:${scheduledFor}`,
       workflowId: "ingestion-worker-demo-fixtures",
     }),
-    createTaskEnvelope({
+    createIngestionTaskEnvelope({
+      createdAt: scheduledFor,
+      intent: "ingest-availability",
+      metadata: {
+        labels: ["demo", "availability"],
+        source: "ingestion-worker/demo",
+      },
+      payload: {
+        fixtureIds,
+        window: {
+          end: "2026-04-15T18:30:00.000Z",
+          granularity: "intraday",
+          start: "2026-04-15T17:30:00.000Z",
+        },
+      },
+      priority: 60,
+      scheduledFor,
+      taskKind: "fixture-ingestion",
+      traceId: `demo:availability:${scheduledFor}`,
+      workflowId: "ingestion-worker-demo-availability",
+    }),
+    createIngestionTaskEnvelope({
+      createdAt: scheduledFor,
+      intent: "ingest-lineups",
+      metadata: {
+        labels: ["demo", "lineups"],
+        source: "ingestion-worker/demo",
+      },
+      payload: {
+        fixtureIds,
+        window: {
+          end: "2026-04-15T18:45:00.000Z",
+          granularity: "intraday",
+          start: "2026-04-15T18:00:00.000Z",
+        },
+      },
+      priority: 50,
+      scheduledFor,
+      taskKind: "fixture-ingestion",
+      traceId: `demo:lineups:${scheduledFor}`,
+      workflowId: "ingestion-worker-demo-lineups",
+    }),
+    createIngestionTaskEnvelope({
       createdAt: scheduledFor,
       intent: "ingest-odds",
       metadata: {
@@ -1052,7 +1456,7 @@ const buildDemoTaskEnvelopes = (
         source: "ingestion-worker/demo",
       },
       payload: {
-        fixtureIds: fixtures.map((fixture) => fixture.providerFixtureId),
+        fixtureIds,
         marketKeys: ["h2h"],
         window: {
           end: "2026-04-15T13:00:00.000Z",
@@ -1319,6 +1723,12 @@ export const runDemoIngestionWorker = async (
           taskId: envelope.id,
           warnings: output?.warnings ?? [],
           ...(output?.batchId ? { batchId: output.batchId } : {}),
+          ...(output?.canonicalAvailabilityEntries !== undefined
+            ? { canonicalAvailabilityEntries: output.canonicalAvailabilityEntries }
+            : {}),
+          ...(output?.canonicalLineups !== undefined
+            ? { canonicalLineups: output.canonicalLineups }
+            : {}),
           ...(output?.canonicalMarkets !== undefined
             ? { canonicalMarkets: output.canonicalMarkets }
             : {}),

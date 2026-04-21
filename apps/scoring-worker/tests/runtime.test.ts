@@ -2,18 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createFeatureSnapshot,
   createDailyAutomationPolicy,
   createFixture,
   createFixtureWorkflow,
   createLeagueCoveragePolicy,
+  createResearchBundle,
   createTask,
   type AiRunEntity,
   type FixtureEntity,
 } from "@gana-v8/domain-core";
 import type { AiProviderAdapter } from "@gana-v8/ai-runtime";
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
-
-import { applyFeatureSnapshotToFixture } from "@gana-v8/feature-store";
 
 import {
   buildResearchDossierFromFixture,
@@ -168,6 +168,97 @@ const createCodexAdapter = (options: {
   },
 });
 
+const seedPublishableResearch = async (
+  unitOfWork: ReturnType<typeof createInMemoryUnitOfWork>,
+  fixtureId: string,
+  overrides: {
+    readonly generatedAt?: string;
+    readonly recommendedLean?: "home" | "away" | "draw";
+    readonly readinessStatus?: "ready" | "needs-review";
+    readonly topEvidenceTitle?: string;
+  } = {},
+): Promise<void> => {
+  const generatedAt = overrides.generatedAt ?? "2026-04-15T11:55:00.000Z";
+  const bundleId = `bundle:${fixtureId}:${generatedAt}`;
+  const recommendedLean = overrides.recommendedLean ?? "away";
+
+  await unitOfWork.researchBundles.save(
+    createResearchBundle({
+      id: bundleId,
+      fixtureId,
+      generatedAt,
+      brief: {
+        headline: `Research brief for ${fixtureId}`,
+        context: "Test bundle",
+        questions: ["Who has the edge?"],
+        assumptions: ["Use persisted research only."],
+      },
+      summary: `Research snapshot leans ${recommendedLean}.`,
+      recommendedLean,
+      directionalScore: {
+        home: recommendedLean === "home" ? 0.81 : 0.18,
+        draw: 0.22,
+        away: recommendedLean === "away" ? 0.81 : 0.18,
+      },
+      risks: ["late lineup variance"],
+      gateResult: {
+        status: "publishable",
+        reasons: [],
+        gatedAt: generatedAt,
+      },
+      trace: {
+        synthesisMode: "deterministic",
+      },
+      createdAt: generatedAt,
+      updatedAt: generatedAt,
+    }),
+  );
+
+  await unitOfWork.featureSnapshots.save(
+    createFeatureSnapshot({
+      id: `feature:${fixtureId}:${generatedAt}`,
+      fixtureId,
+      bundleId,
+      generatedAt,
+      bundleStatus: "publishable",
+      gateReasons: [],
+      recommendedLean,
+      evidenceCount: 1,
+      topEvidence: [
+        {
+          id: `research:${fixtureId}`,
+          title: overrides.topEvidenceTitle ?? "Away side returns two starters",
+          direction: recommendedLean,
+          weightedScore: 0.91,
+        },
+      ],
+      risks: ["late lineup variance"],
+      features: {
+        researchScoreHome: recommendedLean === "home" ? 0.81 : 0.18,
+        researchScoreDraw: 0.22,
+        researchScoreAway: recommendedLean === "away" ? 0.81 : 0.18,
+        formHome: 0.44,
+        formAway: 0.71,
+        restHomeDays: 4,
+        restAwayDays: 6,
+        injuriesHome: 2,
+        injuriesAway: 0,
+        derby: 0,
+        hoursUntilKickoff: 7,
+      },
+      readiness: {
+        status: overrides.readinessStatus ?? "ready",
+        reasons: [],
+      },
+      researchTrace: {
+        synthesisMode: "deterministic",
+      },
+      createdAt: generatedAt,
+      updatedAt: generatedAt,
+    }),
+  );
+};
+
 test("buildResearchDossierFromFixture derives deterministic implied probabilities and lean", () => {
   const dossier = buildResearchDossierFromFixture(fixture(), snapshot(), {
     generatedAt: "2026-04-15T12:05:00.000Z",
@@ -182,44 +273,23 @@ test("buildResearchDossierFromFixture derives deterministic implied probabilitie
 });
 
 test("buildResearchDossierFromFixture incorporates ready research metadata into the dossier", () => {
-  const enrichedFixture = applyFeatureSnapshotToFixture(
-    fixture(),
-    {
+  const dossier = buildResearchDossierFromFixture(fixture(), snapshot(), {
+    generatedAt: "2026-04-15T12:05:00.000Z",
+    persistedResearch: {
       fixtureId: "fx-1",
-      generatedAt: "2026-04-15T11:55:00.000Z",
+      status: "publishable",
+      publishable: true,
+      gateReasons: [],
+      latestBundleGeneratedAt: "2026-04-15T11:55:00.000Z",
+      latestSnapshotGeneratedAt: "2026-04-15T11:55:00.000Z",
       recommendedLean: "away",
-      evidenceCount: 4,
-      topEvidence: [
-        {
-          id: "injuries-away",
-          title: "Away side returns two starters",
-          direction: "away",
-          weightedScore: 0.91,
-        },
-      ],
-      risks: ["late lineup variance"],
-      features: {
-        researchScoreHome: 0.18,
-        researchScoreDraw: 0.22,
-        researchScoreAway: 0.81,
-        formHome: 0.44,
-        formAway: 0.71,
-        restHomeDays: 4,
-        restAwayDays: 6,
-        injuriesHome: 2,
-        injuriesAway: 0,
-        derby: 0,
-        hoursUntilKickoff: 7,
-      },
-      readiness: {
-        status: "ready",
-        reasons: [],
+      featureReadinessStatus: "ready",
+      featureReadinessReasons: [],
+      topEvidenceTitles: ["Away side returns two starters"],
+      researchTrace: {
+        synthesisMode: "deterministic",
       },
     },
-  );
-
-  const dossier = buildResearchDossierFromFixture(enrichedFixture, snapshot(), {
-    generatedAt: "2026-04-15T12:05:00.000Z",
   });
 
   assert.equal(dossier.recommendedLean, "away");
@@ -259,6 +329,7 @@ test("scoreFixturePrediction auto-generates opaque tsk task ids when no task id 
   const baseFixture = fixture();
 
   await unitOfWork.fixtures.save(baseFixture);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
 
   const result = await scoreFixturePrediction(undefined, baseFixture.id, undefined, {
     client: createFakeClient([baseFixture], [snapshot()]) as never,
@@ -288,6 +359,7 @@ test("scoreFixturePrediction persists completed AiRun and published prediction f
 
   await unitOfWork.fixtures.save(baseFixture);
   await unitOfWork.tasks.save(task);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
 
   const result = await scoreFixturePrediction(undefined, baseFixture.id, task.id, {
     client: createFakeClient([baseFixture], [snapshot()]) as never,
@@ -341,6 +413,7 @@ test("scoreFixturePrediction skips fixtures that are force-excluded by workflow 
       selectionOverride: "force-exclude",
     }),
   );
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
 
   const result = await scoreFixturePrediction(undefined, baseFixture.id, undefined, {
     client: createFakeClient([baseFixture], [snapshot()]) as never,
@@ -405,6 +478,7 @@ test("scoreFixturePrediction blocks direct scoring when coverage policy rejects 
       allowManualInclusionBypass: true,
     }),
   );
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
 
   const result = await scoreFixturePrediction(undefined, baseFixture.id, undefined, {
     client: createFakeClient(
@@ -464,6 +538,7 @@ test("scoreFixturePrediction runs an optional AI-assisted synthesis step without
 
   await unitOfWork.fixtures.save(baseFixture);
   await unitOfWork.tasks.save(task);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
 
   const result = await scoreFixturePrediction(undefined, baseFixture.id, task.id, {
     client: createFakeClient([baseFixture], [snapshot()]) as never,
@@ -503,6 +578,7 @@ test("scoreFixturePrediction falls back to deterministic scoring when AI synthes
 
   await unitOfWork.fixtures.save(baseFixture);
   await unitOfWork.tasks.save(task);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
 
   const result = await scoreFixturePrediction(undefined, baseFixture.id, task.id, {
     client: createFakeClient([baseFixture], [snapshot()]) as never,
@@ -538,6 +614,8 @@ test("runScoringWorker reports skips without breaking the batch", async () => {
 
   await unitOfWork.fixtures.save(eligibleFixture);
   await unitOfWork.fixtures.save(skippedFixture);
+  await seedPublishableResearch(unitOfWork, eligibleFixture.id);
+  await seedPublishableResearch(unitOfWork, skippedFixture.id);
 
   const summary = await runScoringWorker(undefined, {
     client: createFakeClient([eligibleFixture, skippedFixture], [snapshot()]) as never,

@@ -1,4 +1,6 @@
 import type {
+  AvailabilitySnapshotEntity,
+  AvailabilitySnapshotRepository,
   AiRunEntity,
   AiRunRepository,
   AuditEventEntity,
@@ -6,16 +8,34 @@ import type {
   DailyAutomationPolicyEntity,
   DailyAutomationPolicyRepository,
   EntityId,
+  FeatureSnapshotEntity,
+  FeatureSnapshotRepository,
   FixtureEntity,
   FixtureRepository,
   FixtureWorkflowEntity,
   FixtureWorkflowRepository,
   LeagueCoveragePolicyEntity,
   LeagueCoveragePolicyRepository,
+  LineupParticipantEntity,
+  LineupParticipantRepository,
+  LineupSnapshotEntity,
+  LineupSnapshotRepository,
   ParlayEntity,
   ParlayRepository,
   PredictionEntity,
   PredictionRepository,
+  ResearchAssignmentEntity,
+  ResearchAssignmentRepository,
+  ResearchBundleEntity,
+  ResearchBundleRepository,
+  ResearchClaimEntity,
+  ResearchClaimRepository,
+  ResearchClaimSourceEntity,
+  ResearchClaimSourceRepository,
+  ResearchConflictEntity,
+  ResearchConflictRepository,
+  ResearchSourceEntity,
+  ResearchSourceRepository,
   SandboxNamespace,
   SandboxNamespaceRepository,
   TaskEntity,
@@ -30,6 +50,9 @@ import type {
 import type { PrismaClient } from "@prisma/client";
 
 import {
+  availabilitySnapshotDomainToCreateInput,
+  availabilitySnapshotInclude,
+  availabilitySnapshotRecordToDomain,
   aiRunDomainToCreateInput,
   aiRunInclude,
   aiRunRecordToDomain,
@@ -39,6 +62,9 @@ import {
   dailyAutomationPolicyDomainToCreateInput,
   dailyAutomationPolicyInclude,
   dailyAutomationPolicyRecordToDomain,
+  featureSnapshotDomainToCreateInput,
+  featureSnapshotInclude,
+  featureSnapshotRecordToDomain,
   fixtureDomainToCreateInput,
   fixtureInclude,
   fixtureRecordToDomain,
@@ -48,12 +74,36 @@ import {
   leagueCoveragePolicyDomainToCreateInput,
   leagueCoveragePolicyInclude,
   leagueCoveragePolicyRecordToDomain,
+  lineupParticipantDomainToCreateInput,
+  lineupParticipantInclude,
+  lineupParticipantRecordToDomain,
+  lineupSnapshotDomainToCreateInput,
+  lineupSnapshotInclude,
+  lineupSnapshotRecordToDomain,
   parlayDomainToCreateInput,
   parlayInclude,
   parlayRecordToDomain,
   predictionDomainToCreateInput,
   predictionInclude,
   predictionRecordToDomain,
+  researchAssignmentDomainToCreateInput,
+  researchAssignmentInclude,
+  researchAssignmentRecordToDomain,
+  researchBundleDomainToCreateInput,
+  researchBundleInclude,
+  researchBundleRecordToDomain,
+  researchClaimDomainToCreateInput,
+  researchClaimInclude,
+  researchClaimRecordToDomain,
+  researchClaimSourceDomainToCreateInput,
+  researchClaimSourceInclude,
+  researchClaimSourceRecordToDomain,
+  researchConflictDomainToCreateInput,
+  researchConflictInclude,
+  researchConflictRecordToDomain,
+  researchSourceDomainToCreateInput,
+  researchSourceInclude,
+  researchSourceRecordToDomain,
   taskDomainToCreateInput,
   taskInclude,
   taskRecordToDomain,
@@ -79,6 +129,16 @@ export type PrismaClientLike = Pick<
   | "task"
   | "taskRun"
   | "aiRun"
+  | "researchBundle"
+  | "researchClaim"
+  | "researchClaimSource"
+  | "researchSource"
+  | "researchConflict"
+  | "featureSnapshot"
+  | "availabilitySnapshot"
+  | "lineupSnapshot"
+  | "lineupParticipant"
+  | "researchAssignment"
   | "prediction"
   | "parlay"
   | "parlayLeg"
@@ -310,6 +370,517 @@ export class PrismaAiRunRepository implements AiRunRepository {
       ...aiRunInclude,
     });
     return records.map(aiRunRecordToDomain);
+  }
+}
+
+export class PrismaResearchBundleRepository implements ResearchBundleRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: ResearchBundleEntity): Promise<ResearchBundleEntity> {
+    const record = await this.client.researchBundle.upsert({
+      where: { id: entity.id },
+      create: researchBundleDomainToCreateInput(entity),
+      update: researchBundleDomainToCreateInput(entity),
+      ...researchBundleInclude,
+    });
+    return researchBundleRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<ResearchBundleEntity | null> {
+    const record = await this.client.researchBundle.findUnique({
+      where: { id },
+      ...researchBundleInclude,
+    });
+    return record ? researchBundleRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<ResearchBundleEntity[]> {
+    const records = await this.client.researchBundle.findMany({
+      orderBy: { generatedAt: "asc" },
+      ...researchBundleInclude,
+    });
+    return records.map(researchBundleRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.researchBundle.delete({ where: { id } });
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchBundleEntity[]> {
+    const records = await this.client.researchBundle.findMany({
+      where: { fixtureId },
+      orderBy: { generatedAt: "asc" },
+      ...researchBundleInclude,
+    });
+    return records.map(researchBundleRecordToDomain);
+  }
+
+  async findLatestByFixtureId(fixtureId: EntityId): Promise<ResearchBundleEntity | null> {
+    const record = await this.client.researchBundle.findFirst({
+      where: { fixtureId },
+      orderBy: { generatedAt: "desc" },
+      ...researchBundleInclude,
+    });
+    return record ? researchBundleRecordToDomain(record) : null;
+  }
+}
+
+export class PrismaResearchClaimRepository implements ResearchClaimRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: ResearchClaimEntity): Promise<ResearchClaimEntity> {
+    const record = await this.client.researchClaim.upsert({
+      where: { id: entity.id },
+      create: researchClaimDomainToCreateInput(entity),
+      update: researchClaimDomainToCreateInput(entity),
+      ...researchClaimInclude,
+    });
+    return researchClaimRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<ResearchClaimEntity | null> {
+    const record = await this.client.researchClaim.findUnique({
+      where: { id },
+      ...researchClaimInclude,
+    });
+    return record ? researchClaimRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<ResearchClaimEntity[]> {
+    const records = await this.client.researchClaim.findMany({
+      orderBy: { extractedAt: "asc" },
+      ...researchClaimInclude,
+    });
+    return records.map(researchClaimRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.researchClaim.delete({ where: { id } });
+  }
+
+  async findByBundleId(bundleId: EntityId): Promise<ResearchClaimEntity[]> {
+    const records = await this.client.researchClaim.findMany({
+      where: { bundleId },
+      orderBy: { extractedAt: "asc" },
+      ...researchClaimInclude,
+    });
+    return records.map(researchClaimRecordToDomain);
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchClaimEntity[]> {
+    const records = await this.client.researchClaim.findMany({
+      where: { fixtureId },
+      orderBy: { extractedAt: "asc" },
+      ...researchClaimInclude,
+    });
+    return records.map(researchClaimRecordToDomain);
+  }
+}
+
+export class PrismaResearchSourceRepository implements ResearchSourceRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: ResearchSourceEntity): Promise<ResearchSourceEntity> {
+    const record = await this.client.researchSource.upsert({
+      where: { id: entity.id },
+      create: researchSourceDomainToCreateInput(entity),
+      update: researchSourceDomainToCreateInput(entity),
+      ...researchSourceInclude,
+    });
+    return researchSourceRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<ResearchSourceEntity | null> {
+    const record = await this.client.researchSource.findUnique({
+      where: { id },
+      ...researchSourceInclude,
+    });
+    return record ? researchSourceRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<ResearchSourceEntity[]> {
+    const records = await this.client.researchSource.findMany({
+      orderBy: { capturedAt: "asc" },
+      ...researchSourceInclude,
+    });
+    return records.map(researchSourceRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.researchSource.delete({ where: { id } });
+  }
+
+  async findByBundleId(bundleId: EntityId): Promise<ResearchSourceEntity[]> {
+    const records = await this.client.researchSource.findMany({
+      where: { bundleId },
+      orderBy: { capturedAt: "asc" },
+      ...researchSourceInclude,
+    });
+    return records.map(researchSourceRecordToDomain);
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchSourceEntity[]> {
+    const records = await this.client.researchSource.findMany({
+      where: { fixtureId },
+      orderBy: { capturedAt: "asc" },
+      ...researchSourceInclude,
+    });
+    return records.map(researchSourceRecordToDomain);
+  }
+}
+
+export class PrismaResearchClaimSourceRepository implements ResearchClaimSourceRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: ResearchClaimSourceEntity): Promise<ResearchClaimSourceEntity> {
+    const record = await this.client.researchClaimSource.upsert({
+      where: { id: entity.id },
+      create: researchClaimSourceDomainToCreateInput(entity),
+      update: researchClaimSourceDomainToCreateInput(entity),
+      ...researchClaimSourceInclude,
+    });
+    return researchClaimSourceRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<ResearchClaimSourceEntity | null> {
+    const record = await this.client.researchClaimSource.findUnique({
+      where: { id },
+      ...researchClaimSourceInclude,
+    });
+    return record ? researchClaimSourceRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<ResearchClaimSourceEntity[]> {
+    const records = await this.client.researchClaimSource.findMany({
+      orderBy: [{ claimId: "asc" }, { orderIndex: "asc" }],
+      ...researchClaimSourceInclude,
+    });
+    return records.map(researchClaimSourceRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.researchClaimSource.delete({ where: { id } });
+  }
+
+  async findByClaimId(claimId: EntityId): Promise<ResearchClaimSourceEntity[]> {
+    const records = await this.client.researchClaimSource.findMany({
+      where: { claimId },
+      orderBy: { orderIndex: "asc" },
+      ...researchClaimSourceInclude,
+    });
+    return records.map(researchClaimSourceRecordToDomain);
+  }
+
+  async findBySourceId(sourceId: EntityId): Promise<ResearchClaimSourceEntity[]> {
+    const records = await this.client.researchClaimSource.findMany({
+      where: { sourceId },
+      orderBy: { orderIndex: "asc" },
+      ...researchClaimSourceInclude,
+    });
+    return records.map(researchClaimSourceRecordToDomain);
+  }
+}
+
+export class PrismaResearchConflictRepository implements ResearchConflictRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: ResearchConflictEntity): Promise<ResearchConflictEntity> {
+    const record = await this.client.researchConflict.upsert({
+      where: { id: entity.id },
+      create: researchConflictDomainToCreateInput(entity),
+      update: researchConflictDomainToCreateInput(entity),
+      ...researchConflictInclude,
+    });
+    return researchConflictRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<ResearchConflictEntity | null> {
+    const record = await this.client.researchConflict.findUnique({
+      where: { id },
+      ...researchConflictInclude,
+    });
+    return record ? researchConflictRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<ResearchConflictEntity[]> {
+    const records = await this.client.researchConflict.findMany({
+      orderBy: { createdAt: "asc" },
+      ...researchConflictInclude,
+    });
+    return records.map(researchConflictRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.researchConflict.delete({ where: { id } });
+  }
+
+  async findByBundleId(bundleId: EntityId): Promise<ResearchConflictEntity[]> {
+    const records = await this.client.researchConflict.findMany({
+      where: { bundleId },
+      orderBy: { createdAt: "asc" },
+      ...researchConflictInclude,
+    });
+    return records.map(researchConflictRecordToDomain);
+  }
+}
+
+export class PrismaFeatureSnapshotRepository implements FeatureSnapshotRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: FeatureSnapshotEntity): Promise<FeatureSnapshotEntity> {
+    const record = await this.client.featureSnapshot.upsert({
+      where: { id: entity.id },
+      create: featureSnapshotDomainToCreateInput(entity),
+      update: featureSnapshotDomainToCreateInput(entity),
+      ...featureSnapshotInclude,
+    });
+    return featureSnapshotRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<FeatureSnapshotEntity | null> {
+    const record = await this.client.featureSnapshot.findUnique({
+      where: { id },
+      ...featureSnapshotInclude,
+    });
+    return record ? featureSnapshotRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<FeatureSnapshotEntity[]> {
+    const records = await this.client.featureSnapshot.findMany({
+      orderBy: { generatedAt: "asc" },
+      ...featureSnapshotInclude,
+    });
+    return records.map(featureSnapshotRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.featureSnapshot.delete({ where: { id } });
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<FeatureSnapshotEntity[]> {
+    const records = await this.client.featureSnapshot.findMany({
+      where: { fixtureId },
+      orderBy: { generatedAt: "asc" },
+      ...featureSnapshotInclude,
+    });
+    return records.map(featureSnapshotRecordToDomain);
+  }
+
+  async findByBundleId(bundleId: EntityId): Promise<FeatureSnapshotEntity[]> {
+    const records = await this.client.featureSnapshot.findMany({
+      where: { bundleId },
+      orderBy: { generatedAt: "asc" },
+      ...featureSnapshotInclude,
+    });
+    return records.map(featureSnapshotRecordToDomain);
+  }
+
+  async findLatestByFixtureId(fixtureId: EntityId): Promise<FeatureSnapshotEntity | null> {
+    const record = await this.client.featureSnapshot.findFirst({
+      where: { fixtureId },
+      orderBy: { generatedAt: "desc" },
+      ...featureSnapshotInclude,
+    });
+    return record ? featureSnapshotRecordToDomain(record) : null;
+  }
+}
+
+export class PrismaAvailabilitySnapshotRepository implements AvailabilitySnapshotRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: AvailabilitySnapshotEntity): Promise<AvailabilitySnapshotEntity> {
+    const record = await this.client.availabilitySnapshot.upsert({
+      where: { id: entity.id },
+      create: availabilitySnapshotDomainToCreateInput(entity),
+      update: availabilitySnapshotDomainToCreateInput(entity),
+      ...availabilitySnapshotInclude,
+    });
+    return availabilitySnapshotRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<AvailabilitySnapshotEntity | null> {
+    const record = await this.client.availabilitySnapshot.findUnique({
+      where: { id },
+      ...availabilitySnapshotInclude,
+    });
+    return record ? availabilitySnapshotRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<AvailabilitySnapshotEntity[]> {
+    const records = await this.client.availabilitySnapshot.findMany({
+      orderBy: { capturedAt: "asc" },
+      ...availabilitySnapshotInclude,
+    });
+    return records.map(availabilitySnapshotRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.availabilitySnapshot.delete({ where: { id } });
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<AvailabilitySnapshotEntity[]> {
+    const records = await this.client.availabilitySnapshot.findMany({
+      where: { fixtureId },
+      orderBy: { capturedAt: "asc" },
+      ...availabilitySnapshotInclude,
+    });
+    return records.map(availabilitySnapshotRecordToDomain);
+  }
+
+  async findByBatchId(batchId: EntityId): Promise<AvailabilitySnapshotEntity[]> {
+    const records = await this.client.availabilitySnapshot.findMany({
+      where: { batchId },
+      orderBy: { capturedAt: "asc" },
+      ...availabilitySnapshotInclude,
+    });
+    return records.map(availabilitySnapshotRecordToDomain);
+  }
+}
+
+export class PrismaLineupSnapshotRepository implements LineupSnapshotRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: LineupSnapshotEntity): Promise<LineupSnapshotEntity> {
+    const record = await this.client.lineupSnapshot.upsert({
+      where: { id: entity.id },
+      create: lineupSnapshotDomainToCreateInput(entity),
+      update: lineupSnapshotDomainToCreateInput(entity),
+      ...lineupSnapshotInclude,
+    });
+    return lineupSnapshotRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<LineupSnapshotEntity | null> {
+    const record = await this.client.lineupSnapshot.findUnique({
+      where: { id },
+      ...lineupSnapshotInclude,
+    });
+    return record ? lineupSnapshotRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<LineupSnapshotEntity[]> {
+    const records = await this.client.lineupSnapshot.findMany({
+      orderBy: { capturedAt: "asc" },
+      ...lineupSnapshotInclude,
+    });
+    return records.map(lineupSnapshotRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.lineupSnapshot.delete({ where: { id } });
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<LineupSnapshotEntity[]> {
+    const records = await this.client.lineupSnapshot.findMany({
+      where: { fixtureId },
+      orderBy: { capturedAt: "asc" },
+      ...lineupSnapshotInclude,
+    });
+    return records.map(lineupSnapshotRecordToDomain);
+  }
+
+  async findByBatchId(batchId: EntityId): Promise<LineupSnapshotEntity[]> {
+    const records = await this.client.lineupSnapshot.findMany({
+      where: { batchId },
+      orderBy: { capturedAt: "asc" },
+      ...lineupSnapshotInclude,
+    });
+    return records.map(lineupSnapshotRecordToDomain);
+  }
+}
+
+export class PrismaLineupParticipantRepository implements LineupParticipantRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: LineupParticipantEntity): Promise<LineupParticipantEntity> {
+    const record = await this.client.lineupParticipant.upsert({
+      where: { id: entity.id },
+      create: lineupParticipantDomainToCreateInput(entity),
+      update: lineupParticipantDomainToCreateInput(entity),
+      ...lineupParticipantInclude,
+    });
+    return lineupParticipantRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<LineupParticipantEntity | null> {
+    const record = await this.client.lineupParticipant.findUnique({
+      where: { id },
+      ...lineupParticipantInclude,
+    });
+    return record ? lineupParticipantRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<LineupParticipantEntity[]> {
+    const records = await this.client.lineupParticipant.findMany({
+      orderBy: [{ lineupSnapshotId: "asc" }, { index: "asc" }],
+      ...lineupParticipantInclude,
+    });
+    return records.map(lineupParticipantRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.lineupParticipant.delete({ where: { id } });
+  }
+
+  async findByLineupSnapshotId(lineupSnapshotId: EntityId): Promise<LineupParticipantEntity[]> {
+    const records = await this.client.lineupParticipant.findMany({
+      where: { lineupSnapshotId },
+      orderBy: { index: "asc" },
+      ...lineupParticipantInclude,
+    });
+    return records.map(lineupParticipantRecordToDomain);
+  }
+}
+
+export class PrismaResearchAssignmentRepository implements ResearchAssignmentRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: ResearchAssignmentEntity): Promise<ResearchAssignmentEntity> {
+    const record = await this.client.researchAssignment.upsert({
+      where: { id: entity.id },
+      create: researchAssignmentDomainToCreateInput(entity),
+      update: researchAssignmentDomainToCreateInput(entity),
+      ...researchAssignmentInclude,
+    });
+    return researchAssignmentRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<ResearchAssignmentEntity | null> {
+    const record = await this.client.researchAssignment.findUnique({
+      where: { id },
+      ...researchAssignmentInclude,
+    });
+    return record ? researchAssignmentRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<ResearchAssignmentEntity[]> {
+    const records = await this.client.researchAssignment.findMany({
+      orderBy: { createdAt: "asc" },
+      ...researchAssignmentInclude,
+    });
+    return records.map(researchAssignmentRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.researchAssignment.delete({ where: { id } });
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<ResearchAssignmentEntity[]> {
+    const records = await this.client.researchAssignment.findMany({
+      where: { fixtureId },
+      orderBy: { createdAt: "asc" },
+      ...researchAssignmentInclude,
+    });
+    return records.map(researchAssignmentRecordToDomain);
+  }
+
+  async findByBundleId(bundleId: EntityId): Promise<ResearchAssignmentEntity[]> {
+    const records = await this.client.researchAssignment.findMany({
+      where: { bundleId },
+      orderBy: { createdAt: "asc" },
+      ...researchAssignmentInclude,
+    });
+    return records.map(researchAssignmentRecordToDomain);
   }
 }
 

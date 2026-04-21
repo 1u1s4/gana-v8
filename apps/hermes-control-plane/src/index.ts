@@ -918,14 +918,31 @@ export const runAutomationCycle = async (
             fixtureWorkflows: unitOfWork.fixtureWorkflows,
             tasks: unitOfWork.tasks,
             aiRuns: unitOfWork.aiRuns,
+            researchBundles: unitOfWork.researchBundles,
+            researchClaims: unitOfWork.researchClaims,
+            researchSources: unitOfWork.researchSources,
+            researchClaimSources: unitOfWork.researchClaimSources,
+            researchConflicts: unitOfWork.researchConflicts,
+            featureSnapshots: unitOfWork.featureSnapshots,
+            researchAssignments: unitOfWork.researchAssignments,
+            auditEvents: unitOfWork.auditEvents,
           },
         });
 
         return {
           fixtureId,
           generatedAt: researchGeneratedAt,
-          featureReadinessStatus: result.featureSnapshot.readiness.status,
-          recommendedLean: result.dossier.recommendedLean,
+          bundleStatus: result.persistableResearchBundle.gateResult.status,
+          gateReasons: result.persistableResearchBundle.gateResult.reasons,
+          featureReadinessStatus: result.persistableFeatureSnapshot.readiness.status,
+          featureReadinessReasons: result.persistableFeatureSnapshot.readiness.reasons,
+          recommendedLean: result.persistableResearchBundle.recommendedLean,
+          latestBundle: result.persistableResearchBundle,
+          latestSnapshot: result.persistableFeatureSnapshot,
+          researchTrace:
+            result.persistableFeatureSnapshot.researchTrace ??
+            result.persistableResearchBundle.trace ??
+            null,
           ...(result.aiRun ? { aiRunId: result.aiRun.id } : {}),
         };
       } finally {

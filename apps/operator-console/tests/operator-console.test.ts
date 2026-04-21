@@ -127,6 +127,38 @@ const createOperationLikeSnapshot = (overrides: Record<string, unknown> = {}) =>
       updatedAt: "2026-04-15T00:00:00.000Z",
     },
   ],
+  fixtureResearch: [
+    {
+      fixtureId: "fixture:api-football:123",
+      status: "publishable",
+      publishable: true,
+      gateReasons: [],
+      latestBundle: {
+        id: "bundle:fixture:api-football:123",
+        generatedAt: "2026-04-15T00:00:00.000Z",
+        summary: "Persisted research bundle ready",
+        recommendedLean: "home",
+      },
+      latestSnapshot: {
+        bundleId: "bundle:fixture:api-football:123",
+        generatedAt: "2026-04-15T00:00:00.000Z",
+        bundleStatus: "publishable",
+        gateReasons: [],
+        recommendedLean: "home",
+        evidenceCount: 1,
+        topEvidenceTitles: ["Confirmed availability edge"],
+        risks: [],
+        featureReadinessStatus: "ready",
+        featureReadinessReasons: [],
+        researchTrace: {
+          synthesisMode: "deterministic",
+        },
+      },
+      researchTrace: {
+        synthesisMode: "deterministic",
+      },
+    },
+  ],
   tasks: [
     {
       id: "task-demo-fixtures",
@@ -340,8 +372,65 @@ test("operator console derives an ops-focused snapshot from public-api operation
   assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /predictions 1/);
 });
 
-test("operator console surfaces fixture pipeline readiness from fixture metadata", () => {
+test("operator console surfaces fixture pipeline readiness from persisted research read models", () => {
   const operationSnapshot = createOperationLikeSnapshot({
+    fixtureResearch: [
+      {
+        fixtureId: "fixture:api-football:123",
+        status: "degraded",
+        publishable: false,
+        gateReasons: [
+          {
+            code: "research-evidence-missing",
+            severity: "warn",
+            message: "research dossier has no evidence items",
+          },
+          {
+            code: "feature-evidence-missing",
+            severity: "warn",
+            message: "feature snapshot has no ranked evidence",
+          },
+        ],
+        latestBundle: {
+          id: "bundle:fixture:api-football:123",
+          generatedAt: "2026-04-15T00:15:00.000Z",
+          summary: "Persisted research bundle needs review",
+          recommendedLean: "home",
+        },
+        latestSnapshot: {
+          bundleId: "bundle:fixture:api-football:123",
+          generatedAt: "2026-04-15T00:15:00.000Z",
+          bundleStatus: "degraded",
+          gateReasons: [
+            {
+              code: "research-evidence-missing",
+              severity: "warn",
+              message: "research dossier has no evidence items",
+            },
+            {
+              code: "feature-evidence-missing",
+              severity: "warn",
+              message: "feature snapshot has no ranked evidence",
+            },
+          ],
+          recommendedLean: "home",
+          evidenceCount: 0,
+          topEvidenceTitles: [],
+          risks: [],
+          featureReadinessStatus: "needs-review",
+          featureReadinessReasons: [
+            "research dossier has no evidence items",
+            "feature snapshot has no ranked evidence",
+          ],
+          researchTrace: {
+            synthesisMode: "deterministic",
+          },
+        },
+        researchTrace: {
+          synthesisMode: "deterministic",
+        },
+      },
+    ],
     fixtureWorkflows: [
       {
         id: "fixture:api-football:123",
@@ -397,10 +486,7 @@ test("operator console surfaces fixture pipeline readiness from fixture metadata
         scheduledAt: "2026-04-15T03:00:00.000Z",
         status: "scheduled",
         metadata: {
-          researchRecommendedLean: "home",
-          featureReadinessStatus: "needs-review",
-          featureReadinessReasons: "research dossier has no evidence items | feature snapshot has no ranked evidence",
-          researchGeneratedAt: "2026-04-15T00:15:00.000Z",
+          operationsOnly: true,
         },
         createdAt: "2026-04-15T00:00:00.000Z",
         updatedAt: "2026-04-15T00:15:00.000Z",
@@ -419,7 +505,8 @@ test("operator console surfaces fixture pipeline readiness from fixture metadata
   assert.match(pipelinePanel.lines.join("\n"), /Boca Juniors/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /manual selected/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /override force-include/);
-  assert.match(fixtureOpsPanel.lines.join("\n"), /eligibility Fixture is force-included by workflow ops/i);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /eligibility Research bundle status degraded is not publishable/i);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /research dossier has no evidence items/i);
   assert.match(fixtureOpsPanel.lines.join("\n"), /recent ops/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /selection-override.updated.*high conviction/i);
   assert.match(fixtureOpsPanel.lines.join("\n"), /manual-selection.updated.*desk review/i);

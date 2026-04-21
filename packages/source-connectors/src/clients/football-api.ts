@@ -1,11 +1,16 @@
 import {
+  type FetchAvailabilityWindowInput,
   type FetchFixturesWindowInput,
+  type FetchLineupsWindowInput,
   type FetchOddsWindowInput,
+  type RawAvailabilityRecord,
   type FootballApiClient,
   type RawFixtureRecord,
+  type RawLineupRecord,
   type RawOddsMarketRecord,
   type SourceCoverageWindow,
   type SourceIngestionBatch,
+  type RawSourceRecord,
 } from "../models/raw.js";
 import { buildChecksum, buildIdempotencyKey } from "../idempotency.js";
 
@@ -58,6 +63,50 @@ export class FootballApiFacade {
     });
   }
 
+  async fetchAvailabilityBatch(
+    input: FetchAvailabilityWindowInput,
+  ): Promise<SourceIngestionBatch<RawAvailabilityRecord>> {
+    const runId = this.runIdFactory();
+    const extractionTime = this.now().toISOString();
+    const records = await this.client.fetchAvailabilityWindow(input);
+
+    return this.createBatch({
+      coverageWindow: input.window,
+      endpointFamily: "availability",
+      extractionTime,
+      records,
+      runId,
+      sourceEndpoint: "football.availability.window",
+      warningHint:
+        input.fixtureIds?.length || input.teamIds?.length
+          ? []
+          : ["availability_scope_unspecified"],
+    });
+  }
+
+  async fetchLineupsBatch(
+    input: FetchLineupsWindowInput,
+  ): Promise<SourceIngestionBatch<RawLineupRecord>> {
+    const runId = this.runIdFactory();
+    const extractionTime = this.now().toISOString();
+    const records = await this.client.fetchLineupsWindow(input);
+
+    return this.createBatch({
+      coverageWindow: input.window,
+      endpointFamily: "lineups",
+      extractionTime,
+      records,
+      runId,
+      sourceEndpoint: "football.lineups.window",
+      warningHint:
+        records.length === 0
+          ? ["lineups_window_empty"]
+          : input.fixtureIds?.length
+            ? []
+            : ["lineups_fixture_scope_unspecified"],
+    });
+  }
+
   async fetchOddsBatch(input: FetchOddsWindowInput): Promise<SourceIngestionBatch<RawOddsMarketRecord>> {
     const runId = this.runIdFactory();
     const extractionTime = this.now().toISOString();
@@ -74,11 +123,11 @@ export class FootballApiFacade {
     });
   }
 
-  private createBatch<TRecord extends RawFixtureRecord | RawOddsMarketRecord>(input: {
+  private createBatch<TRecord extends RawSourceRecord>(input: {
     readonly runId: string;
     readonly extractionTime: string;
     readonly coverageWindow: SourceCoverageWindow;
-    readonly endpointFamily: "fixtures" | "odds";
+    readonly endpointFamily: "fixtures" | "odds" | "availability" | "lineups";
     readonly sourceEndpoint: string;
     readonly records: readonly TRecord[];
     readonly warningHint: readonly string[];

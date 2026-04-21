@@ -64,7 +64,6 @@ test("buildFeatureVectorSnapshot freezes research-derived scoring features", () 
 test("summarizeFeatureReadiness marks snapshots with no evidence as degraded", () => {
   const dossier = buildResearchDossier(fixture, {
     now: () => "2026-04-16T12:00:00.000Z",
-    evidence: [],
   });
 
   const snapshot = buildFeatureVectorSnapshot({
@@ -72,8 +71,16 @@ test("summarizeFeatureReadiness marks snapshots with no evidence as degraded", (
     dossier,
     generatedAt: "2026-04-16T12:05:00.000Z",
   });
+  const degradedSnapshot = {
+    ...snapshot,
+    evidenceCount: 0,
+    readiness: {
+      status: "ready" as const,
+      reasons: [],
+    },
+  };
 
-  const readiness = summarizeFeatureReadiness(snapshot);
+  const readiness = summarizeFeatureReadiness(degradedSnapshot);
   assert.equal(readiness.status, "needs-review");
   assert.match(readiness.reasons.join("\n"), /evidence/i);
 });

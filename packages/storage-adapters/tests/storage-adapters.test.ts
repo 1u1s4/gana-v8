@@ -11,6 +11,9 @@ import {
   createLeagueCoveragePolicy,
   createParlay,
   createPrediction,
+  createResearchAssignment,
+  createResearchBundle,
+  createResearchClaim,
   createSandboxNamespace,
   createTask,
   createTaskRun,
@@ -33,6 +36,12 @@ import {
   parlayRecordToDomain,
   predictionDomainToCreateInput,
   predictionRecordToDomain,
+  researchAssignmentDomainToCreateInput,
+  researchAssignmentRecordToDomain,
+  researchBundleDomainToCreateInput,
+  researchBundleRecordToDomain,
+  researchClaimDomainToCreateInput,
+  researchClaimRecordToDomain,
   sandboxNamespaceDomainToCreateInput,
   sandboxNamespaceRecordToDomain,
   taskDomainToCreateInput,
@@ -287,6 +296,121 @@ test("prisma mappers preserve ai-run metadata roundtrip shape", () => {
   assert.equal(roundTrip.fallbackReason, "provider timeout");
   assert.equal(roundTrip.degraded, true);
   assert.deepEqual(roundTrip.usage, aiRun.usage);
+});
+
+test("prisma mappers preserve research bundle, claim, and assignment roundtrip shape", () => {
+  const bundle = createResearchBundle({
+    id: "bundle-1",
+    fixtureId: "fixture:api-football:123",
+    generatedAt: "2026-04-21T12:00:00.000Z",
+    brief: {
+      headline: "Fixture research bundle",
+      context: "Research context",
+      questions: ["Who is unavailable?"],
+      assumptions: ["No late weather shift"],
+    },
+    summary: "Bundle ready for publishing.",
+    recommendedLean: "home",
+    directionalScore: {
+      home: 0.62,
+      away: 0.23,
+      draw: 0.15,
+    },
+    risks: ["Lineup confirmation still pending."],
+    gateResult: {
+      status: "degraded",
+      reasons: [
+        {
+          code: "freshness",
+          severity: "warn",
+          message: "Availability source is nearing freshness SLA.",
+        },
+      ],
+      gatedAt: "2026-04-21T12:15:00.000Z",
+    },
+    trace: {
+      synthesisMode: "deterministic",
+      plannerVersion: "research-bundle-v1",
+    },
+    aiRunId: "airun-1",
+    createdAt: "2026-04-21T12:00:00.000Z",
+    updatedAt: "2026-04-21T12:15:00.000Z",
+  });
+  const claim = createResearchClaim({
+    id: "claim-1",
+    fixtureId: bundle.fixtureId,
+    bundleId: bundle.id,
+    kind: "availability",
+    title: "Key striker doubtful",
+    summary: "Primary forward is doubtful with a hamstring issue.",
+    direction: "away",
+    confidence: 0.71,
+    impact: 0.44,
+    significance: "critical",
+    status: "corroborated",
+    corroborationStatus: "corroborated",
+    requiredSourceCount: 2,
+    matchedSourceIds: ["source-1", "source-3"],
+    freshnessWindowHours: 6,
+    extractedAt: "2026-04-21T11:45:00.000Z",
+    freshnessExpiresAt: "2026-04-21T17:45:00.000Z",
+    metadata: {
+      signalFamily: "availability",
+      predicate: "player_status",
+    },
+    createdAt: "2026-04-21T11:45:00.000Z",
+    updatedAt: "2026-04-21T11:45:00.000Z",
+  });
+  const assignment = createResearchAssignment({
+    id: "assignment-1",
+    fixtureId: bundle.fixtureId,
+    bundleId: bundle.id,
+    dimension: "availability",
+    status: "completed",
+    attemptNumber: 1,
+    startedAt: "2026-04-21T11:30:00.000Z",
+    finishedAt: "2026-04-21T11:40:00.000Z",
+    summary: "Availability sweep completed with corroborated sources.",
+    metadata: {
+      sourceIds: ["source-1", "source-3"],
+    },
+    createdAt: "2026-04-21T11:30:00.000Z",
+    updatedAt: "2026-04-21T11:40:00.000Z",
+  });
+
+  const bundleInput = researchBundleDomainToCreateInput(bundle);
+  const bundleRoundTrip = researchBundleRecordToDomain({
+    ...bundleInput,
+    trace: bundleInput.trace ?? null,
+    generatedAt: new Date(bundle.generatedAt),
+    gatedAt: new Date(bundle.gateResult.gatedAt),
+    createdAt: new Date(bundle.createdAt),
+    updatedAt: new Date(bundle.updatedAt),
+  } as never);
+  const claimInput = researchClaimDomainToCreateInput(claim);
+  const claimRoundTrip = researchClaimRecordToDomain({
+    ...claimInput,
+    assignmentId: claimInput.assignmentId ?? null,
+    freshnessExpiresAt: claimInput.freshnessExpiresAt ?? null,
+    createdAt: new Date(claim.createdAt),
+    updatedAt: new Date(claim.updatedAt),
+    extractedAt: new Date(claim.extractedAt),
+  } as never);
+  const assignmentInput = researchAssignmentDomainToCreateInput(assignment);
+  const assignmentRoundTrip = researchAssignmentRecordToDomain({
+    ...assignmentInput,
+    bundleId: assignmentInput.bundleId ?? null,
+    startedAt: assignmentInput.startedAt ?? null,
+    finishedAt: assignmentInput.finishedAt ?? null,
+    error: assignmentInput.error ?? null,
+    summary: assignmentInput.summary ?? null,
+    createdAt: new Date(assignment.createdAt),
+    updatedAt: new Date(assignment.updatedAt),
+  } as never);
+
+  assert.equal(bundleRoundTrip.gateResult.gatedAt, "2026-04-21T12:15:00.000Z");
+  assert.deepEqual(claimRoundTrip.matchedSourceIds, ["source-1", "source-3"]);
+  assert.equal(assignmentRoundTrip.summary, "Availability sweep completed with corroborated sources.");
 });
 
 test("prisma mappers preserve long task, task-run, ai-run and validation errors without truncation", () => {

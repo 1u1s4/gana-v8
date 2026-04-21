@@ -119,6 +119,7 @@ export interface PublisherWorkerSkipReason {
     | "not-published"
     | "outside-live-window"
     | "workflow-excluded"
+    | "research-bundle-blocked"
     | "coverage-policy-blocked"
     | "not-enough-candidates"
     | "publication-blocked";
@@ -328,6 +329,46 @@ const loadPublisherCoveragePolicyContext = async (unitOfWork: StorageUnitOfWork)
 const summarizeCoverageBlock = (excludedBy: readonly { message: string }[]): string =>
   excludedBy.map((reason) => reason.message).join("; ") || "Fixture was blocked by coverage policy.";
 
+interface PersistedFixtureResearchSummary {
+  readonly status: "publishable" | "degraded" | "hold";
+  readonly publishable: boolean;
+  readonly gateReasons: readonly string[];
+}
+
+const loadFixtureResearchSummary = async (
+  unitOfWork: StorageUnitOfWork,
+  fixtureId: string,
+): Promise<PersistedFixtureResearchSummary | null> => {
+  const [bundle, snapshot] = await Promise.all([
+    unitOfWork.researchBundles.findLatestByFixtureId(fixtureId),
+    unitOfWork.featureSnapshots.findLatestByFixtureId(fixtureId),
+  ]);
+
+  if (!bundle && !snapshot) {
+    return null;
+  }
+
+  const status = snapshot?.bundleStatus ?? bundle?.gateResult.status ?? "hold";
+  const gateReasons =
+    snapshot?.gateReasons.map((reason) => reason.message) ??
+    bundle?.gateResult.reasons.map((reason) => reason.message) ??
+    [];
+
+  return {
+    status,
+    publishable: status === "publishable",
+    gateReasons,
+  };
+};
+
+const summarizeResearchBlock = (
+  research: PersistedFixtureResearchSummary | null,
+): string =>
+  !research
+    ? "No persisted research bundle found for fixture."
+    : `Research bundle status ${research.status} is not publishable.` +
+      (research.gateReasons.length > 0 ? ` ${research.gateReasons.join("; ")}` : "");
+
 const persistCoverageBlockedParlayWorkflow = async (
   unitOfWork: StorageUnitOfWork,
   fixtureId: string,
@@ -376,6 +417,66 @@ const persistCoverageBlockedParlayWorkflow = async (
         appliedMinAllowedOdd: scopeDecision.appliedMinAllowedOdd,
         minDetectedOdd: scopeDecision.minDetectedOdd ?? null,
         excludedBy: scopeDecision.excludedBy,
+      },
+      occurredAt: persistedWorkflow.updatedAt,
+    }),
+  );
+};
+
+const persistResearchBundleBlockedParlayWorkflow = async (
+  unitOfWork: StorageUnitOfWork,
+  research: PersistedFixtureResearchSummary | null,
+  fixtureId: string,
+  generatedAt: string,
+): Promise<void> => {
+  const current =
+    (await unitOfWork.fixtureWorkflows.findByFixtureId(fixtureId)) ??
+    createFixtureWorkflow({
+      fixtureId,
+      ingestionStatus: "pending",
+      oddsStatus: "pending",
+      enrichmentStatus: "pending",
+      candidateStatus: "pending",
+      predictionStatus: "pending",
+      parlayStatus: "pending",
+      validationStatus: "pending",
+      isCandidate: false,
+    });
+
+  const persistedWorkflow = await unitOfWork.fixtureWorkflows.save(
+    transitionFixtureWorkflowStage(current, "parlay", {
+      status: "blocked",
+      occurredAt: generatedAt,
+      isCandidate: false,
+      diagnostics: {
+        ...(current.diagnostics ?? {}),
+        researchBundleDecision: research
+          ? {
+              status: research.status,
+              publishable: research.publishable,
+              gateReasons: research.gateReasons,
+            }
+          : {
+              status: "hold",
+              publishable: false,
+              gateReasons: [],
+            },
+      },
+    }),
+  );
+
+  await unitOfWork.auditEvents.save(
+    createAuditEvent({
+      id: `audit:fixture-workflow:${fixtureId}:research-bundle-blocked:parlay:${persistedWorkflow.updatedAt}`,
+      aggregateType: "fixture-workflow",
+      aggregateId: fixtureId,
+      eventType: "fixture-workflow.research-bundle.blocked",
+      actor: "publisher-worker",
+      payload: {
+        stage: "parlay",
+        status: research?.status ?? "hold",
+        publishable: research?.publishable ?? false,
+        gateReasons: research?.gateReasons ?? [],
       },
       occurredAt: persistedWorkflow.updatedAt,
     }),
@@ -690,6 +791,7 @@ export const publishParlayMvp = async (
 
     const candidates: AtomicCandidate[] = [];
     const skipReasons: PublisherWorkerSkipReason[] = [];
+    const shouldEvaluateResearchBundle = options.unitOfWork !== undefined || options.client === undefined;
     const shouldEvaluateCoveragePolicy = options.unitOfWork !== undefined || options.client === undefined;
     const coverageContext = shouldEvaluateCoveragePolicy
       ? await loadPublisherCoveragePolicyContext(runtime.unitOfWork)
@@ -700,6 +802,28 @@ export const publishParlayMvp = async (
       if (invalid) {
         skipReasons.push(invalid);
         continue;
+      }
+
+      if (shouldEvaluateResearchBundle) {
+        const persistedResearch = await loadFixtureResearchSummary(
+          runtime.unitOfWork,
+          prediction.fixtureId,
+        );
+        if (!persistedResearch?.publishable) {
+          await persistResearchBundleBlockedParlayWorkflow(
+            runtime.unitOfWork,
+            persistedResearch,
+            prediction.fixtureId,
+            generatedAt,
+          );
+          skipReasons.push({
+            predictionId: prediction.id,
+            fixtureId: prediction.fixtureId,
+            reason: "research-bundle-blocked",
+            detail: summarizeResearchBlock(persistedResearch),
+          });
+          continue;
+        }
       }
 
       const workflow = shouldEvaluateCoveragePolicy
