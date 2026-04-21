@@ -115,7 +115,7 @@ export interface PersistedTaskSummary {
   readonly latestTasks: readonly TaskEntity[];
 }
 
-export type PersistedTaskIntent = Extract<TaskKind, "research" | "prediction" | "validation">;
+export type PersistedTaskIntent = Extract<TaskKind, "research" | "prediction" | "validation" | "sandbox-replay">;
 
 export interface EnqueuePersistedTaskInput {
   readonly id?: string;
