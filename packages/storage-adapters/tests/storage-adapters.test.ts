@@ -645,8 +645,15 @@ test("prisma unit of work now exposes sandbox namespace persistence", () => {
 });
 
 test("root prisma schema validates and generates client without a live database", () => {
-  execFileSync("pnpm", ["db:validate"], { cwd: new URL("../../..", import.meta.url) });
-  execFileSync("pnpm", ["db:generate"], { cwd: new URL("../../..", import.meta.url) });
+  const rootDir = new URL("../../..", import.meta.url);
+  const env = {
+    ...process.env,
+    DATABASE_URL:
+      process.env.DATABASE_URL ?? "mysql://hermes:hermes@127.0.0.1:3306/gana_v8_schema_validation",
+  };
+
+  execFileSync("pnpm", ["db:validate"], { cwd: rootDir, env });
+  execFileSync("pnpm", ["db:generate"], { cwd: rootDir, env });
 });
 
 test("root prisma schema stores operational errors and summaries in text columns", () => {
