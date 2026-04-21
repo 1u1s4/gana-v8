@@ -143,6 +143,7 @@ export interface PersistedTaskHandlers {
   readonly research: PersistedTaskHandler;
   readonly prediction: PersistedTaskHandler;
   readonly validation?: PersistedTaskHandler;
+  readonly "sandbox-replay"?: PersistedTaskHandler;
 }
 
 export interface RunNextPersistedTaskOptions {

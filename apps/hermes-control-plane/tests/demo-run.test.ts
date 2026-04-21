@@ -851,6 +851,40 @@ test("runNextPersistedTask processes prediction and validation tasks determinist
   }
 });
 
+test("runNextPersistedTask supports sandbox replay persisted tasks", async () => {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const prisma = createPrismaClient(databaseUrl);
+  const taskPrefix = `hermes-test-sandbox-${Date.now()}`;
+
+  try {
+    const sandboxTask = await enqueuePersistedTask(databaseUrl, {
+      id: `${taskPrefix}-sandbox-replay`,
+      kind: "sandbox-replay",
+      payload: { fixtureId: "fx-sandbox-001", replayId: `${taskPrefix}-replay` },
+      now: new Date("2026-04-16T11:10:00.000Z"),
+    });
+
+    const result = await runNextPersistedTask(databaseUrl, {
+      research: async () => ({ summary: "unexpected" }),
+      prediction: async () => ({ summary: "unexpected" }),
+      "sandbox-replay": async (task) => ({
+        replayedFixtureId: String(task.payload.fixtureId),
+      }),
+    });
+
+    assert.ok(result);
+    assert.equal(result.task.id, sandboxTask.id);
+    assert.equal(result.task.kind, "sandbox-replay");
+    assert.equal(result.task.status, "succeeded");
+    assert.equal(result.taskRun.status, "succeeded");
+    assert.equal(result.output.replayedFixtureId, "fx-sandbox-001");
+  } finally {
+    await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
+    await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
+    await prisma.$disconnect();
+  }
+});
+
 test("enqueuePredictionForEligibleFixtures creates deterministic persisted scoring tasks without duplicates", async () => {
   const databaseUrl = process.env.DATABASE_URL!;
   const prefix = `hae${Date.now().toString(36)}`;
