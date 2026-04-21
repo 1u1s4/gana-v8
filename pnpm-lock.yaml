@@ -41,6 +41,9 @@ importers:
       '@gana-v8/domain-core':
         specifier: workspace:*
         version: link:../../packages/domain-core
+      '@gana-v8/ingestion-worker':
+        specifier: workspace:*
+        version: link:../ingestion-worker
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -59,6 +62,9 @@ importers:
       '@gana-v8/queue-adapters':
         specifier: workspace:*
         version: link:../../packages/queue-adapters
+      '@gana-v8/research-worker':
+        specifier: workspace:*
+        version: link:../research-worker
       '@gana-v8/scoring-worker':
         specifier: workspace:*
         version: link:../scoring-worker

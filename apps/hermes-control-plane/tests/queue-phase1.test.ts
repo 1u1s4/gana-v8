@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { PrismaClient } from "@prisma/client";
 
-import { createPersistedTaskQueue, enqueuePersistedTask, maybeClaimNextPersistedTask } from "../src/index.js";
+import { createPersistedTaskQueue, enqueuePersistedTask, maybeClaimNextPersistedTask, runNextPersistedTask } from "../src/index.js";
 
 const createPrismaClient = (databaseUrl: string) => new PrismaClient({ datasourceUrl: databaseUrl });
 const databaseUrl = process.env.DATABASE_URL;
@@ -113,6 +113,63 @@ testWithDatabase("persisted queue quarantines exhausted tasks and allows manual 
     assert.equal(reclaimed.taskRun.attemptNumber, 2);
   } finally {
     await queue.close();
+    await cleanupTaskPrefix(databaseUrl, prefix);
+  }
+});
+
+testWithDatabase("runNextPersistedTask applies retry backoff before quarantining exhausted failures", async (databaseUrl) => {
+  const prefix = `phase1-run-next-${Date.now()}`;
+
+  await cleanupTaskPrefix(databaseUrl, prefix);
+
+  try {
+    await enqueuePersistedTask(databaseUrl, {
+      id: `${prefix}-task`,
+      kind: "sandbox-replay",
+      payload: { fixtureId: "fx-phase1-run-next", market: "moneyline" },
+      now: new Date("2026-04-17T20:05:00.000Z"),
+      maxAttempts: 2,
+    });
+
+    const handlers = {
+      research: async () => ({}),
+      prediction: async () => ({}),
+      "sandbox-replay": async () => {
+        throw new Error("sandbox replay failed");
+      },
+    } as const;
+
+    const firstExecution = await runNextPersistedTask(databaseUrl, handlers, {
+      kind: "sandbox-replay",
+      now: new Date("2026-04-17T20:06:00.000Z"),
+    });
+    assert.ok(firstExecution);
+    assert.equal(firstExecution.task.status, "queued");
+    assert.equal(firstExecution.task.triggerKind, "retry");
+    assert.equal(firstExecution.taskRun.status, "failed");
+    assert.equal(firstExecution.taskRun.attemptNumber, 1);
+    assert.equal(firstExecution.error?.message, "sandbox replay failed");
+
+    const beforeBackoff = await runNextPersistedTask(databaseUrl, handlers, {
+      kind: "sandbox-replay",
+      now: new Date("2026-04-17T20:06:59.000Z"),
+    });
+    assert.equal(beforeBackoff, null);
+
+    const secondExecution = await runNextPersistedTask(databaseUrl, handlers, {
+      kind: "sandbox-replay",
+      now: new Date("2026-04-17T20:07:01.000Z"),
+    });
+    assert.ok(secondExecution);
+    assert.equal(secondExecution.task.status, "quarantined");
+    assert.equal(secondExecution.taskRun.status, "failed");
+    assert.equal(secondExecution.taskRun.attemptNumber, 2);
+    assert.equal(secondExecution.error?.message, "sandbox replay failed");
+    assert.equal(
+      await maybeClaimNextPersistedTask(databaseUrl, "sandbox-replay", new Date("2026-04-17T20:08:00.000Z")),
+      null,
+    );
+  } finally {
     await cleanupTaskPrefix(databaseUrl, prefix);
   }
 });

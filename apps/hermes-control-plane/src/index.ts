@@ -16,6 +16,10 @@ import {
   loadRuntimeConfig,
   type RuntimeConfig,
 } from "@gana-v8/config-runtime";
+import {
+  resolveResearchAiConfig,
+  runResearchTask,
+} from "@gana-v8/research-worker";
 import { runPublisherWorker, type PublishParlayMvpResult } from "@gana-v8/publisher-worker";
 import {
   evaluateFixtureCoverageScope,
@@ -28,16 +32,13 @@ import {
   type LiveIngestionRunReadModel,
   listLiveIngestionRuns,
 } from "@gana-v8/public-api";
-import {
-  scoreFixturePrediction,
-  type FixtureScoreResult,
-} from "@gana-v8/scoring-worker";
+import { scoreFixturePrediction } from "@gana-v8/scoring-worker";
 import {
   createPrismaTaskQueueAdapter,
   type TaskQueueAdapter,
 } from "@gana-v8/queue-adapters";
 import { createPrismaClient, createPrismaUnitOfWork, createVerifiedPrismaClient } from "@gana-v8/storage-adapters";
-import { type TaskEntity, type TaskKind, createTaskRun, type TaskRunEntity } from "@gana-v8/domain-core";
+import { type TaskEntity, type TaskKind, type TaskRunEntity } from "@gana-v8/domain-core";
 import {
   FakeFootballApiClient,
   FootballApiFacade,
@@ -165,6 +166,18 @@ export interface EnqueuePredictionForEligibleFixturesOptions {
   readonly priority?: number;
 }
 
+export interface EnqueueResearchForEligibleFixturesResult {
+  readonly queuedAt: string;
+  readonly eligibleFixtureCount: number;
+  readonly enqueuedCount: number;
+  readonly skippedCount: number;
+  readonly tasks: readonly TaskEntity[];
+  readonly skippedFixtures: readonly {
+    readonly fixtureId: string;
+    readonly reason: string;
+  }[];
+}
+
 export interface EnqueuePredictionForEligibleFixturesResult {
   readonly queuedAt: string;
   readonly eligibleFixtureCount: number;
@@ -225,6 +238,7 @@ export interface RunAutomationCycleOptions {
   readonly fixtureIds?: readonly string[];
   readonly maxFixtures?: number;
   readonly predictionPriority?: number;
+  readonly researchGeneratedAt?: string;
   readonly scoringGeneratedAt?: string;
   readonly parlayGeneratedAt?: string;
   readonly validationExecutedAt?: string;
@@ -233,6 +247,9 @@ export interface RunAutomationCycleOptions {
 
 export interface AutomationCycleSummary {
   readonly startedAt: string;
+  readonly enqueuedResearch: EnqueueResearchForEligibleFixturesResult;
+  readonly processedResearchCount: number;
+  readonly researchExecutions: readonly PersistedTaskExecution[];
   readonly enqueuedPredictions: EnqueuePredictionForEligibleFixturesResult;
   readonly processedPredictionCount: number;
   readonly predictionExecutions: readonly PersistedTaskExecution[];
@@ -280,8 +297,10 @@ const createOddsFacade = (runtimeConfig: RuntimeConfig) =>
   });
 
 const stableId = (value: string): string => createHash("sha256").update(value).digest("hex").slice(0, 12);
+const AUTOMATION_RESEARCH_STEP = "research";
 const AUTOMATION_PREDICTION_STEP = "score";
 const AUTOMATION_SOURCE = "hermes-control-plane";
+const AUTOMATION_RESEARCH_TASK_PREFIX = "automation:research";
 const AUTOMATION_PREDICTION_TASK_PREFIX = "automation:prediction:score";
 const AUTOMATION_VALIDATION_TASK_PREFIX = "automation:validation";
 
@@ -521,6 +540,9 @@ const createPersistedTaskId = (kind: PersistedTaskIntent, payload: Record<string
 const createAutomationPredictionTaskId = (fixtureId: string): string =>
   `${AUTOMATION_PREDICTION_TASK_PREFIX}:${fixtureId}`;
 
+const createAutomationResearchTaskId = (fixtureId: string): string =>
+  `${AUTOMATION_RESEARCH_TASK_PREFIX}:${fixtureId}`;
+
 const createAutomationValidationTaskId = (executedAt: string): string =>
   `${AUTOMATION_VALIDATION_TASK_PREFIX}:${executedAt.replace(/[^a-zA-Z0-9]/g, "")}`;
 
@@ -627,17 +649,15 @@ export const runNextPersistedTask = async (
   handlers: PersistedTaskHandlers,
   options: RunNextPersistedTaskOptions = {},
 ): Promise<PersistedTaskExecution | null> => {
-  const claim = await maybeClaimNextPersistedTask(databaseUrl, options.kind, options.now);
-
-  if (!claim) {
-    return null;
-  }
-
-  const client = createVerifiedPrismaClient({ databaseUrl });
+  const queue = createPersistedTaskQueue(databaseUrl);
 
   try {
-    const unitOfWork = createPrismaUnitOfWork(client);
-    const finishedAt = (options.now ?? new Date()).toISOString();
+    const claim = (await queue.claimNext(options.kind, options.now ?? new Date())) as PersistedTaskClaim | null;
+
+    if (!claim) {
+      return null;
+    }
+
     const handler = handlers[claim.task.kind as PersistedTaskIntent];
 
     if (!handler) {
@@ -646,42 +666,26 @@ export const runNextPersistedTask = async (
 
     try {
       const output = await handler(claim.task, claim.taskRun);
-      const taskRun = await unitOfWork.taskRuns.save(
-        createTaskRun({
-          ...claim.taskRun,
-          status: "succeeded",
-          finishedAt,
-          updatedAt: finishedAt,
-        }),
-      );
-      await client.task.update({
-        where: { id: claim.task.id },
-        data: { status: "succeeded", updatedAt: new Date(finishedAt) },
-      });
-      const task = ensurePersistedTask(await unitOfWork.tasks.getById(claim.task.id), claim.task.id);
+      const completed = await queue.complete(claim.task.id, claim.taskRun.id, options.now);
 
-      return { task, taskRun, output };
+      return {
+        task: completed.task as TaskEntity,
+        taskRun: completed.taskRun as TaskRunEntity,
+        output,
+      };
     } catch (error) {
       const taskError = error instanceof Error ? error : new Error(String(error));
-      const taskRun = await unitOfWork.taskRuns.save(
-        createTaskRun({
-          ...claim.taskRun,
-          status: "failed",
-          finishedAt,
-          error: taskError.message,
-          updatedAt: finishedAt,
-        }),
-      );
-      await client.task.update({
-        where: { id: claim.task.id },
-        data: { status: "failed", updatedAt: new Date(finishedAt) },
-      });
-      const task = ensurePersistedTask(await unitOfWork.tasks.getById(claim.task.id), claim.task.id);
+      const failed = await queue.fail(claim.task.id, claim.taskRun.id, taskError.message, options.now);
 
-      return { task, taskRun, output: {}, error: taskError };
+      return {
+        task: failed.task as TaskEntity,
+        taskRun: failed.taskRun as TaskRunEntity,
+        output: {},
+        error: taskError,
+      };
     }
   } finally {
-    await client.$disconnect();
+    await queue.close();
   }
 };
 
@@ -697,10 +701,17 @@ export const loadPersistedTaskSummary = async (
   }
 };
 
-export const enqueuePredictionForEligibleFixtures = async (
+const enqueueAutomationTasksForEligibleFixtures = async (
   databaseUrl: string,
   options: EnqueuePredictionForEligibleFixturesOptions = {},
-): Promise<EnqueuePredictionForEligibleFixturesResult> => {
+  config: {
+    readonly kind: Extract<PersistedTaskIntent, "research" | "prediction">;
+    readonly priority: number;
+    readonly createTaskId: (fixtureId: string) => string;
+    readonly createPayload: (fixtureId: string) => Record<string, unknown>;
+    readonly taskLabel: string;
+  },
+): Promise<EnqueueResearchForEligibleFixturesResult> => {
   const now = options.now ?? new Date();
   const scopedFixtures = await loadCoverageScopedEligibleFixtures(databaseUrl, options);
   const selectedFixtures =
@@ -729,12 +740,12 @@ export const enqueuePredictionForEligibleFixtures = async (
       continue;
     }
 
-    const taskId = createAutomationPredictionTaskId(candidate.fixture.id);
+    const taskId = config.createTaskId(candidate.fixture.id);
     const existingTask = await loadPersistedTaskById(databaseUrl, taskId);
     if (existingTask) {
       skippedFixtures.push({
         fixtureId: candidate.fixture.id,
-        reason: `Prediction task ${taskId} already exists with status ${existingTask.status}.`,
+        reason: `${config.taskLabel} task ${taskId} already exists with status ${existingTask.status}.`,
       });
       continue;
     }
@@ -742,13 +753,9 @@ export const enqueuePredictionForEligibleFixtures = async (
     tasks.push(
       await enqueuePersistedTask(databaseUrl, {
         id: taskId,
-        kind: "prediction",
-        priority: options.priority ?? 50,
-        payload: {
-          fixtureId: candidate.fixture.id,
-          source: AUTOMATION_SOURCE,
-          step: AUTOMATION_PREDICTION_STEP,
-        },
+        kind: config.kind,
+        priority: options.priority ?? config.priority,
+        payload: config.createPayload(candidate.fixture.id),
         scheduledFor: now,
         now,
       }),
@@ -764,6 +771,38 @@ export const enqueuePredictionForEligibleFixtures = async (
     skippedFixtures,
   };
 };
+
+export const enqueueResearchForEligibleFixtures = async (
+  databaseUrl: string,
+  options: EnqueuePredictionForEligibleFixturesOptions = {},
+): Promise<EnqueueResearchForEligibleFixturesResult> =>
+  enqueueAutomationTasksForEligibleFixtures(databaseUrl, options, {
+    kind: "research",
+    priority: 60,
+    createTaskId: createAutomationResearchTaskId,
+    createPayload: (fixtureId) => ({
+      fixtureId,
+      source: AUTOMATION_SOURCE,
+      step: AUTOMATION_RESEARCH_STEP,
+    }),
+    taskLabel: "Research",
+  });
+
+export const enqueuePredictionForEligibleFixtures = async (
+  databaseUrl: string,
+  options: EnqueuePredictionForEligibleFixturesOptions = {},
+): Promise<EnqueuePredictionForEligibleFixturesResult> =>
+  enqueueAutomationTasksForEligibleFixtures(databaseUrl, options, {
+    kind: "prediction",
+    priority: 50,
+    createTaskId: createAutomationPredictionTaskId,
+    createPayload: (fixtureId) => ({
+      fixtureId,
+      source: AUTOMATION_SOURCE,
+      step: AUTOMATION_PREDICTION_STEP,
+    }),
+    taskLabel: "Prediction",
+  });
 
 export const loadAutomationOpsSummary = async (
   databaseUrl: string,
@@ -808,12 +847,13 @@ export const runAutomationCycle = async (
   options: RunAutomationCycleOptions = {},
 ): Promise<AutomationCycleSummary> => {
   const now = options.now ?? new Date();
+  const researchGeneratedAt = options.researchGeneratedAt ?? now.toISOString();
   const scoringGeneratedAt = options.scoringGeneratedAt ?? now.toISOString();
   const parlayGeneratedAt = options.parlayGeneratedAt ?? now.toISOString();
   const validationExecutedAt = options.validationExecutedAt ?? now.toISOString();
   const validationTaskId =
     options.validationTaskId ?? createAutomationValidationTaskId(validationExecutedAt);
-  const enqueuedPredictions = await enqueuePredictionForEligibleFixtures(databaseUrl, {
+  const enqueuedResearch = await enqueueResearchForEligibleFixtures(databaseUrl, {
     now,
     ...(options.fixtureIds ? { fixtureIds: options.fixtureIds } : {}),
     ...(options.maxFixtures !== undefined ? { maxFixtures: options.maxFixtures } : {}),
@@ -821,8 +861,44 @@ export const runAutomationCycle = async (
   });
 
   const handlers: PersistedTaskHandlers = {
-    research: async () => {
-      throw new Error("Research automation is not part of the minimal scoring pipeline.");
+    research: async (task) => {
+      const step = requirePayloadString(task, "step");
+      if (step !== AUTOMATION_RESEARCH_STEP) {
+        throw new Error(`Unsupported research automation step ${step}`);
+      }
+
+      const fixtureId = requirePayloadString(task, "fixtureId");
+      const client = createVerifiedPrismaClient({ databaseUrl });
+
+      try {
+        const unitOfWork = createPrismaUnitOfWork(client);
+        const fixture = await unitOfWork.fixtures.getById(fixtureId);
+        if (!fixture) {
+          throw new Error(`Fixture not found: ${fixtureId}`);
+        }
+
+        const result = await runResearchTask({
+          fixture,
+          generatedAt: researchGeneratedAt,
+          ai: resolveResearchAiConfig(),
+          persistence: {
+            fixtures: unitOfWork.fixtures,
+            fixtureWorkflows: unitOfWork.fixtureWorkflows,
+            tasks: unitOfWork.tasks,
+            aiRuns: unitOfWork.aiRuns,
+          },
+        });
+
+        return {
+          fixtureId,
+          generatedAt: researchGeneratedAt,
+          featureReadinessStatus: result.featureSnapshot.readiness.status,
+          recommendedLean: result.dossier.recommendedLean,
+          ...(result.aiRun ? { aiRunId: result.aiRun.id } : {}),
+        };
+      } finally {
+        await client.$disconnect();
+      }
     },
     prediction: async (task) => {
       const step = requirePayloadString(task, "step");
@@ -854,6 +930,33 @@ export const runAutomationCycle = async (
     },
   };
 
+  const researchExecutions: PersistedTaskExecution[] = [];
+  while (true) {
+    const execution = await runNextPersistedTask(databaseUrl, handlers, {
+      kind: "research",
+      now,
+    });
+    if (!execution) {
+      break;
+    }
+
+    researchExecutions.push(execution);
+  }
+
+  const predictionFixtureIds =
+    researchExecutions.length > 0
+      ? researchExecutions
+          .filter((execution) => !execution.error)
+          .map((execution) => execution.output.fixtureId)
+          .filter((fixtureId): fixtureId is string => typeof fixtureId === "string")
+      : (options.fixtureIds ? [...options.fixtureIds] : []);
+  const enqueuedPredictions = await enqueuePredictionForEligibleFixtures(databaseUrl, {
+    now,
+    fixtureIds: predictionFixtureIds,
+    ...(options.maxFixtures !== undefined ? { maxFixtures: options.maxFixtures } : {}),
+    ...(options.predictionPriority !== undefined ? { priority: options.predictionPriority } : {}),
+  });
+
   const predictionExecutions: PersistedTaskExecution[] = [];
   while (true) {
     const execution = await runNextPersistedTask(databaseUrl, handlers, {
@@ -869,7 +972,9 @@ export const runAutomationCycle = async (
 
   const parlayResult = await runPublisherWorker(databaseUrl, {
     generatedAt: parlayGeneratedAt,
-    predictionTaskIds: predictionExecutions.map((execution) => execution.task.id),
+    predictionTaskIds: predictionExecutions
+      .filter((execution) => execution.task.status === "succeeded")
+      .map((execution) => execution.task.id),
   });
   const validationTask =
     (await loadPersistedTaskById(databaseUrl, validationTaskId)) ??
@@ -895,6 +1000,9 @@ export const runAutomationCycle = async (
 
   return {
     startedAt: now.toISOString(),
+    enqueuedResearch,
+    processedResearchCount: researchExecutions.length,
+    researchExecutions,
     enqueuedPredictions,
     processedPredictionCount: predictionExecutions.length,
     predictionExecutions,

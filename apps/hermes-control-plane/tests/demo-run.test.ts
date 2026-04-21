@@ -12,7 +12,9 @@ import {
   createTaskRun,
   createTeamCoveragePolicy,
 } from "@gana-v8/domain-core";
+import { runLiveIngestion } from "@gana-v8/ingestion-worker";
 import { PrismaClient } from "@prisma/client";
+import type { RawFixtureRecord, RawOddsMarketRecord } from "@gana-v8/source-connectors";
 import { createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
@@ -357,6 +359,121 @@ const cleanupAutomationArtifacts = async (databaseUrl: string, prefix: string): 
     await prisma.leagueCoveragePolicy.deleteMany({ where: { id: { startsWith: prefix } } });
     await prisma.teamCoveragePolicy.deleteMany({ where: { id: { startsWith: prefix } } });
     await prisma.dailyAutomationPolicy.deleteMany({ where: { id: { startsWith: prefix } } });
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+const cleanupAutomationArtifactsByResourceIds = async (
+  databaseUrl: string,
+  input: {
+    readonly fixtureIds?: readonly string[];
+    readonly batchIds?: readonly string[];
+    readonly taskIdPrefix?: string;
+    readonly policyPrefix?: string;
+  },
+): Promise<void> => {
+  const prisma = createPrismaClient(databaseUrl);
+  const fixtureIds = [...new Set(input.fixtureIds ?? [])];
+  const batchIds = [...new Set(input.batchIds ?? [])];
+
+  try {
+    const predictionIds = fixtureIds.length
+      ? (
+          await prisma.prediction.findMany({
+            where: { fixtureId: { in: fixtureIds } },
+            select: { id: true },
+          })
+        ).map((prediction) => prediction.id)
+      : [];
+
+    const parlayIds = predictionIds.length
+      ? (
+          await prisma.parlay.findMany({
+            where: { legs: { some: { predictionId: { in: predictionIds } } } },
+            select: { id: true },
+          })
+        ).map((parlay) => parlay.id)
+      : [];
+
+    if (predictionIds.length || parlayIds.length) {
+      await prisma.validation.deleteMany({
+        where: {
+          OR: [
+            ...(predictionIds.length ? [{ targetId: { in: predictionIds } }] : []),
+            ...(parlayIds.length ? [{ targetId: { in: parlayIds } }] : []),
+          ],
+        },
+      });
+    }
+
+    if (parlayIds.length) {
+      await prisma.parlay.deleteMany({ where: { id: { in: parlayIds } } });
+    }
+
+    if (predictionIds.length) {
+      await prisma.prediction.deleteMany({ where: { id: { in: predictionIds } } });
+    }
+
+    const taskIds = (
+      await prisma.task.findMany({
+        select: {
+          id: true,
+          payload: true,
+        },
+      })
+    )
+      .filter((task) => {
+        const payload = task.payload as Record<string, unknown>;
+        const payloadFixtureId = typeof payload.fixtureId === "string" ? payload.fixtureId : null;
+        const payloadFixtureIds = Array.isArray(payload.fixtureIds)
+          ? payload.fixtureIds.filter((value): value is string => typeof value === "string")
+          : [];
+        const payloadBatchId = typeof payload.batchId === "string" ? payload.batchId : null;
+
+        return (
+          (input.taskIdPrefix ? task.id.startsWith(input.taskIdPrefix) : false) ||
+          (payloadFixtureId !== null && fixtureIds.includes(payloadFixtureId)) ||
+          payloadFixtureIds.some((fixtureId) => fixtureIds.includes(fixtureId)) ||
+          (payloadBatchId !== null && batchIds.includes(payloadBatchId))
+        );
+      })
+      .map((task) => task.id);
+
+    if (taskIds.length) {
+      await prisma.taskRun.deleteMany({ where: { taskId: { in: taskIds } } });
+      await prisma.task.deleteMany({ where: { id: { in: taskIds } } });
+    }
+
+    const auditAggregateIds = [...fixtureIds, ...predictionIds, ...parlayIds, ...taskIds];
+    if (auditAggregateIds.length) {
+      await prisma.auditEvent.deleteMany({ where: { aggregateId: { in: auditAggregateIds } } });
+    }
+
+    if (batchIds.length || fixtureIds.length) {
+      await prisma.oddsSnapshot.deleteMany({
+        where: {
+          OR: [
+            ...(batchIds.length ? [{ batchId: { in: batchIds } }] : []),
+            ...(fixtureIds.length ? [{ fixtureId: { in: fixtureIds } }] : []),
+          ],
+        },
+      });
+    }
+
+    if (batchIds.length) {
+      await prisma.rawIngestionBatch.deleteMany({ where: { id: { in: batchIds } } });
+    }
+
+    if (fixtureIds.length) {
+      await prisma.fixture.deleteMany({ where: { id: { in: fixtureIds } } });
+    }
+
+    if (input.policyPrefix) {
+      await prisma.leagueCoveragePolicy.deleteMany({ where: { id: { startsWith: input.policyPrefix } } });
+      await prisma.teamCoveragePolicy.deleteMany({ where: { id: { startsWith: input.policyPrefix } } });
+      await prisma.dailyAutomationPolicy.deleteMany({ where: { id: { startsWith: input.policyPrefix } } });
+    }
   } finally {
     await prisma.$disconnect();
   }
@@ -997,19 +1114,36 @@ testWithDatabase("enqueuePredictionForEligibleFixtures applies coverage watchlis
   }
 });
 
-testWithDatabase("runAutomationCycle enqueues scoring tasks, persists predictions, publishes a parlay, and executes validation", async (databaseUrl) => {
+testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persists predictions, publishes a parlay, and executes validation", async (databaseUrl) => {
   const prefix = `har${Date.now().toString(36)}`;
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
   try {
-    const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1");
-    const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2");
+    await createAutomationCoveragePolicies(databaseUrl, prefix);
+
+    const fixtureOne = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
+      competition: "Premier League",
+      providerLeagueId: "39",
+      homeTeam: "Liverpool",
+      providerHomeTeamId: "40",
+      homePrice: 1.85,
+      drawPrice: 3.7,
+      awayPrice: 4.6,
+    });
+    const fixtureTwo = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
+      competition: "Premier League",
+      providerLeagueId: "39",
+      homePrice: 1.92,
+      drawPrice: 3.5,
+      awayPrice: 4.1,
+    });
 
     const summary = await runAutomationCycle(databaseUrl, {
       now: new Date("2099-01-01T10:00:00.000Z"),
       fixtureIds: [fixtureOne.fixtureId, fixtureTwo.fixtureId],
       maxFixtures: 2,
+      researchGeneratedAt: "2099-01-01T10:04:00.000Z",
       scoringGeneratedAt: "2099-01-01T10:05:00.000Z",
       parlayGeneratedAt: "2099-01-01T10:06:00.000Z",
       validationExecutedAt: "2099-01-01T10:07:00.000Z",
@@ -1031,12 +1165,42 @@ testWithDatabase("runAutomationCycle enqueues scoring tasks, persists prediction
         },
         include: { legs: true },
       });
+      const workflows = await prisma.fixtureWorkflow.findMany({
+        where: { fixtureId: { in: [fixtureOne.fixtureId, fixtureTwo.fixtureId] } },
+      });
+      const fixtures = await prisma.fixture.findMany({
+        where: { id: { in: [fixtureOne.fixtureId, fixtureTwo.fixtureId] } },
+      });
 
+      assert.equal(summary.enqueuedResearch.enqueuedCount, 2);
+      assert.equal(summary.processedResearchCount, 2);
+      assert.equal(summary.researchExecutions.every((execution) => execution.task.status === "succeeded"), true);
       assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
       assert.equal(summary.processedPredictionCount, 2);
       assert.equal(summary.predictionExecutions.every((execution) => execution.task.status === "succeeded"), true);
       assert.equal(predictions.length, 2);
       assert.equal(predictions.every((prediction) => prediction.status === "published"), true);
+      assert.equal(workflows.length, 2);
+      assert.equal(
+        workflows.every(
+          (workflow) =>
+            workflow.enrichmentStatus === "succeeded" &&
+            workflow.candidateStatus === "succeeded" &&
+            workflow.predictionStatus === "succeeded",
+        ),
+        true,
+      );
+      assert.equal(
+        fixtures.every((fixture) => {
+          const metadata = fixture.metadata as Record<string, unknown>;
+          return (
+            metadata.researchGeneratedAt === "2099-01-01T10:04:00.000Z" &&
+            typeof metadata.researchRecommendedLean === "string" &&
+            typeof metadata.featureScoreHome === "string"
+          );
+        }),
+        true,
+      );
       assert.equal(summary.parlayResult.status, "persisted");
       assert.equal(parlays.length, 1);
       assert.equal(parlays[0]?.legs.length, 2);
@@ -1049,6 +1213,190 @@ testWithDatabase("runAutomationCycle enqueues scoring tasks, persists prediction
     }
   } finally {
     await cleanupAutomationArtifacts(databaseUrl, prefix);
+  }
+});
+
+testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end without manual fixture seeding", async (databaseUrl) => {
+  const prefix = `hail${Date.now().toString(36)}`;
+  const providerFixtureIds = [`${prefix}-fixture-1`, `${prefix}-fixture-2`] as const;
+  const fixtureIds = providerFixtureIds.map((providerFixtureId) => `fixture:api-football:${providerFixtureId}`);
+  const fixtures: readonly RawFixtureRecord[] = [
+    {
+      recordType: "fixture",
+      providerFixtureId: providerFixtureIds[0],
+      providerCode: "api-football",
+      status: "scheduled",
+      scheduledAt: "2099-01-02T18:00:00.000Z",
+      competition: {
+        providerCompetitionId: "39",
+        name: "Premier League",
+        country: "England",
+        season: "2099",
+      },
+      homeTeam: {
+        providerTeamId: "40",
+        name: "Liverpool",
+        shortName: "LIV",
+        country: "England",
+      },
+      awayTeam: {
+        providerTeamId: `${prefix}-away-1`,
+        name: "Away One",
+        shortName: "AW1",
+        country: "England",
+      },
+      sourceUpdatedAt: "2099-01-01T09:55:00.000Z",
+      payload: { source: "hermes-control-plane.test" },
+    },
+    {
+      recordType: "fixture",
+      providerFixtureId: providerFixtureIds[1],
+      providerCode: "api-football",
+      status: "scheduled",
+      scheduledAt: "2099-01-03T18:00:00.000Z",
+      competition: {
+        providerCompetitionId: "39",
+        name: "Premier League",
+        country: "England",
+        season: "2099",
+      },
+      homeTeam: {
+        providerTeamId: `${prefix}-home-2`,
+        name: "Home Two",
+        shortName: "HM2",
+        country: "England",
+      },
+      awayTeam: {
+        providerTeamId: `${prefix}-away-2`,
+        name: "Away Two",
+        shortName: "AW2",
+        country: "England",
+      },
+      sourceUpdatedAt: "2099-01-01T09:56:00.000Z",
+      payload: { source: "hermes-control-plane.test" },
+    },
+  ];
+  const odds: readonly RawOddsMarketRecord[] = providerFixtureIds.flatMap((providerFixtureId, index) => [
+    {
+      recordType: "odds",
+      providerFixtureId,
+      providerCode: "api-football",
+      bookmakerKey: "bet365",
+      marketKey: "h2h",
+      selections: [
+        { key: "home", label: "home", priceDecimal: index === 0 ? 1.82 : 1.91 },
+        { key: "draw", label: "draw", priceDecimal: index === 0 ? 3.65 : 3.45 },
+        { key: "away", label: "away", priceDecimal: index === 0 ? 4.7 : 4.2 },
+      ],
+      sourceUpdatedAt: `2099-01-01T09:5${index + 7}:00.000Z`,
+      payload: { source: "hermes-control-plane.test" },
+    },
+  ]);
+
+  await cleanupAutomationArtifacts(databaseUrl, prefix);
+
+  const prisma = createPrismaClient(databaseUrl);
+  const unitOfWork = createPrismaUnitOfWork(prisma);
+  let batchIds: string[] = [];
+
+  try {
+    await createAutomationCoveragePolicies(databaseUrl, prefix);
+
+    const ingestionSummary = await runLiveIngestion({
+      env: {
+        ...TEST_RUNTIME_ENV,
+        GANA_DEMO_MODE: "false",
+        GANA_DRY_RUN: "false",
+      },
+      fixtures,
+      marketKeys: ["h2h"],
+      mode: "both",
+      now: () => new Date("2099-01-01T10:00:00.000Z"),
+      odds,
+      oddsFixtureIds: providerFixtureIds,
+      prismaClient: prisma,
+      unitOfWork,
+    });
+    batchIds = ingestionSummary.results.flatMap((result) =>
+      result.manifest.batch ? [result.manifest.batch.batchId] : [],
+    );
+
+    const summary = await runAutomationCycle(databaseUrl, {
+      now: new Date("2099-01-01T10:10:00.000Z"),
+      fixtureIds,
+      maxFixtures: 2,
+      researchGeneratedAt: "2099-01-01T10:11:00.000Z",
+      scoringGeneratedAt: "2099-01-01T10:12:00.000Z",
+      parlayGeneratedAt: "2099-01-01T10:13:00.000Z",
+      validationExecutedAt: "2099-01-01T10:14:00.000Z",
+      validationTaskId: `${prefix}-validation-task`,
+    });
+
+    const persistedFixtures = await prisma.fixture.findMany({
+      where: { id: { in: fixtureIds } },
+    });
+    const workflows = await prisma.fixtureWorkflow.findMany({
+      where: { fixtureId: { in: fixtureIds } },
+    });
+    const predictions = await prisma.prediction.findMany({
+      where: { fixtureId: { in: fixtureIds } },
+    });
+    const parlays = await prisma.parlay.findMany({
+      where: {
+        legs: {
+          some: {
+            predictionId: { in: predictions.map((prediction) => prediction.id) },
+          },
+        },
+      },
+      include: { legs: true },
+    });
+
+    assert.equal(ingestionSummary.runtime.persistenceMode, "mysql");
+    assert.equal(ingestionSummary.results.every((result) => result.status === "succeeded"), true);
+    assert.equal(batchIds.length, 2);
+    assert.equal(summary.enqueuedResearch.enqueuedCount, 2);
+    assert.equal(summary.processedResearchCount, 2);
+    assert.equal(summary.researchExecutions.every((execution) => execution.task.status === "succeeded"), true);
+    assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
+    assert.equal(summary.processedPredictionCount, 2);
+    assert.equal(summary.predictionExecutions.every((execution) => execution.task.status === "succeeded"), true);
+    assert.equal(persistedFixtures.length, 2);
+    assert.equal(
+      persistedFixtures.every((fixture) => {
+        const metadata = fixture.metadata as Record<string, unknown>;
+        return (
+          metadata.providerFixtureId !== undefined &&
+          metadata.researchGeneratedAt === "2099-01-01T10:11:00.000Z" &&
+          metadata.researchSynthesisMode === "deterministic" &&
+          typeof metadata.featureScoreHome === "string"
+        );
+      }),
+      true,
+    );
+    assert.equal(workflows.length, 2);
+    assert.equal(
+      workflows.every(
+        (workflow) =>
+          workflow.enrichmentStatus === "succeeded" &&
+          workflow.candidateStatus === "succeeded" &&
+          workflow.predictionStatus === "succeeded",
+      ),
+      true,
+    );
+    assert.equal(predictions.length, 2);
+    assert.equal(predictions.every((prediction) => prediction.status === "published"), true);
+    assert.equal(summary.parlayResult.status, "persisted");
+    assert.equal(parlays.length, 1);
+    assert.equal(summary.validationExecution.task.status, "succeeded");
+  } finally {
+    await prisma.$disconnect();
+    await cleanupAutomationArtifactsByResourceIds(databaseUrl, {
+      fixtureIds,
+      batchIds,
+      policyPrefix: prefix,
+      taskIdPrefix: prefix,
+    });
   }
 });
 
