@@ -134,7 +134,9 @@ Runbook:
 
 ## Planes clave
 
-- `docs/plans/gana-v8-master-plan-producto-implementacion.md`
+- `docs/plans/falta/gana-v8-plan-cierre-plataforma-operacion.md`
+- `docs/plans/falta/gana-v8-plan-cierre-data-research.md`
+- `docs/plans/falta/gana-v8-plan-cierre-sandbox-qa.md`
 - `docs/plans/hermes-v8-migracion-v7-a-v8-git-worktrees.md`
 - `docs/plans/gana-v8-monorepo-layout.md`
 - `docs/plans/hermes-v8-blueprint-prediccion-partidos.md`

@@ -29,7 +29,7 @@ gana-v8 se organiza como monorepo por límites operativos, no por framework ni p
 ## Implementation alignment observed in repo
 
 - `README.md` ya documenta workspaces separados en `apps/*` y `packages/*`.
-- `docs/plans/gana-v8-master-plan-producto-implementacion.md` y `docs/plans/gana-v8-monorepo-layout.md` describen esta topología como objetivo de fase 0.
+- `docs/plans/falta/gana-v8-plan-cierre-plataforma-operacion.md` y `docs/plans/gana-v8-monorepo-layout.md` describen esta topología como base actual y como trabajo de cierre operacional.
 - El repo ya tiene múltiples apps y packages compilables, lo que confirma que esta decisión no es aspiracional sino la base actual del scaffold.
 
 ## Consequences
