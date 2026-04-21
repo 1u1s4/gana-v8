@@ -137,6 +137,7 @@ export interface PublishParlayMvpOptions {
   readonly unitOfWork?: StorageUnitOfWork;
   readonly generatedAt?: string;
   readonly maxPredictions?: number;
+  readonly predictionTaskIds?: readonly string[];
   readonly minLegs?: number;
   readonly maxLegs?: number;
   readonly source?: ParlayEntity["source"];
@@ -681,6 +682,11 @@ export const publishParlayMvp = async (
       orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }, { confidence: "desc" }],
       ...(options.maxPredictions !== undefined ? { take: options.maxPredictions } : {}),
     });
+    const scopedLoaded = options.predictionTaskIds
+      ? loaded.filter((prediction) =>
+          prediction.aiRun?.taskId !== undefined && options.predictionTaskIds?.includes(prediction.aiRun.taskId),
+        )
+      : loaded;
 
     const candidates: AtomicCandidate[] = [];
     const skipReasons: PublisherWorkerSkipReason[] = [];
@@ -689,7 +695,7 @@ export const publishParlayMvp = async (
       ? await loadPublisherCoveragePolicyContext(runtime.unitOfWork)
       : null;
 
-    for (const prediction of loaded) {
+    for (const prediction of scopedLoaded) {
       const invalid = collectCandidateValidation(prediction, generatedAt);
       if (invalid) {
         skipReasons.push(invalid);
@@ -741,7 +747,7 @@ export const publishParlayMvp = async (
         generatedAt,
         status: "skipped",
         scorecard: createEmptyScorecard([`requires at least ${minLegs} legs`]),
-        loadedPredictionCount: loaded.length,
+        loadedPredictionCount: scopedLoaded.length,
         candidateCount: 0,
         selectedCandidates,
         skipReasons: [
@@ -769,7 +775,7 @@ export const publishParlayMvp = async (
         generatedAt,
         status: "skipped",
         scorecard: built.scorecard,
-        loadedPredictionCount: loaded.length,
+        loadedPredictionCount: scopedLoaded.length,
         candidateCount: candidates.length,
         selectedCandidates: built.selectedCandidates,
         skipReasons: [
@@ -782,7 +788,7 @@ export const publishParlayMvp = async (
       };
     }
 
-    const selectedPredictionMap = new Map(loaded.map((prediction) => [prediction.id, prediction] as const));
+    const selectedPredictionMap = new Map(scopedLoaded.map((prediction) => [prediction.id, prediction] as const));
     const selectedPredictionLineages = built.selectedCandidates
       .map((candidate) => selectedPredictionMap.get(candidate.predictionId))
       .flatMap((prediction) => (prediction ? [extractPredictionLineage(prediction)] : []));
@@ -799,7 +805,7 @@ export const publishParlayMvp = async (
         generatedAt,
         status: "skipped",
         scorecard: built.scorecard,
-        loadedPredictionCount: loaded.length,
+        loadedPredictionCount: scopedLoaded.length,
         candidateCount: candidates.length,
         selectedCandidates: built.selectedCandidates,
         skipReasons: [

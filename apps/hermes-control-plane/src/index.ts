@@ -866,7 +866,10 @@ export const runAutomationCycle = async (
     predictionExecutions.push(execution);
   }
 
-  const parlayResult = await runPublisherWorker(databaseUrl, { generatedAt: parlayGeneratedAt });
+  const parlayResult = await runPublisherWorker(databaseUrl, {
+    generatedAt: parlayGeneratedAt,
+    predictionTaskIds: predictionExecutions.map((execution) => execution.task.id),
+  });
   const validationTask =
     (await loadPersistedTaskById(databaseUrl, validationTaskId)) ??
     (await enqueuePersistedTask(databaseUrl, {

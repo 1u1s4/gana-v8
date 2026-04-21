@@ -400,6 +400,118 @@ test("publishParlayMvp excludes predictions blocked by coverage policy and recor
   );
 });
 
+test("publishParlayMvp scopes parlay selection to the current prediction task ids and excludes historical predictions", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      withLineage(
+        predictionRecord("pred-current-1", "fx-1", {
+          confidence: 0.64,
+          probabilities: { implied: 0.5, model: 0.61, edge: 0.11 },
+        }),
+        {
+          environment: "test",
+          profile: "ci-smoke",
+          providerSource: "mock",
+          demoMode: true,
+          cohort: "demo:ci-smoke",
+          source: "scoring-worker",
+        },
+      ),
+      {
+        ...withLineage(
+          predictionRecord("pred-current-2", "fx-2", {
+            confidence: 0.63,
+            probabilities: { implied: 0.48, model: 0.59, edge: 0.11 },
+          }),
+          {
+            environment: "test",
+            profile: "ci-smoke",
+            providerSource: "mock",
+            demoMode: true,
+            cohort: "demo:ci-smoke",
+            source: "scoring-worker",
+          },
+        ),
+        aiRun: {
+          id: "airun:pred-current-2",
+          taskId: "task:current-2",
+          task: {
+            id: "task:current-2",
+            triggerKind: "system",
+            payload: {
+              fixtureId: "fx-2",
+              source: "scoring-worker",
+              lineage: {
+                environment: "test",
+                profile: "ci-smoke",
+                providerSource: "mock",
+                demoMode: true,
+                cohort: "demo:ci-smoke",
+                source: "scoring-worker",
+              },
+            },
+          },
+        },
+      },
+      {
+        ...withLineage(
+          predictionRecord("pred-historical-best", "fx-old", {
+            confidence: 0.99,
+            probabilities: { implied: 0.4, model: 0.75, edge: 0.35 },
+            publishedAt: "2026-04-15T12:00:00.000Z",
+            updatedAt: "2026-04-15T12:00:00.000Z",
+          }),
+          {
+            environment: "test",
+            profile: "ci-smoke",
+            providerSource: "mock",
+            demoMode: true,
+            cohort: "demo:ci-smoke",
+            source: "scoring-worker",
+          },
+        ),
+        aiRun: {
+          id: "airun:pred-historical-best",
+          taskId: "task:historical-best",
+          task: {
+            id: "task:historical-best",
+            triggerKind: "system",
+            payload: {
+              fixtureId: "fx-old",
+              source: "scoring-worker",
+              lineage: {
+                environment: "test",
+                profile: "ci-smoke",
+                providerSource: "mock",
+                demoMode: true,
+                cohort: "demo:ci-smoke",
+                source: "scoring-worker",
+              },
+            },
+          },
+        },
+      },
+    ]),
+    generatedAt: "2026-04-16T12:40:00.000Z",
+    stake: 10,
+    unitOfWork,
+    predictionTaskIds: ["task:pred-current-1", "task:current-2"],
+    maxLegs: 2,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.deepEqual(
+    result.selectedCandidates.map((candidate) => candidate.predictionId),
+    ["pred-current-1", "pred-current-2"],
+  );
+  assert.equal(
+    result.selectedCandidates.some((candidate) => candidate.predictionId === "pred-historical-best"),
+    false,
+  );
+});
+
 test("publishParlayMvp excludes far-future demo predictions when live candidates are available", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
 
