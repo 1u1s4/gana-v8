@@ -4,12 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Recovery and redrive runtime for Hermes automation cycles.",
-  "main": "./dist/src/index.js",
-  "types": "./dist/src/index.d.ts",
+  "main": "./dist/apps/hermes-recovery/src/index.js",
+  "types": "./dist/apps/hermes-recovery/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js"
+      "types": "./dist/apps/hermes-recovery/src/index.d.ts",
+      "import": "./dist/apps/hermes-recovery/src/index.js"
     }
   },
   "files": [
@@ -19,7 +19,7 @@
     "build": "pnpm --filter @gana-v8/control-plane-runtime build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs hermes-recovery",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "pnpm run build && node --input-type=module --eval \"import('./dist/src/index.js').then((module) => { if (module.workspaceInfo?.packageName !== '@gana-v8/hermes-recovery') throw new Error('workspaceInfo.packageName mismatch'); console.log('test ok: @gana-v8/hermes-recovery'); })\"",
+    "test": "pnpm run build && node --input-type=module --eval \"import('./dist/apps/hermes-recovery/src/index.js').then((module) => { if (module.workspaceInfo?.packageName !== '@gana-v8/hermes-recovery') throw new Error('workspaceInfo.packageName mismatch'); console.log('test ok: @gana-v8/hermes-recovery'); })\"",
     "typecheck": "pnpm --filter @gana-v8/control-plane-runtime build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },

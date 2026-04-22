@@ -10,8 +10,11 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-plan-cierre-plataforma-operacion.md`
 - `gana-v8-plan-cierre-sandbox-qa.md`
+
+## Planes relevantes en `completado/`
+
+- `gana-v8-plan-cierre-plataforma-operacion.md`
 
 ## Criterio de clasificación
 

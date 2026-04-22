@@ -74,7 +74,7 @@ El faltante real está en transformar ese sandbox funcional en un ecosistema de 
 
 - Convertir certificación, replay parity, contract tests y smoke suites en una política formal de promoción.
 - Definir estados mínimos como `blocked`, `review-required` y `promotable` con criterios objetivos.
-- Exponer esa política como salida consumible por `public-api`, `operator-console` y `hermes-control-plane`.
+- Exponer esa política como salida consumible por `public-api`, `operator-console` y la topología operacional nueva; `hermes-control-plane` sólo la conserva por compatibilidad temporal.
 
 ### Tramo 4. Aislar superficies cognitivas
 

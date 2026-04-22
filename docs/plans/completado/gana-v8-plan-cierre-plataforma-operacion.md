@@ -8,6 +8,12 @@
 - `prisma/schema.prisma` ya define base operacional en MySQL para fixtures, workflows, tareas, predicciones, parlays, validaciones, políticas diarias y namespaces sandbox.
 - `packages/queue-adapters` ya cubre leases, reclaim, backoff, quarantine y redrive básico con pruebas.
 
+**Actualización acotada (2026-04-22)**
+
+- `apps/hermes-control-plane` quedó reetiquetada como compatibilidad temporal explícita para imports, tests y flujos legacy.
+- La topología operativa recomendada pasa a ser `packages/control-plane-runtime` + `apps/hermes-scheduler` + `apps/hermes-dispatcher` + `apps/hermes-recovery`.
+- El retiro total de callers legacy sigue pendiente; este documento no debe volver a tratar `hermes-control-plane` como runtime primario.
+
 ## Resumen actual
 
 `gana-v8` ya no necesita un plan maestro aspiracional ni un gap analysis separado para describir que "algún día" habrá plataforma. La base existe y corre: hay monorepo operativo, cola persistible, workers separados, API interna, consola operativa, publicación base, validación base y perfiles runtime definidos.
@@ -18,8 +24,8 @@ El faltante real de este frente es cerrar la capa de operación para que deje de
 
 - Monorepo real con fronteras explícitas entre `apps/*` y `packages/*`, más `pnpm-workspace.yaml`, `turbo.json` y scripts uniformes de build/test/typecheck.
 - Base de persistencia en MySQL con Prisma para entidades núcleo de operación: `Fixture`, `FixtureWorkflow`, `Task`, `TaskRun`, `Prediction`, `Parlay`, `Validation`, `DailyAutomationPolicy` y `SandboxNamespace`.
-- Cola con leases, reclaim y retry/backoff ya modelada en `packages/queue-adapters` y usada por `hermes-control-plane`.
-- Control-plane funcional para colas, cron specs, tareas persistidas, automation cycle y lectura operativa vía `public-api`.
+- Cola con leases, reclaim y retry/backoff ya modelada en `packages/queue-adapters`, hoy consumida por la topología operacional nueva y aún disponible para `hermes-control-plane` por compatibilidad.
+- Runtime operacional compartido en `packages/control-plane-runtime` con apps separadas para scheduler, dispatcher y recovery; `apps/hermes-control-plane` queda sólo como compatibilidad temporal.
 - Workers principales materializados para ingestión, research, scoring, publicación, validación y sandbox.
 - `public-api` con read models operativos y `operator-console` como superficie separada de supervisión.
 - Publicación y validación base ya presentes: `packages/publication-engine`, `apps/publisher-worker`, `packages/validation-engine` y `apps/validation-worker`.
@@ -54,14 +60,14 @@ El faltante real de este frente es cerrar la capa de operación para que deje de
 ### 5. Cierre operativo y release readiness
 
 - La plataforma todavía no consume de forma explícita un gate único de "lista para promover" o "lista para operar" basado en evidencia objetiva.
-- El diseño detallado de promotion gates y evidence packs vive en el frente de sandbox/QA; este plan sólo debe cerrar cómo `hermes-control-plane`, `public-api` y `operator-console` consumen ese resultado.
+- El diseño detallado de promotion gates y evidence packs vive en el frente de sandbox/QA; este plan sólo debe cerrar cómo la topología operacional nueva, `public-api` y `operator-console` consumen ese resultado.
 - También falta cerrar redrive manual, quarantine review y flujos de override con menos ambigüedad operativa.
 
 ## Plan de cierre priorizado
 
 ### Tramo 1. Harden de orquestación
 
-- Separar en `hermes-control-plane` la responsabilidad de cron scheduling, dispatch, lease recovery y task execution.
+- Mantener `apps/hermes-control-plane` únicamente como fachada de compatibilidad mientras la responsabilidad de cron scheduling, dispatch, lease recovery y task execution vive en la topología nueva.
 - Hacer persistente la información mínima necesaria para que un proceso pueda retomar trabajo sin depender del ciclo que lo disparó.
 - Dejar claro qué partes son helpers de desarrollo y qué partes son runtime operational-grade.
 
@@ -85,7 +91,7 @@ El faltante real de este frente es cerrar la capa de operación para que deje de
 
 ### Tramo 5. Integración con gates de promoción
 
-- Consumir en control-plane y superficies operativas el resultado de certificación y promoción definido por el plan de sandbox/QA.
+- Consumir en la topología operacional nueva y en superficies operativas el resultado de certificación y promoción definido por el plan de sandbox/QA; `hermes-control-plane` no es el destino recomendado para nuevas integraciones.
 - Exponer un estado operacional claro de "no promover", "promover con review" o "listo para promover".
 - Dejar el ownership del diseño de los gates en `gana-v8-plan-cierre-sandbox-qa.md` para evitar duplicación.
 

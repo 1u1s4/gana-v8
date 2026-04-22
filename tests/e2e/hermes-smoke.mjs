@@ -11,16 +11,25 @@ const runtimeEnv = {
   GANA_RUNTIME_PROFILE: process.env.GANA_RUNTIME_PROFILE ?? "ci-smoke",
 };
 
-execFileSync(
-  pnpmBin,
-  [
-    "--filter",
-    "@gana-v8/hermes-control-plane",
-    "test:automation-smoke",
-  ],
-  {
-    cwd: process.cwd(),
-    env: runtimeEnv,
-    stdio: "inherit",
-  },
-);
+const smokeTargets = [
+  "@gana-v8/control-plane-runtime",
+  "@gana-v8/hermes-scheduler",
+  "@gana-v8/hermes-dispatcher",
+  "@gana-v8/hermes-recovery",
+];
+
+for (const target of smokeTargets) {
+  execFileSync(
+    pnpmBin,
+    [
+      "--filter",
+      target,
+      "test",
+    ],
+    {
+      cwd: process.cwd(),
+      env: runtimeEnv,
+      stdio: "inherit",
+    },
+  );
+}

@@ -174,26 +174,28 @@ Esto evita tres problemas comunes:
 
 ### 4.1 apps/hermes-control-plane
 Rol:
-- punto único de entrada para órdenes humanas, eventos y crons;
-- crea workflows, emite TaskEnvelope, asigna subagentes y aplica policy.
+- compatibilidad temporal para imports, tests y flujos legacy del antiguo Hermes all-in-one;
+- preserva el wiring histórico mientras los consumidores migran a la topología nueva.
 
 Justificación:
-- Hermes debe vivir como app separada porque su responsabilidad es coordinación, no computación pesada ni persistencia analítica.
-- Permite escalar independientemente del scoring o de la ingestión.
+- evita romper imports y pruebas existentes mientras termina la migración operacional.
+- deja explícito que el runtime recomendado ya no vive aquí.
 
 Debe contener:
-- scheduler adapters,
-- workflow state machine,
-- agent router,
-- approval gates,
-- recovery/retry manager,
-- audit hooks.
+- wrappers legacy y exports compatibles;
+- notas de migración hacia `packages/control-plane-runtime`;
+- la mínima superficie necesaria para no romper callers existentes.
 
 No debe contener:
+- nuevas responsabilidades operativas;
 - SQL compleja de features,
 - entrenamiento de modelos,
 - scraping especializado,
 - lógica de publicación final hardcodeada.
+
+Nota operativa:
+
+- la topología recomendada vive en `packages/control-plane-runtime` y se materializa con `apps/hermes-scheduler`, `apps/hermes-dispatcher` y `apps/hermes-recovery`.
 
 ### 4.2 apps/operator-console
 Rol:
@@ -904,7 +906,7 @@ Motivo:
 
 ## 16. Recomendación final de ownership por dominio
 
-- Equipo Orchestration: apps/hermes-control-plane, orchestration-sdk, policy-engine.
+- Equipo Orchestration: packages/control-plane-runtime, apps/hermes-scheduler, apps/hermes-dispatcher, apps/hermes-recovery, orchestration-sdk, policy-engine, con `apps/hermes-control-plane` sólo en compatibilidad temporal.
 - Equipo Data Platform: ingestion-worker, source-connectors, canonical-pipeline, storage-adapters.
 - Equipo Research Intelligence: research-worker, research-engine, research-contracts.
 - Equipo Modeling: feature-store, model-registry, prediction-engine, validation-engine.

@@ -23,7 +23,7 @@ El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-m
 ## Workspaces incluidos
 
 ### Apps
-- `apps/hermes-control-plane`
+- `apps/hermes-control-plane` (compatibilidad temporal para imports y tests legacy)
 - `apps/hermes-scheduler`
 - `apps/hermes-dispatcher`
 - `apps/hermes-recovery`
@@ -73,6 +73,14 @@ pnpm build
 ```
 
 ## Superficies operativas
+
+La topología operativa recomendada ya no es `apps/hermes-control-plane`. El runtime primario queda repartido entre `packages/control-plane-runtime` y estas apps:
+
+- `apps/hermes-scheduler` para materializar cron specs y registrar ciclos de scheduling
+- `apps/hermes-dispatcher` para reclamar tareas persistidas, ejecutar workers y registrar ciclos de dispatch
+- `apps/hermes-recovery` para resumir salud de cola, recovery y redrive
+
+`apps/hermes-control-plane` se conserva sólo como capa de compatibilidad temporal para tests, imports y flujos legacy mientras termina la migración.
 
 `public-api` puede correrse como servicio HTTP interno:
 
@@ -132,13 +140,13 @@ Runbook:
 
 ## Próximos pasos naturales
 
-- endurecer los loops de operación distribuidos sobre la topología scheduler/dispatcher/recovery
 - ampliar evidencia de promotion readiness y runbooks operativos
+- ampliar smoke/integration coverage sobre la topología scheduler/dispatcher/recovery
 - conectar CI para ejecutar `pnpm install && pnpm verify`
 
 ## Planes clave
 
-- `docs/plans/falta/gana-v8-plan-cierre-plataforma-operacion.md`
+- `docs/plans/completado/gana-v8-plan-cierre-plataforma-operacion.md`
 - `docs/plans/completado/gana-v8-plan-cierre-data-research.md`
 - `docs/plans/falta/gana-v8-plan-cierre-sandbox-qa.md`
 - `docs/plans/completado/hermes-v8-migracion-v7-a-v8-git-worktrees.md`

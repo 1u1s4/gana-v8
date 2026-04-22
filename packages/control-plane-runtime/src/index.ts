@@ -14,6 +14,7 @@ import {
   createPrismaTaskQueueAdapter,
   type QueueTaskClaim,
   type QueueTaskEntity,
+  type QueueTaskSummary,
 } from "@gana-v8/queue-adapters";
 import {
   loadOperationSnapshotFromDatabase,
@@ -75,12 +76,28 @@ export interface RecoveryCycleOptions {
   readonly now?: Date;
   readonly leaseOwner?: string;
   readonly redriveLimit?: number;
+  readonly leaseRecoveryLimit?: number;
+  readonly renewLeaseMs?: number;
+}
+
+export type QueueHealthStatus = "healthy" | "degraded" | "blocked";
+
+export interface QueueHealthAssessment {
+  readonly status: QueueHealthStatus;
+  readonly reasons: readonly string[];
+  readonly expiredLeaseTaskIds: readonly string[];
+  readonly nearExpiryTaskIds: readonly string[];
 }
 
 const defaultLeaseOwner = (kind: AutomationCycleKind): string =>
   `${kind}:${process.pid}`;
 
 const toIso = (value: Date): string => value.toISOString();
+
+const DEFAULT_TASK_LEASE_MS = 5 * 60 * 1000;
+const DEFAULT_RECOVERY_NEAR_EXPIRY_MS = 60 * 1000;
+const DEFAULT_RECOVERY_RENEW_LEASE_MS = 2 * 60 * 1000;
+const DEFAULT_RECOVERY_LEASE_RECOVERY_LIMIT = 5;
 
 const cycleId = (kind: AutomationCycleKind, now: Date): string =>
   `automation-cycle:${kind}:${now.toISOString().replace(/[^0-9]/g, "")}:${randomUUID().slice(0, 8)}`;
@@ -90,6 +107,88 @@ const cloneStage = (stage: AutomationCycleStageEntity): AutomationCycleStageEnti
   taskIds: [...stage.taskIds],
   taskRunIds: [...stage.taskRunIds],
 });
+
+const dedupeStrings = (values: readonly string[]): readonly string[] =>
+  values.filter((value, index, current) => current.indexOf(value) === index);
+
+const fixtureIdFromTask = (task: QueueTaskEntity): string | undefined =>
+  typeof task.payload.fixtureId === "string" ? String(task.payload.fixtureId) : undefined;
+
+const taskLeaseDeadline = (task: QueueTaskEntity): string | null => {
+  if (task.status !== "running") {
+    return null;
+  }
+
+  return task.leaseExpiresAt ??
+    new Date(Date.parse(task.updatedAt) + DEFAULT_TASK_LEASE_MS).toISOString();
+};
+
+export const hasExpiredTaskLease = (
+  task: QueueTaskEntity,
+  now: Date,
+): boolean => {
+  const leaseDeadline = taskLeaseDeadline(task);
+  return leaseDeadline !== null && leaseDeadline <= toIso(now);
+};
+
+const isTaskLeaseExpiringSoon = (
+  task: QueueTaskEntity,
+  now: Date,
+  thresholdMs: number = DEFAULT_RECOVERY_NEAR_EXPIRY_MS,
+): boolean => {
+  const leaseDeadline = taskLeaseDeadline(task);
+  if (!leaseDeadline) {
+    return false;
+  }
+
+  const leaseDeadlineMs = Date.parse(leaseDeadline);
+  const nowMs = now.getTime();
+  return leaseDeadlineMs > nowMs && leaseDeadlineMs - nowMs <= thresholdMs;
+};
+
+export const assessQueueHealth = (
+  summary: QueueTaskSummary,
+  tasks: readonly QueueTaskEntity[],
+  now: Date,
+): QueueHealthAssessment => {
+  const expiredLeaseTaskIds = dedupeStrings(
+    tasks.filter((task) => hasExpiredTaskLease(task, now)).map((task) => task.id),
+  );
+  const nearExpiryTaskIds = dedupeStrings(
+    tasks.filter((task) => isTaskLeaseExpiringSoon(task, now)).map((task) => task.id),
+  );
+
+  const reasons: string[] = [];
+  if (summary.quarantined > 0) {
+    reasons.push(`${summary.quarantined} quarantined task(s) require manual review`);
+  }
+  if (expiredLeaseTaskIds.length > 0) {
+    reasons.push(`${expiredLeaseTaskIds.length} running task lease(s) expired and need recovery`);
+  }
+  if (summary.failed > 0) {
+    reasons.push(`${summary.failed} failed task(s) waiting for redrive`);
+  }
+  if (nearExpiryTaskIds.length > 0) {
+    reasons.push(`${nearExpiryTaskIds.length} running task(s) are near lease expiry`);
+  }
+  if (summary.queued > 25) {
+    reasons.push(`${summary.queued} queued task(s) indicate backlog pressure`);
+  }
+
+  let status: QueueHealthStatus = "healthy";
+  if (summary.quarantined > 0 || expiredLeaseTaskIds.length > 0) {
+    status = "blocked";
+  } else if (summary.failed > 0 || nearExpiryTaskIds.length > 0 || summary.queued > 25) {
+    status = "degraded";
+  }
+
+  return {
+    status,
+    reasons,
+    expiredLeaseTaskIds,
+    nearExpiryTaskIds,
+  };
+};
 
 const saveCycle = async (
   databaseUrl: string,
@@ -598,6 +697,11 @@ export const runRecoveryCycle = async (
   const now = options.now ?? new Date();
   const leaseOwner = options.leaseOwner ?? defaultLeaseOwner("recovery");
   const redriveLimit = Math.max(0, options.redriveLimit ?? 3);
+  const leaseRecoveryLimit = Math.max(
+    0,
+    options.leaseRecoveryLimit ?? Math.max(redriveLimit, DEFAULT_RECOVERY_LEASE_RECOVERY_LIMIT),
+  );
+  const renewLeaseMs = Math.max(30_000, options.renewLeaseMs ?? DEFAULT_RECOVERY_RENEW_LEASE_MS);
   const client = createVerifiedPrismaClient({ databaseUrl });
 
   try {
@@ -619,36 +723,204 @@ export const runRecoveryCycle = async (
       }),
     );
 
-    const summary = await queue.summary();
+    const tasksBefore = await unitOfWork.tasks.list();
+    const queueSummaryBefore = await queue.summary();
+    const queueHealthBefore = assessQueueHealth(queueSummaryBefore, tasksBefore, now);
+    const expiredLeaseCandidates = tasksBefore
+      .filter((task) => hasExpiredTaskLease(task, now))
+      .sort((left, right) => {
+        const leftDeadline = taskLeaseDeadline(left) ?? left.updatedAt;
+        const rightDeadline = taskLeaseDeadline(right) ?? right.updatedAt;
+        return leftDeadline.localeCompare(rightDeadline);
+      })
+      .slice(0, leaseRecoveryLimit);
+
+    const recoveredLeaseTaskIds: string[] = [];
+    const renewedLeaseTaskIds: string[] = [];
     const redrivenTaskIds: string[] = [];
-    if (redriveLimit > 0) {
-      const recoverable = (await unitOfWork.tasks.list())
-        .filter((task) => task.status === "failed" || task.status === "quarantined")
-        .slice(0, redriveLimit);
-      for (const task of recoverable) {
-        redrivenTaskIds.push((await queue.requeue(task.id, now)).id);
+    const quarantinedTaskIds: string[] = [];
+    const manualReviewTaskIds: string[] = [];
+    const skippedTaskIds: string[] = [];
+    const recoveryErrors: string[] = [];
+    const recoveryActions: Array<Record<string, unknown>> = [];
+
+    for (const expiredTask of expiredLeaseCandidates) {
+      try {
+        const claim = await queue.claim(expiredTask.id, now);
+        if (!claim) {
+          skippedTaskIds.push(expiredTask.id);
+          recoveryActions.push({
+            action: "skip-expired-lease",
+            taskId: expiredTask.id,
+            reason: "Task could not be reclaimed because its status changed during recovery.",
+          });
+          continue;
+        }
+
+        recoveredLeaseTaskIds.push(claim.task.id);
+        const renewedClaim = await queue.renewLease(
+          claim.task.id,
+          claim.taskRun.id,
+          now,
+          renewLeaseMs,
+        );
+        renewedLeaseTaskIds.push(renewedClaim.task.id);
+
+        if (renewedClaim.task.attempts.length >= renewedClaim.task.maxAttempts) {
+          const reason = `Recovered expired lease after ${renewedClaim.task.attempts.length} attempts; manual review required.`;
+          const quarantined = await queue.quarantine(
+            renewedClaim.task.id,
+            renewedClaim.taskRun.id,
+            reason,
+            now,
+          );
+          quarantinedTaskIds.push(quarantined.task.id);
+          manualReviewTaskIds.push(quarantined.task.id);
+          recoveryActions.push({
+            action: "quarantine-expired-lease",
+            taskId: quarantined.task.id,
+            taskRunId: quarantined.taskRun.id,
+            reason,
+          });
+          continue;
+        }
+
+        const redriven = await queue.fail(
+          renewedClaim.task.id,
+          renewedClaim.taskRun.id,
+          "Recovered expired lease; scheduling redrive.",
+          now,
+        );
+        if (redriven.task.status === "quarantined") {
+          quarantinedTaskIds.push(redriven.task.id);
+          manualReviewTaskIds.push(redriven.task.id);
+          recoveryActions.push({
+            action: "quarantine-expired-lease",
+            taskId: redriven.task.id,
+            taskRunId: redriven.taskRun.id,
+            reason: redriven.task.lastErrorMessage ?? "Recovered expired lease exhausted retries.",
+          });
+        } else {
+          redrivenTaskIds.push(redriven.task.id);
+          recoveryActions.push({
+            action: "redrive-expired-lease",
+            taskId: redriven.task.id,
+            taskRunId: redriven.taskRun.id,
+            retryScheduledFor: redriven.task.scheduledFor ?? null,
+          });
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : `Unexpected lease recovery error for task ${expiredTask.id}`;
+        recoveryErrors.push(message);
+        recoveryActions.push({
+          action: "error-expired-lease",
+          taskId: expiredTask.id,
+          error: message,
+        });
       }
     }
 
+    if (redriveLimit > 0) {
+      const terminalTasks = (await unitOfWork.tasks.list())
+        .filter((task) => {
+          if (redrivenTaskIds.includes(task.id) || quarantinedTaskIds.includes(task.id)) {
+            return false;
+          }
+
+          if (task.status === "failed" || task.status === "cancelled") {
+            return true;
+          }
+
+          return (
+            task.status === "quarantined" &&
+            task.attempts.length < task.maxAttempts &&
+            typeof task.lastErrorMessage === "string" &&
+            task.lastErrorMessage.includes("expired lease")
+          );
+        })
+        .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
+        .slice(0, redriveLimit);
+
+      for (const task of terminalTasks) {
+        try {
+          const requeued = await queue.requeue(task.id, now);
+          redrivenTaskIds.push(requeued.id);
+          recoveryActions.push({
+            action: "requeue-terminal-task",
+            taskId: requeued.id,
+            previousStatus: task.status,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : `Unexpected requeue error for task ${task.id}`;
+          recoveryErrors.push(message);
+          recoveryActions.push({
+            action: "error-requeue-terminal-task",
+            taskId: task.id,
+            error: message,
+          });
+        }
+      }
+    }
+
+    const tasksAfter = await unitOfWork.tasks.list();
+    const queueSummaryAfter = await queue.summary();
+    const queueHealthAfter = assessQueueHealth(queueSummaryAfter, tasksAfter, now);
+    const affectedTaskIds = dedupeStrings([
+      ...expiredLeaseCandidates.map((task) => task.id),
+      ...redrivenTaskIds,
+      ...quarantinedTaskIds,
+      ...skippedTaskIds,
+    ]);
+    const affectedFixtureIds = dedupeStrings(
+      tasksAfter
+        .filter((task) => affectedTaskIds.includes(task.id))
+        .flatMap((task) => {
+          const fixtureId = fixtureIdFromTask(task);
+          return fixtureId ? [fixtureId] : [];
+        }),
+    );
+    const finalError = recoveryErrors[0];
+
     const finalCycle = await unitOfWork.automationCycles.save(
       updateCycle(cycle, {
-        status: "succeeded",
+        status: recoveryErrors.length > 0 ? "failed" : "succeeded",
         finishedAt: toIso(now),
+        ...(finalError ? { error: finalError } : {}),
         summary: {
           source: "hermes-recovery",
-          fixtureIds: [],
-          taskIds: redrivenTaskIds,
+          fixtureIds: affectedFixtureIds,
+          taskIds: affectedTaskIds,
           stages: [],
           counts: {
             researchTaskCount: 0,
             predictionTaskCount: 0,
             parlayCount: 0,
             validationTaskCount: 0,
+            expiredLeaseCount: expiredLeaseCandidates.length,
+            recoveredLeaseCount: dedupeStrings(recoveredLeaseTaskIds).length,
+            renewedLeaseCount: dedupeStrings(renewedLeaseTaskIds).length,
+            redrivenTaskCount: dedupeStrings(redrivenTaskIds).length,
+            quarantinedTaskCount: dedupeStrings(quarantinedTaskIds).length,
+            manualReviewTaskCount: dedupeStrings(manualReviewTaskIds).length,
           },
         },
         metadata: {
-          queueSummary: summary,
-          redrivenTaskIds,
+          queueSummaryBefore,
+          queueSummaryAfter,
+          queueHealthBefore,
+          queueHealthAfter,
+          expiredLeaseTaskIds: expiredLeaseCandidates.map((task) => task.id),
+          nearExpiryTaskIds: queueHealthBefore.nearExpiryTaskIds,
+          recoveredLeaseTaskIds: dedupeStrings(recoveredLeaseTaskIds),
+          renewedLeaseTaskIds: dedupeStrings(renewedLeaseTaskIds),
+          redrivenTaskIds: dedupeStrings(redrivenTaskIds),
+          quarantinedTaskIds: dedupeStrings(quarantinedTaskIds),
+          manualReviewTaskIds: dedupeStrings(manualReviewTaskIds),
+          skippedTaskIds: dedupeStrings(skippedTaskIds),
+          recoveryActions,
+          ...(recoveryErrors.length > 0 ? { recoveryErrors } : {}),
         },
       }),
     );

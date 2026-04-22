@@ -55,7 +55,7 @@ export const workspaceInfo = {
   packageName: "@gana-v8/hermes-control-plane",
   workspaceName: "hermes-control-plane",
   category: "app",
-  description: "Coordinates workflows, tasks, policies, and approvals for gana-v8.",
+  description: "Legacy compatibility facade for the former Hermes all-in-one control-plane runtime.",
   dependencies: [
     { name: "@gana-v8/audit-lineage", category: "workspace" },
     { name: "@gana-v8/config-runtime", category: "workspace" },
@@ -67,9 +67,29 @@ export const workspaceInfo = {
   ],
 } as const;
 
+export const compatibilityInfo = {
+  status: "temporary-compatibility",
+  recommendedRuntime: "@gana-v8/control-plane-runtime",
+  recommendedApps: [
+    "@gana-v8/hermes-scheduler",
+    "@gana-v8/hermes-dispatcher",
+    "@gana-v8/hermes-recovery",
+  ],
+  guidance:
+    "Use hermes-scheduler, hermes-dispatcher and hermes-recovery for operational loops. Keep hermes-control-plane only for legacy tests, imports and compatibility flows while callers migrate.",
+} as const;
+
 export function describeWorkspace() {
-  return `${workspaceInfo.workspaceName} (${workspaceInfo.category}) -> ${describeOrchestrationSdk()}`;
+  return `${workspaceInfo.workspaceName} (${workspaceInfo.category}, ${compatibilityInfo.status}) -> ${describeOrchestrationSdk()}`;
 }
+
+export const getCompatibilityNotice = (): string =>
+  [
+    `${workspaceInfo.workspaceName} is in temporary compatibility mode.`,
+    `Recommended runtime: ${compatibilityInfo.recommendedRuntime}.`,
+    `Recommended apps: ${compatibilityInfo.recommendedApps.join(", ")}.`,
+    compatibilityInfo.guidance,
+  ].join(" ");
 
 export interface DemoRunRuntime {
   readonly appEnv: RuntimeConfig["app"]["env"];
@@ -480,6 +500,10 @@ export const buildHermesCronSpecs = (): readonly CronWorkflowSpec[] =>
     source: `${spec.source}/${orchestrationWorkspaceInfo.workspaceName}`,
   }));
 
+/**
+ * @deprecated Prefer running the dedicated scheduler/dispatcher/recovery apps.
+ * This entrypoint is kept only as a temporary compatibility/demo facade.
+ */
 export const runDemoControlPlane = async (
   now: Date = new Date("2026-04-15T12:00:00.000Z"),
   options: DemoRunOptions = {},
@@ -873,6 +897,11 @@ export const loadLiveIngestionOpsSummary = async (
   };
 };
 
+/**
+ * @deprecated Prefer the distributed operational topology:
+ * `@gana-v8/hermes-scheduler`, `@gana-v8/hermes-dispatcher`, and `@gana-v8/hermes-recovery`.
+ * This compatibility entrypoint remains for legacy tests and callers during migration.
+ */
 export const runAutomationCycle = async (
   databaseUrl: string,
   options: RunAutomationCycleOptions = {},
@@ -1063,6 +1092,7 @@ export const runAutomationCycle = async (
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  console.warn(getCompatibilityNotice());
   const summary = await runDemoControlPlane();
   console.log(JSON.stringify(summary, null, 2));
 }

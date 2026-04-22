@@ -33,8 +33,6 @@ import {
   createPublicApiServer,
   createOperationalSummary,
   createTaskLogEntries,
-  createDemoAiRuns,
-  createDemoProviderStates,
   findAiRunById,
   findProviderStateByProvider,
   findTaskById,
@@ -58,6 +56,11 @@ import {
   publicApiEndpointPaths,
   routePublicApiRequest,
 } from "../src/index.js";
+import {
+  createDemoAiRuns,
+  createDemoOperationSnapshot,
+  createDemoProviderStates,
+} from "./demo-fixtures.js";
 
 const createSandboxCertificationFixture = async (input: {
   readonly status?: "passed" | "failed" | "missing";
@@ -271,7 +274,7 @@ const seedPublishableResearch = async (
 };
 
 test("public api exposes ai runs and provider states", () => {
-  const snapshot = createOperationSnapshot();
+  const snapshot = createDemoOperationSnapshot();
   const handlers = createPublicApiHandlers(snapshot);
 
   assert.equal(snapshot.aiRuns.length, 1);
@@ -294,6 +297,19 @@ test("public api exposes ai runs and provider states", () => {
     handlers.providerStateByProvider(snapshot.providerStates[0]!.provider)?.provider,
     snapshot.providerStates[0]!.provider,
   );
+});
+
+test("public api snapshots are empty by default and do not inject demo records implicitly", () => {
+  const snapshot = createOperationSnapshot();
+  const handlers = createPublicApiHandlers(snapshot);
+
+  assert.equal(snapshot.fixtures.length, 0);
+  assert.equal(snapshot.tasks.length, 0);
+  assert.equal(snapshot.aiRuns.length, 0);
+  assert.equal(snapshot.predictions.length, 0);
+  assert.equal(snapshot.parlays.length, 0);
+  assert.equal(snapshot.validations.length, 0);
+  assert.equal(handlers.snapshot().fixtures.length, 0);
 });
 
 test("public api routes ai runs and provider states", () => {
@@ -735,7 +751,7 @@ test("public api enriches AI run read models with provider request ids, fallback
 });
 
 test("public api snapshot exposes fixtures, predictions, parlays, validations, validation summary, and health", () => {
-  const snapshot = createOperationSnapshot();
+  const snapshot = createDemoOperationSnapshot();
 
   assert.equal(listFixtures(snapshot).length, 2);
   assert.equal(listTasks(snapshot).length, 1);
@@ -753,7 +769,7 @@ test("public api snapshot exposes fixtures, predictions, parlays, validations, v
 });
 
 test("public api derives an operational summary from tasks, task runs, etl batches, and validations", () => {
-  const snapshot = createOperationSnapshot({
+  const snapshot = createDemoOperationSnapshot({
     rawBatches: [
       {
         id: "batch-fixtures-1",
@@ -790,10 +806,11 @@ test("public api derives an operational summary from tasks, task runs, etl batch
 });
 
 test("public api builds task log entries sorted by newest timestamp", () => {
+  const demoSnapshot = createDemoOperationSnapshot();
   const snapshot = createOperationSnapshot({
     tasks: [
       {
-        ...createOperationSnapshot().tasks[0]!,
+        ...demoSnapshot.tasks[0]!,
         id: "task-failed",
         kind: "prediction",
         status: "failed",
@@ -803,7 +820,7 @@ test("public api builds task log entries sorted by newest timestamp", () => {
     ],
     taskRuns: [
       {
-        ...createOperationSnapshot().taskRuns[0]!,
+        ...demoSnapshot.taskRuns[0]!,
         id: "task-failed:attempt:1",
         taskId: "task-failed",
         status: "failed",
@@ -826,7 +843,7 @@ test("public api builds task log entries sorted by newest timestamp", () => {
 });
 
 test("public api handlers return consistent derived read models", () => {
-  const snapshot = createOperationSnapshot();
+  const snapshot = createDemoOperationSnapshot();
   const api = createPublicApiHandlers(snapshot);
 
   assert.deepEqual(api.snapshot(), snapshot);
@@ -851,7 +868,7 @@ test("public api handlers return consistent derived read models", () => {
 });
 
 test("public api exposes detail lookups for tasks, task runs, predictions, parlays, and validations", () => {
-  const snapshot = createOperationSnapshot();
+  const snapshot = createDemoOperationSnapshot();
 
   assert.equal(findTaskById(snapshot, snapshot.tasks[0]!.id)?.id, snapshot.tasks[0]!.id);
   assert.equal(findTaskRunById(snapshot, snapshot.taskRuns[0]!.id)?.id, snapshot.taskRuns[0]!.id);
@@ -1028,7 +1045,7 @@ test("public api loads recent fixture workflow audit events from the unit of wor
 });
 
 test("public api returns consistent 404 payloads for missing detail resources", () => {
-  const handlers = createPublicApiHandlers(createOperationSnapshot());
+  const handlers = createPublicApiHandlers(createDemoOperationSnapshot());
 
   assert.deepEqual(routePublicApiRequest(handlers, "/fixtures/missing"), {
     status: 404,
@@ -1085,7 +1102,7 @@ test("public api exposes operational summary and logs routes", () => {
 });
 
 test("public api filters tasks by status in routed requests", () => {
-  const snapshot = createOperationSnapshot();
+  const snapshot = createDemoOperationSnapshot();
   const handlers = createPublicApiHandlers(snapshot);
 
   assert.deepEqual(
@@ -1098,7 +1115,7 @@ test("public api filters tasks by status in routed requests", () => {
 });
 
 test("public api returns 400 for invalid task status filters", () => {
-  const handlers = createPublicApiHandlers(createOperationSnapshot());
+  const handlers = createPublicApiHandlers(createDemoOperationSnapshot());
 
   assert.deepEqual(
     routePublicApiRequest(handlers, `${publicApiEndpointPaths.tasks}?status=paused`),
@@ -1156,7 +1173,7 @@ test("public api persists manual selection and selection override actions throug
 });
 
 test("public api server exposes http endpoints for fixtures, predictions, parlays, validations, validation summary, health, snapshot, and operational views", async () => {
-  const snapshot = createOperationSnapshot();
+  const snapshot = createDemoOperationSnapshot();
   const server = createPublicApiServer({ snapshot });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -1342,7 +1359,7 @@ test("public api server exposes http endpoints for fixtures, predictions, parlay
 });
 
 test("public api server enforces bearer tokens for reads when auth is configured", async () => {
-  const snapshot = createOperationSnapshot();
+  const snapshot = createDemoOperationSnapshot();
   const authentication = createPublicApiTokenAuthentication({
     viewerToken: "viewer-token",
     operatorToken: "operator-token",
@@ -1378,7 +1395,7 @@ test("public api server enforces bearer tokens for reads when auth is configured
 test("public api server exposes sandbox certification summaries and detail routes", async () => {
   const { goldensRoot, artifactsRoot } = await createSandboxCertificationFixture({ status: "passed" });
   const server = createPublicApiServer({
-    snapshot: createOperationSnapshot(),
+    snapshot: createDemoOperationSnapshot(),
     sandboxCertification: {
       goldensRoot,
       artifactsRoot,
