@@ -1,0 +1,196 @@
+{
+  "schemaVersion": "sandbox-golden-v1",
+  "mode": "smoke",
+  "fixturePackId": "football-human-qa-demo",
+  "profileName": "human-qa-demo",
+  "assertions": [
+    "namespace-isolation",
+    "provider-routing",
+    "policy-default-deny",
+    "smoke-health",
+    "cron-validation-dry-run",
+    "manual-qa-checklist",
+    "contract-coverage"
+  ],
+  "providerModes": {
+    "fixtures_api": "replay",
+    "odds_api": "mock",
+    "research_api": "mock",
+    "publish_api": "disabled"
+  },
+  "stats": {
+    "fixtureCount": 2,
+    "completedFixtures": 1,
+    "replayEventCount": 8,
+    "replayChannels": [
+      "fixtures",
+      "odds",
+      "research",
+      "validation"
+    ],
+    "cronJobsValidated": 1
+  },
+  "clock": {
+    "mode": "virtual",
+    "startAt": "2026-08-16T18:00:00.000Z",
+    "endAt": "2026-08-16T18:25:00.000Z",
+    "tickCount": 8
+  },
+  "replayTimeline": [
+    {
+      "id": "football-human-qa-demo-fx-1-evt-fixture-upsert",
+      "fixtureId": "football-human-qa-demo-fx-1",
+      "channel": "fixtures",
+      "offsetMinutes": 0,
+      "scheduledAt": "2026-08-16T18:00:00.000Z"
+    },
+    {
+      "id": "football-human-qa-demo-fx-1-evt-odds-open",
+      "fixtureId": "football-human-qa-demo-fx-1",
+      "channel": "odds",
+      "offsetMinutes": 3,
+      "scheduledAt": "2026-08-16T18:03:00.000Z"
+    },
+    {
+      "id": "football-human-qa-demo-fx-1-evt-research-manual",
+      "fixtureId": "football-human-qa-demo-fx-1",
+      "channel": "research",
+      "offsetMinutes": 9,
+      "scheduledAt": "2026-08-16T18:09:00.000Z"
+    },
+    {
+      "id": "football-human-qa-demo-fx-2-evt-fixture-upsert",
+      "fixtureId": "football-human-qa-demo-fx-2",
+      "channel": "fixtures",
+      "offsetMinutes": 10,
+      "scheduledAt": "2026-08-16T18:10:00.000Z"
+    },
+    {
+      "id": "football-human-qa-demo-fx-2-evt-odds-open",
+      "fixtureId": "football-human-qa-demo-fx-2",
+      "channel": "odds",
+      "offsetMinutes": 13,
+      "scheduledAt": "2026-08-16T18:13:00.000Z"
+    },
+    {
+      "id": "football-human-qa-demo-fx-1-evt-validation-manual",
+      "fixtureId": "football-human-qa-demo-fx-1",
+      "channel": "validation",
+      "offsetMinutes": 15,
+      "scheduledAt": "2026-08-16T18:15:00.000Z"
+    },
+    {
+      "id": "football-human-qa-demo-fx-2-evt-research-manual",
+      "fixtureId": "football-human-qa-demo-fx-2",
+      "channel": "research",
+      "offsetMinutes": 19,
+      "scheduledAt": "2026-08-16T18:19:00.000Z"
+    },
+    {
+      "id": "football-human-qa-demo-fx-2-evt-validation-manual",
+      "fixtureId": "football-human-qa-demo-fx-2",
+      "channel": "validation",
+      "offsetMinutes": 25,
+      "scheduledAt": "2026-08-16T18:25:00.000Z"
+    }
+  ],
+  "golden": {
+    "packId": "football-human-qa-demo",
+    "version": "2026.08.16",
+    "fingerprint": "{\"id\":\"football-human-qa-demo\",\"version\":\"2026.08.16\",\"fixtures\":[{\"id\":\"football-human-qa-demo-fx-1\",\"status\":\"completed\",\"scheduledAt\":\"2026-12-08T20:00:00.000Z\",\"homeTeam\":\"Club America\",\"awayTeam\":\"Pumas\",\"metadata\":{\"seed\":\"human-qa-seed-2026\",\"scenario\":\"manual-qa\",\"synthetic\":\"true\"}},{\"id\":\"football-human-qa-demo-fx-2\",\"status\":\"scheduled\",\"scheduledAt\":\"2026-12-08T21:30:00.000Z\",\"homeTeam\":\"LAFC\",\"awayTeam\":\"Seattle Sounders\",\"metadata\":{\"seed\":\"human-qa-seed-2026\",\"scenario\":\"manual-qa\",\"synthetic\":\"true\"}}],\"replayEvents\":[{\"id\":\"football-human-qa-demo-fx-1-evt-fixture-upsert\",\"fixtureId\":\"football-human-qa-demo-fx-1\",\"offsetMinutes\":0,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"completed\"}},{\"id\":\"football-human-qa-demo-fx-1-evt-odds-open\",\"fixtureId\":\"football-human-qa-demo-fx-1\",\"offsetMinutes\":3,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.15,\"awayPrice\":2.72}},{\"id\":\"football-human-qa-demo-fx-1-evt-research-manual\",\"fixtureId\":\"football-human-qa-demo-fx-1\",\"offsetMinutes\":9,\"channel\":\"research\",\"payload\":{\"event\":\"research.manual_checkpoint\",\"checklist\":true,\"operatorReview\":true}},{\"id\":\"football-human-qa-demo-fx-1-evt-validation-manual\",\"fixtureId\":\"football-human-qa-demo-fx-1\",\"offsetMinutes\":15,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.manual_gate\",\"verdict\":\"review\",\"operatorReview\":true}},{\"id\":\"football-human-qa-demo-fx-2-evt-fixture-upsert\",\"fixtureId\":\"football-human-qa-demo-fx-2\",\"offsetMinutes\":10,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"scheduled\"}},{\"id\":\"football-human-qa-demo-fx-2-evt-odds-open\",\"fixtureId\":\"football-human-qa-demo-fx-2\",\"offsetMinutes\":13,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.5,\"awayPrice\":2.44}},{\"id\":\"football-human-qa-demo-fx-2-evt-research-manual\",\"fixtureId\":\"football-human-qa-demo-fx-2\",\"offsetMinutes\":19,\"channel\":\"research\",\"payload\":{\"event\":\"research.manual_checkpoint\",\"checklist\":true,\"operatorReview\":true}},{\"id\":\"football-human-qa-demo-fx-2-evt-validation-manual\",\"fixtureId\":\"football-human-qa-demo-fx-2\",\"offsetMinutes\":25,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.manual_gate\",\"verdict\":\"review\",\"operatorReview\":true}}]}"
+  },
+  "comparison": {
+    "baselinePackId": "football-human-qa-demo",
+    "candidatePackId": "football-human-qa-demo",
+    "changed": false,
+    "fixtureDelta": 0,
+    "replayEventDelta": 0,
+    "changedFixtureIds": []
+  },
+  "safety": {
+    "publishEnabled": false,
+    "allowedHosts": [
+      "sandbox-human-qa.local"
+    ],
+    "cronDryRunOnly": true
+  },
+  "policy": {
+    "sideEffects": [
+      "sandbox-object-storage-write",
+      "sandbox-queue-write",
+      "human-review"
+    ],
+    "secretsPolicy": {
+      "mode": "allow-sandbox-secrets",
+      "allowedSecretRefs": [
+        "sandbox/human-qa-demo/provider-token",
+        "sandbox/human-qa-demo/ops-token"
+      ],
+      "allowProductionCredentials": false
+    },
+    "capabilityAllowlist": [
+      "fixtures.read",
+      "odds.read",
+      "research.read",
+      "cron.validate",
+      "operator.review"
+    ],
+    "memoryIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-memory://human-qa-demo",
+      "allowProductionMemory": false
+    },
+    "sessionIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-session://human-qa-demo",
+      "allowSharedSessions": false
+    },
+    "skillPolicy": {
+      "mode": "allowlist",
+      "defaultDeny": true,
+      "enabledSkills": [
+        "fixture-inspection",
+        "manual-qa",
+        "ops-audit"
+      ]
+    },
+    "requiresManualQa": true,
+    "defaultDeny": true
+  },
+  "promotion": {
+    "status": "review-required",
+    "summary": "Sandbox promotion evidence requires review before promotion.",
+    "gates": [
+      {
+        "name": "sandbox-certification",
+        "status": "pass",
+        "detail": "Sandbox profile materialized with certification-ready assertions and policy snapshot."
+      },
+      {
+        "name": "contract-coverage",
+        "status": "pass",
+        "detail": "Contract coverage assertions are included in the sandbox evidence pack."
+      },
+      {
+        "name": "cron-workflows",
+        "status": "pass",
+        "detail": "cron-human-qa-checklist:dry-run:240m"
+      },
+      {
+        "name": "publication-safety",
+        "status": "pass",
+        "detail": "Publishing remains disabled and publication safety is enforced."
+      },
+      {
+        "name": "capability-isolation",
+        "status": "pass",
+        "detail": "Default deny is active with 5 allowed capability(ies)."
+      },
+      {
+        "name": "manual-qa",
+        "status": "warn",
+        "detail": "Manual QA review is required before promotion for this profile."
+      }
+    ]
+  }
+}

@@ -350,6 +350,18 @@ export interface PublicApiReadinessReadModel {
       readonly generatedAt?: string;
     }[];
   };
+  readonly promotionGates: {
+    readonly total: number;
+    readonly blocked: number;
+    readonly reviewRequired: number;
+    readonly promotable: number;
+    readonly profiles: readonly {
+      readonly id: string;
+      readonly status: PublicApiReadinessStatus;
+      readonly sourceStatus: SandboxPromotionReportReadModel["status"];
+      readonly generatedAt?: string;
+    }[];
+  };
 }
 
 export interface FixtureOpsDetailReadModel {
@@ -505,12 +517,61 @@ export interface SandboxCertificationReadModel {
   readonly evidenceFingerprint?: string;
   readonly goldenPath: string;
   readonly artifactPath?: string;
+  readonly promotion?: SandboxPromotionReportReadModel;
 }
 
 export interface SandboxCertificationDetailReadModel extends SandboxCertificationReadModel {
   readonly assertions: readonly string[];
   readonly allowedHosts: readonly string[];
   readonly diffEntries: readonly SandboxCertificationDiffEntryReadModel[];
+  readonly policyTrace?: SandboxPolicyTraceReadModel;
+}
+
+export interface SandboxPromotionGateReadModel {
+  readonly name:
+    | "sandbox-certification"
+    | "contract-coverage"
+    | "cron-workflows"
+    | "publication-safety"
+    | "capability-isolation"
+    | "manual-qa";
+  readonly status: "pass" | "warn" | "block";
+  readonly detail: string;
+}
+
+export interface SandboxPromotionReportReadModel {
+  readonly status: "blocked" | "review-required" | "promotable";
+  readonly summary: string;
+  readonly gates: readonly SandboxPromotionGateReadModel[];
+}
+
+export interface SandboxPolicyTraceReadModel {
+  readonly providerModes: Readonly<Record<string, string>>;
+  readonly sideEffects: readonly string[];
+  readonly capabilityAllowlist: readonly string[];
+  readonly memoryIsolation: {
+    readonly strategy: string;
+    readonly namespaceRoot: string;
+    readonly allowProductionMemory: boolean;
+  };
+  readonly sessionIsolation: {
+    readonly strategy: string;
+    readonly namespaceRoot: string;
+    readonly allowSharedSessions: boolean;
+  };
+  readonly skillPolicy: {
+    readonly mode: string;
+    readonly defaultDeny: boolean;
+    readonly enabledSkills: readonly string[];
+  };
+  readonly secretsPolicy: {
+    readonly mode: string;
+    readonly allowedSecretRefs: readonly string[];
+    readonly allowProductionCredentials: boolean;
+  };
+  readonly requiresManualQa: boolean;
+  readonly publishEnabled: boolean;
+  readonly allowedHosts: readonly string[];
 }
 
 export interface LiveIngestionRunReadModel {
@@ -1179,6 +1240,13 @@ export function createOperationSnapshot(
           missing: 0,
           profiles: [],
         },
+        promotionGates: {
+          total: 0,
+          blocked: 0,
+          reviewRequired: 0,
+          promotable: 0,
+          profiles: [],
+        },
       },
   };
 }
@@ -1270,6 +1338,19 @@ const toReadinessStatusFromCertification = (
       return "review";
     default:
       return "blocked";
+  }
+};
+
+const toReadinessStatusFromPromotion = (
+  status: SandboxPromotionReportReadModel["status"],
+): PublicApiReadinessStatus => {
+  switch (status) {
+    case "blocked":
+      return "blocked";
+    case "review-required":
+      return "review";
+    default:
+      return "ready";
   }
 };
 
@@ -1433,6 +1514,40 @@ const createReadinessReadModel = (
             .join(" | "),
   });
 
+  const promotionProfiles = certifications.flatMap((certification) => {
+    if (!certification.promotion) {
+      return [];
+    }
+
+    return [
+      {
+        id: certification.id,
+        status: toReadinessStatusFromPromotion(certification.promotion.status),
+        sourceStatus: certification.promotion.status,
+        ...(certification.generatedAt ? { generatedAt: certification.generatedAt } : {}),
+      },
+    ];
+  });
+  const promotionCheckStatus =
+    promotionProfiles.length === 0
+      ? "review"
+      : promotionProfiles.some((profile) => profile.status === "blocked")
+        ? "blocked"
+        : promotionProfiles.some((profile) => profile.status === "review")
+          ? "review"
+          : "ready";
+
+  checks.push({
+    name: "promotion-gates",
+    status: promotionCheckStatus,
+    detail:
+      promotionProfiles.length === 0
+        ? "No sandbox promotion gate evidence loaded."
+        : promotionProfiles
+            .map((profile) => `${profile.id}:${profile.sourceStatus}`)
+            .join(" | "),
+  });
+
   const overallStatus = checks.reduce<PublicApiReadinessStatus>(
     (status, check) => mergeReadinessStatus(status, check.status),
     "ready",
@@ -1448,6 +1563,13 @@ const createReadinessReadModel = (
       failed: certifications.filter((certification) => certification.status === "failed").length,
       missing: certifications.filter((certification) => certification.status === "missing").length,
       profiles: certificationProfiles,
+    },
+    promotionGates: {
+      total: promotionProfiles.length,
+      blocked: promotionProfiles.filter((profile) => profile.sourceStatus === "blocked").length,
+      reviewRequired: promotionProfiles.filter((profile) => profile.sourceStatus === "review-required").length,
+      promotable: promotionProfiles.filter((profile) => profile.sourceStatus === "promotable").length,
+      profiles: promotionProfiles,
     },
   };
 };
@@ -1838,6 +1960,9 @@ const loadSandboxCertificationBundle = async (
     readonly safety?: {
       readonly allowedHosts?: readonly string[];
     };
+    readonly providerModes?: Readonly<Record<string, string>>;
+    readonly policy?: SandboxPolicyTraceReadModel;
+    readonly promotion?: SandboxPromotionReportReadModel;
   };
   const profileName = golden.profileName;
   const packId = golden.fixturePackId;
@@ -1847,16 +1972,29 @@ const loadSandboxCertificationBundle = async (
   let evidenceFingerprint: string | undefined;
   let diffEntries: readonly SandboxCertificationDiffEntryReadModel[] = [];
   let status: SandboxCertificationReadModel["status"] = "missing";
+  let evidenceSummaryPromotion: SandboxPromotionReportReadModel | undefined;
+  let evidencePolicyTrace: SandboxPolicyTraceReadModel | undefined;
 
   try {
     const evidence = JSON.parse(await readFile(artifactPath, "utf8")) as {
       readonly generatedAt?: string;
       readonly goldenSnapshot?: unknown;
+      readonly summary?: {
+        readonly promotion?: SandboxPromotionReportReadModel;
+        readonly providerModes?: Readonly<Record<string, string>>;
+        readonly safety?: {
+          readonly publishEnabled?: boolean;
+          readonly allowedHosts?: readonly string[];
+        };
+        readonly policy?: SandboxPolicyTraceReadModel;
+      };
     };
     generatedAt = evidence.generatedAt;
     evidenceFingerprint = stableStringify(evidence.goldenSnapshot);
     diffEntries = diffSandboxCertificationValues(golden, evidence.goldenSnapshot, "$");
     status = diffEntries.length === 0 ? "passed" : "failed";
+    evidenceSummaryPromotion = evidence.summary?.promotion;
+    evidencePolicyTrace = evidence.summary?.policy;
   } catch (error) {
     if (
       error instanceof Error &&
@@ -1869,6 +2007,88 @@ const loadSandboxCertificationBundle = async (
       throw error;
     }
   }
+
+  const goldenPolicyTrace =
+    golden.policy ??
+    (golden.providerModes
+      ? {
+          providerModes: golden.providerModes,
+          sideEffects: [],
+          capabilityAllowlist: [],
+          memoryIsolation: {
+            strategy: "unknown",
+            namespaceRoot: "unknown",
+            allowProductionMemory: false,
+          },
+          sessionIsolation: {
+            strategy: "unknown",
+            namespaceRoot: "unknown",
+            allowSharedSessions: false,
+          },
+          skillPolicy: {
+            mode: "allowlist",
+            defaultDeny: true,
+            enabledSkills: [],
+          },
+          secretsPolicy: {
+            mode: "unknown",
+            allowedSecretRefs: [],
+            allowProductionCredentials: false,
+          },
+          requiresManualQa: false,
+          publishEnabled: false,
+          allowedHosts: golden.safety?.allowedHosts ?? [],
+        }
+      : undefined);
+  const fallbackPromotion = golden.promotion;
+  const promotion = (() => {
+    const base = evidenceSummaryPromotion ?? fallbackPromotion;
+    if (!base) {
+      return undefined;
+    }
+
+    const gates: SandboxPromotionGateReadModel[] = base.gates.map((gate) => {
+      if (gate.name !== "sandbox-certification") {
+        return gate;
+      }
+
+      const gateStatus: SandboxPromotionGateReadModel["status"] =
+        status === "passed" ? "pass" : status === "missing" ? "warn" : "block";
+
+      return {
+        ...gate,
+        status: gateStatus,
+        detail:
+          status === "passed"
+            ? "Certification evidence matches the tracked golden snapshot."
+            : status === "missing"
+              ? "Certification evidence is missing for this profile."
+              : "Certification drift was detected against the tracked golden snapshot.",
+      };
+    });
+    const sourceStatus: SandboxPromotionReportReadModel["status"] =
+      status === "failed"
+        ? "blocked"
+        : status === "missing"
+          ? "review-required"
+          : gates.some((gate) => gate.status === "block")
+            ? "blocked"
+            : gates.some((gate) => gate.status === "warn")
+              ? "review-required"
+              : base.status;
+
+    return {
+      status: sourceStatus,
+      summary:
+        sourceStatus === "promotable"
+          ? "Sandbox promotion evidence is promotable."
+          : sourceStatus === "review-required"
+            ? "Sandbox promotion evidence requires review before promotion."
+            : "Sandbox promotion evidence is blocked until failing gates are cleared.",
+      gates,
+    } satisfies SandboxPromotionReportReadModel;
+  })();
+  const policyTrace = evidencePolicyTrace ?? goldenPolicyTrace;
 
   return {
     id: `${profileName}:${packId}`,
@@ -1887,6 +2107,8 @@ const loadSandboxCertificationBundle = async (
     assertions: golden.assertions ?? [],
     allowedHosts: golden.safety?.allowedHosts ?? [],
     diffEntries,
+    ...(promotion ? { promotion } : {}),
+    ...(policyTrace ? { policyTrace } : {}),
   };
 };
 
@@ -1913,6 +2135,7 @@ export const loadSandboxCertificationReadModels = async (
     ...(certification.evidenceFingerprint ? { evidenceFingerprint: certification.evidenceFingerprint } : {}),
     goldenPath: certification.goldenPath,
     ...(certification.artifactPath ? { artifactPath: certification.artifactPath } : {}),
+    ...(certification.promotion ? { promotion: certification.promotion } : {}),
   }));
 };
 

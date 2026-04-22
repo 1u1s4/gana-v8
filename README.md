@@ -96,7 +96,7 @@ La consola web de operación corre separada y consume solo `public-api`:
 pnpm --filter @gana-v8/operator-console serve:web
 ```
 
-La consola ahora también muestra el estado de `sandbox certification` y puede inspeccionar el diff por golden usando `public-api`.
+La consola ahora también muestra `sandbox certification`, `promotion-gates` y la traza auditable de policy/capabilities por perfil usando `public-api`.
 
 Variables clave:
 
@@ -112,6 +112,15 @@ La certificación determinística de sandbox usa goldens versionadas en `fixture
 ```bash
 pnpm test:sandbox:certification
 ```
+
+Perfiles certificados actualmente:
+
+- `ci-smoke`
+- `ci-regression`
+- `staging-like`
+- `hybrid`
+- `chaos-provider`
+- `human-qa-demo`
 
 También podés correr un certificado puntual con el runner:
 

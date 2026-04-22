@@ -6,8 +6,11 @@
   "assertions": [
     "namespace-isolation",
     "provider-routing",
+    "policy-default-deny",
     "smoke-health",
-    "cron-validation-dry-run"
+    "cron-validation-dry-run",
+    "smoke-health",
+    "contract-coverage"
   ],
   "providerModes": {
     "fixtures_api": "replay",
@@ -80,5 +83,79 @@
       "sandbox-ci.local"
     ],
     "cronDryRunOnly": true
+  },
+  "policy": {
+    "sideEffects": [
+      "sandbox-object-storage-write",
+      "sandbox-queue-write"
+    ],
+    "secretsPolicy": {
+      "mode": "allow-sandbox-secrets",
+      "allowedSecretRefs": [
+        "sandbox/ci-smoke/provider-token",
+        "sandbox/ci-smoke/ops-token"
+      ],
+      "allowProductionCredentials": false
+    },
+    "capabilityAllowlist": [
+      "fixtures.read",
+      "odds.read",
+      "cron.validate"
+    ],
+    "memoryIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-memory://ci-smoke",
+      "allowProductionMemory": false
+    },
+    "sessionIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-session://ci-smoke",
+      "allowSharedSessions": false
+    },
+    "skillPolicy": {
+      "mode": "allowlist",
+      "defaultDeny": true,
+      "enabledSkills": [
+        "ops-audit"
+      ]
+    },
+    "requiresManualQa": false,
+    "defaultDeny": true
+  },
+  "promotion": {
+    "status": "promotable",
+    "summary": "Sandbox promotion evidence is promotable.",
+    "gates": [
+      {
+        "name": "sandbox-certification",
+        "status": "pass",
+        "detail": "Sandbox profile materialized with certification-ready assertions and policy snapshot."
+      },
+      {
+        "name": "contract-coverage",
+        "status": "pass",
+        "detail": "Contract coverage assertions are included in the sandbox evidence pack."
+      },
+      {
+        "name": "cron-workflows",
+        "status": "pass",
+        "detail": "cron-health-smoke:dry-run:180m"
+      },
+      {
+        "name": "publication-safety",
+        "status": "pass",
+        "detail": "Publishing remains disabled and publication safety is enforced."
+      },
+      {
+        "name": "capability-isolation",
+        "status": "pass",
+        "detail": "Default deny is active with 3 allowed capability(ies)."
+      },
+      {
+        "name": "manual-qa",
+        "status": "pass",
+        "detail": "No manual QA review is required for this profile."
+      }
+    ]
   }
 }

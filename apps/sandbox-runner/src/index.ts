@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import {
   buildReplayTimeline,
   compareFixturePacks,
+  createSandboxPolicySnapshot,
   createCronValidationPlan,
   createGoldenFixturePackFingerprint,
   createSandboxRunManifest,
@@ -13,10 +14,16 @@ import {
   listSandboxProfiles,
   listSyntheticFixturePackIds,
   summarizeNamespaces,
+  validateSandboxProfileConfig,
   type RunnerMode,
+  type SandboxPolicySnapshot,
   type SandboxProfileName,
   type SandboxRunManifest,
 } from "../../../packages/testing-fixtures/dist/index.js";
+import {
+  evaluateSandboxPromotion,
+  type SandboxPromotionReport,
+} from "../../../packages/policy-engine/dist/index.js";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/sandbox-runner",
@@ -91,6 +98,8 @@ export interface SandboxRunSummary {
     readonly allowedHosts: readonly string[];
     readonly cronDryRunOnly: boolean;
   };
+  readonly policy: SandboxPolicySnapshot;
+  readonly promotion: SandboxPromotionReport;
 }
 
 export interface MaterializedSandboxRun {
@@ -123,6 +132,66 @@ export interface SandboxStorageUnitOfWorkLike {
 
 const createPersistedSandboxNamespace = (input: PersistedSandboxNamespace): PersistedSandboxNamespace => input;
 
+const createPromotionReport = (manifest: SandboxRunManifest): SandboxPromotionReport => {
+  const cronPlan = createCronValidationPlan(manifest);
+  const capabilityIsolationValid = (() => {
+    try {
+      validateSandboxProfileConfig(manifest.profile);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  return evaluateSandboxPromotion({
+    certification: {
+      status: "pass",
+      detail: "Sandbox profile materialized with certification-ready assertions and policy snapshot.",
+    },
+    contractCoverage: {
+      status: manifest.assertionsPack.includes("contract-coverage") ? "pass" : "block",
+      detail: manifest.assertionsPack.includes("contract-coverage")
+        ? "Contract coverage assertions are included in the sandbox evidence pack."
+        : "Contract coverage assertions are missing from the sandbox evidence pack.",
+    },
+    cronWorkflows: {
+      status: cronPlan.length > 0 && cronPlan.every((job) => job.dryRun && !job.writesAllowed) ? "pass" : "block",
+      detail:
+        cronPlan.length > 0
+          ? cronPlan
+              .map((job) => `${job.jobName}:${job.dryRun ? "dry-run" : "writes"}:${job.lookbackMinutes}m`)
+              .join(" | ")
+          : "No cron workflows were declared for this sandbox profile.",
+    },
+    publicationSafety: {
+      status:
+        !manifest.profile.isolation.publishEnabled && manifest.profile.providerModes.publish_api === "disabled"
+          ? "pass"
+          : "block",
+      detail:
+        !manifest.profile.isolation.publishEnabled && manifest.profile.providerModes.publish_api === "disabled"
+          ? "Publishing remains disabled and publication safety is enforced."
+          : "Publishing is not fully disabled for this sandbox profile.",
+    },
+    capabilityIsolation: {
+      status: capabilityIsolationValid ? "pass" : "block",
+      detail: capabilityIsolationValid
+        ? `Default deny is active with ${manifest.profile.isolation.capabilityAllowlist.length} allowed capability(ies).`
+        : "Capability or skill allowlists are inconsistent with the sandbox profile policy.",
+    },
+    manualQa: {
+      status:
+        manifest.fixturePack.promotionExpectation === "review-required" || manifest.profile.isolation.requiresManualQa
+          ? "warn"
+          : "pass",
+      detail:
+        manifest.fixturePack.promotionExpectation === "review-required" || manifest.profile.isolation.requiresManualQa
+          ? "Manual QA review is required before promotion for this profile."
+          : "No manual QA review is required for this profile.",
+    },
+  });
+};
+
 const createSummary = (
   manifest: SandboxRunManifest,
   mode: RunnerMode,
@@ -133,6 +202,8 @@ const createSummary = (
   const clock = createVirtualClockPlan(manifest);
   const golden = createGoldenFixturePackFingerprint(manifest.fixturePack);
   const comparison = compareFixturePacks(manifest.fixturePack, manifest.fixturePack);
+  const policy = createSandboxPolicySnapshot(manifest.profile);
+  const promotion = createPromotionReport(manifest);
 
   return {
     mode,
@@ -181,6 +252,8 @@ const createSummary = (
       allowedHosts: manifest.profile.isolation.allowedHosts,
       cronDryRunOnly: cronPlan.every((job) => job.dryRun && !job.writesAllowed),
     },
+    policy,
+    promotion,
   };
 };
 
@@ -208,6 +281,8 @@ export interface SandboxGoldenSnapshot {
   readonly golden: SandboxRunSummary["golden"];
   readonly comparison: SandboxRunSummary["comparison"];
   readonly safety: SandboxRunSummary["safety"];
+  readonly policy: SandboxRunSummary["policy"];
+  readonly promotion: SandboxRunSummary["promotion"];
 }
 
 export interface GoldenDiffEntry {
@@ -267,8 +342,10 @@ export const prepareSandboxRun = (options: SandboxRunnerOptions): SandboxRunMani
     assertionsPack: [
       "namespace-isolation",
       "provider-routing",
+      "policy-default-deny",
       options.mode === "smoke" ? "smoke-health" : "replay-integrity",
       "cron-validation-dry-run",
+      ...fixturePack.assertionHints,
     ],
   });
 };
@@ -385,6 +462,8 @@ export const createSandboxGoldenSnapshot = (
   golden: summary.golden,
   comparison: summary.comparison,
   safety: summary.safety,
+  policy: summary.policy,
+  promotion: summary.promotion,
 });
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -470,6 +549,70 @@ export const createSandboxCertificationEvidencePack = (
   };
 };
 
+const withCertificationOutcome = (
+  evidence: SandboxCertificationEvidencePack,
+  certificationStatus: SandboxCertificationResult["status"],
+): SandboxCertificationEvidencePack => {
+  const gates: SandboxPromotionReport["gates"] = evidence.summary.promotion.gates.map((gate) => {
+    if (gate.name !== "sandbox-certification") {
+      return gate;
+    }
+
+    const gateStatus: SandboxPromotionReport["gates"][number]["status"] =
+      certificationStatus === "passed" ? "pass" : "block";
+
+    return {
+      ...gate,
+      status: gateStatus,
+      detail:
+        certificationStatus === "passed"
+          ? "Certification evidence matches the tracked golden snapshot."
+          : "Certification drift was detected against the tracked golden snapshot.",
+    };
+  });
+  const findGateStatus = (
+    name: SandboxPromotionReport["gates"][number]["name"],
+  ): SandboxPromotionReport["gates"][number]["status"] =>
+    gates.find((gate) => gate.name === name)?.status ?? "block";
+  const findGateDetail = (name: SandboxPromotionReport["gates"][number]["name"], fallback: string): string =>
+    gates.find((gate) => gate.name === name)?.detail ?? fallback;
+
+  const promotion = evaluateSandboxPromotion({
+    certification: {
+      status: findGateStatus("sandbox-certification"),
+      detail: findGateDetail("sandbox-certification", "Certification gate status is unavailable."),
+    },
+    contractCoverage: {
+      status: findGateStatus("contract-coverage"),
+      detail: findGateDetail("contract-coverage", "Contract coverage is unavailable."),
+    },
+    cronWorkflows: {
+      status: findGateStatus("cron-workflows"),
+      detail: findGateDetail("cron-workflows", "Cron workflow status is unavailable."),
+    },
+    publicationSafety: {
+      status: findGateStatus("publication-safety"),
+      detail: findGateDetail("publication-safety", "Publication safety status is unavailable."),
+    },
+    capabilityIsolation: {
+      status: findGateStatus("capability-isolation"),
+      detail: findGateDetail("capability-isolation", "Capability isolation status is unavailable."),
+    },
+    manualQa: {
+      status: findGateStatus("manual-qa"),
+      detail: findGateDetail("manual-qa", "Manual QA status is unavailable."),
+    },
+  });
+
+  return {
+    ...evidence,
+    summary: {
+      ...evidence.summary,
+      promotion,
+    },
+  };
+};
+
 export const loadSandboxGoldenSnapshot = async (
   goldenPath: string,
 ): Promise<SandboxGoldenSnapshot> => {
@@ -502,10 +645,11 @@ export const writeSandboxCertificationArtifact = async (
 export const certifySandboxRun = async (
   options: SandboxCertificationOptions,
 ): Promise<SandboxCertificationResult> => {
-  const evidence = createSandboxCertificationEvidencePack(options);
+  const initialEvidence = createSandboxCertificationEvidencePack(options);
   const resolvedGoldenPath = resolve(options.goldenPath);
   const expectedGolden = await loadSandboxGoldenSnapshot(resolvedGoldenPath);
-  const diff = diffSandboxGoldenSnapshot(expectedGolden, evidence.goldenSnapshot);
+  const diff = diffSandboxGoldenSnapshot(expectedGolden, initialEvidence.goldenSnapshot);
+  const evidence = withCertificationOutcome(initialEvidence, diff.changed ? "failed" : "passed");
   const artifactPath = options.artifactPath
     ? await writeSandboxCertificationArtifact(options.artifactPath, evidence)
     : undefined;

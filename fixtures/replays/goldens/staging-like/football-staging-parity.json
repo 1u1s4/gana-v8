@@ -1,0 +1,199 @@
+{
+  "schemaVersion": "sandbox-golden-v1",
+  "mode": "replay",
+  "fixturePackId": "football-staging-parity",
+  "profileName": "staging-like",
+  "assertions": [
+    "namespace-isolation",
+    "provider-routing",
+    "policy-default-deny",
+    "replay-integrity",
+    "cron-validation-dry-run",
+    "staging-parity",
+    "publication-safety",
+    "contract-coverage"
+  ],
+  "providerModes": {
+    "fixtures_api": "live-readonly",
+    "odds_api": "live-readonly",
+    "research_api": "replay",
+    "publish_api": "disabled"
+  },
+  "stats": {
+    "fixtureCount": 2,
+    "completedFixtures": 1,
+    "replayEventCount": 8,
+    "replayChannels": [
+      "fixtures",
+      "odds",
+      "research",
+      "validation"
+    ],
+    "cronJobsValidated": 2
+  },
+  "clock": {
+    "mode": "virtual",
+    "startAt": "2026-08-16T18:00:00.000Z",
+    "endAt": "2026-08-16T18:28:00.000Z",
+    "tickCount": 8
+  },
+  "replayTimeline": [
+    {
+      "id": "football-staging-parity-fx-1-evt-fixture-upsert",
+      "fixtureId": "football-staging-parity-fx-1",
+      "channel": "fixtures",
+      "offsetMinutes": 0,
+      "scheduledAt": "2026-08-16T18:00:00.000Z"
+    },
+    {
+      "id": "football-staging-parity-fx-1-evt-odds-open",
+      "fixtureId": "football-staging-parity-fx-1",
+      "channel": "odds",
+      "offsetMinutes": 3,
+      "scheduledAt": "2026-08-16T18:03:00.000Z"
+    },
+    {
+      "id": "football-staging-parity-fx-2-evt-fixture-upsert",
+      "fixtureId": "football-staging-parity-fx-2",
+      "channel": "fixtures",
+      "offsetMinutes": 10,
+      "scheduledAt": "2026-08-16T18:10:00.000Z"
+    },
+    {
+      "id": "football-staging-parity-fx-1-evt-research-lineup",
+      "fixtureId": "football-staging-parity-fx-1",
+      "channel": "research",
+      "offsetMinutes": 11,
+      "scheduledAt": "2026-08-16T18:11:00.000Z"
+    },
+    {
+      "id": "football-staging-parity-fx-2-evt-odds-open",
+      "fixtureId": "football-staging-parity-fx-2",
+      "channel": "odds",
+      "offsetMinutes": 13,
+      "scheduledAt": "2026-08-16T18:13:00.000Z"
+    },
+    {
+      "id": "football-staging-parity-fx-1-evt-validation-close",
+      "fixtureId": "football-staging-parity-fx-1",
+      "channel": "validation",
+      "offsetMinutes": 18,
+      "scheduledAt": "2026-08-16T18:18:00.000Z"
+    },
+    {
+      "id": "football-staging-parity-fx-2-evt-research-lineup",
+      "fixtureId": "football-staging-parity-fx-2",
+      "channel": "research",
+      "offsetMinutes": 21,
+      "scheduledAt": "2026-08-16T18:21:00.000Z"
+    },
+    {
+      "id": "football-staging-parity-fx-2-evt-validation-close",
+      "fixtureId": "football-staging-parity-fx-2",
+      "channel": "validation",
+      "offsetMinutes": 28,
+      "scheduledAt": "2026-08-16T18:28:00.000Z"
+    }
+  ],
+  "golden": {
+    "packId": "football-staging-parity",
+    "version": "2026.08.16",
+    "fingerprint": "{\"id\":\"football-staging-parity\",\"version\":\"2026.08.16\",\"fixtures\":[{\"id\":\"football-staging-parity-fx-1\",\"status\":\"completed\",\"scheduledAt\":\"2026-09-12T18:00:00.000Z\",\"homeTeam\":\"Manchester City\",\"awayTeam\":\"Tottenham\",\"metadata\":{\"seed\":\"staging-parity-seed-2026\",\"scenario\":\"odds-swing\",\"synthetic\":\"true\"}},{\"id\":\"football-staging-parity-fx-2\",\"status\":\"scheduled\",\"scheduledAt\":\"2026-09-12T19:30:00.000Z\",\"homeTeam\":\"Atletico Madrid\",\"awayTeam\":\"Sevilla\",\"metadata\":{\"seed\":\"staging-parity-seed-2026\",\"scenario\":\"odds-swing\",\"synthetic\":\"true\"}}],\"replayEvents\":[{\"id\":\"football-staging-parity-fx-1-evt-fixture-upsert\",\"fixtureId\":\"football-staging-parity-fx-1\",\"offsetMinutes\":0,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"completed\"}},{\"id\":\"football-staging-parity-fx-1-evt-odds-open\",\"fixtureId\":\"football-staging-parity-fx-1\",\"offsetMinutes\":3,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":1.85,\"awayPrice\":2.56}},{\"id\":\"football-staging-parity-fx-1-evt-research-lineup\",\"fixtureId\":\"football-staging-parity-fx-1\",\"offsetMinutes\":11,\"channel\":\"research\",\"payload\":{\"event\":\"research.lineup_change\",\"severity\":\"medium\",\"source\":\"synthetic-press-room\"}},{\"id\":\"football-staging-parity-fx-1-evt-validation-close\",\"fixtureId\":\"football-staging-parity-fx-1\",\"offsetMinutes\":18,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.snapshot\",\"verdict\":\"pass\"}},{\"id\":\"football-staging-parity-fx-2-evt-fixture-upsert\",\"fixtureId\":\"football-staging-parity-fx-2\",\"offsetMinutes\":10,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"scheduled\"}},{\"id\":\"football-staging-parity-fx-2-evt-odds-open\",\"fixtureId\":\"football-staging-parity-fx-2\",\"offsetMinutes\":13,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.44,\"awayPrice\":2.31}},{\"id\":\"football-staging-parity-fx-2-evt-research-lineup\",\"fixtureId\":\"football-staging-parity-fx-2\",\"offsetMinutes\":21,\"channel\":\"research\",\"payload\":{\"event\":\"research.lineup_change\",\"severity\":\"medium\",\"source\":\"synthetic-press-room\"}},{\"id\":\"football-staging-parity-fx-2-evt-validation-close\",\"fixtureId\":\"football-staging-parity-fx-2\",\"offsetMinutes\":28,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.snapshot\",\"verdict\":\"review\"}}]}"
+  },
+  "comparison": {
+    "baselinePackId": "football-staging-parity",
+    "candidatePackId": "football-staging-parity",
+    "changed": false,
+    "fixtureDelta": 0,
+    "replayEventDelta": 0,
+    "changedFixtureIds": []
+  },
+  "safety": {
+    "publishEnabled": false,
+    "allowedHosts": [
+      "sandbox-staging.local",
+      "api-football-v1.p.rapidapi.com"
+    ],
+    "cronDryRunOnly": true
+  },
+  "policy": {
+    "sideEffects": [
+      "sandbox-object-storage-write",
+      "sandbox-queue-write",
+      "network-live-readonly"
+    ],
+    "secretsPolicy": {
+      "mode": "allow-sandbox-secrets",
+      "allowedSecretRefs": [
+        "sandbox/staging-like/provider-token",
+        "sandbox/staging-like/ops-token"
+      ],
+      "allowProductionCredentials": false
+    },
+    "capabilityAllowlist": [
+      "fixtures.read",
+      "odds.read",
+      "research.read",
+      "research.assignments",
+      "cron.validate",
+      "publication.inspect"
+    ],
+    "memoryIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-memory://staging-like",
+      "allowProductionMemory": false
+    },
+    "sessionIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-session://staging-like",
+      "allowSharedSessions": false
+    },
+    "skillPolicy": {
+      "mode": "allowlist",
+      "defaultDeny": true,
+      "enabledSkills": [
+        "fixture-inspection",
+        "research-triage",
+        "ops-audit"
+      ]
+    },
+    "requiresManualQa": false,
+    "defaultDeny": true
+  },
+  "promotion": {
+    "status": "promotable",
+    "summary": "Sandbox promotion evidence is promotable.",
+    "gates": [
+      {
+        "name": "sandbox-certification",
+        "status": "pass",
+        "detail": "Sandbox profile materialized with certification-ready assertions and policy snapshot."
+      },
+      {
+        "name": "contract-coverage",
+        "status": "pass",
+        "detail": "Contract coverage assertions are included in the sandbox evidence pack."
+      },
+      {
+        "name": "cron-workflows",
+        "status": "pass",
+        "detail": "cron-staging-parity:dry-run:360m | cron-staging-publication-safety:dry-run:1440m"
+      },
+      {
+        "name": "publication-safety",
+        "status": "pass",
+        "detail": "Publishing remains disabled and publication safety is enforced."
+      },
+      {
+        "name": "capability-isolation",
+        "status": "pass",
+        "detail": "Default deny is active with 6 allowed capability(ies)."
+      },
+      {
+        "name": "manual-qa",
+        "status": "pass",
+        "detail": "No manual QA review is required for this profile."
+      }
+    ]
+  }
+}

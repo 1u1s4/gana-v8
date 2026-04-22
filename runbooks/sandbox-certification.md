@@ -8,6 +8,10 @@
 
 - `fixtures/replays/goldens/ci-smoke/football-dual-smoke.json`
 - `fixtures/replays/goldens/ci-regression/football-replay-late-swing.json`
+- `fixtures/replays/goldens/staging-like/football-staging-parity.json`
+- `fixtures/replays/goldens/hybrid/football-hybrid-routing.json`
+- `fixtures/replays/goldens/chaos-provider/football-chaos-provider.json`
+- `fixtures/replays/goldens/human-qa-demo/football-human-qa-demo.json`
 
 Cada golden fija:
 
@@ -18,6 +22,8 @@ Cada golden fija:
 - replay timeline
 - fingerprint del pack
 - safety rails
+- policy trace auditable
+- promotion gates (`blocked`, `review-required`, `promotable`)
 
 ## Cómo correrlo
 

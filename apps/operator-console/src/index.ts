@@ -207,12 +207,43 @@ const createFallbackReadiness = (
   const missing = certification.filter((entry) => entry.status === "missing").length;
   const sandboxStatus =
     failed > 0 ? "blocked" : certification.length === 0 || missing > 0 ? "review" : "ready";
+  const promotionProfiles = certification.flatMap((entry) => {
+    if (!entry.promotion) {
+      return [];
+    }
+
+    const profileStatus: PublicApiReadinessReadModel["status"] =
+      entry.promotion.status === "blocked"
+        ? "blocked"
+        : entry.promotion.status === "review-required"
+          ? "review"
+          : "ready";
+
+    return [
+      {
+        id: entry.id,
+        status: profileStatus,
+        sourceStatus: entry.promotion.status,
+        ...(entry.generatedAt ? { generatedAt: entry.generatedAt } : {}),
+      },
+    ];
+  });
+  const promotionStatus =
+    promotionProfiles.length === 0
+      ? "review"
+      : promotionProfiles.some((profile) => profile.status === "blocked")
+        ? "blocked"
+        : promotionProfiles.some((profile) => profile.status === "review")
+          ? "review"
+          : "ready";
   const healthStatus = health.status === "ok" ? "ready" : "review";
   const status =
     sandboxStatus === "blocked"
       ? "blocked"
-      : healthStatus === "ready"
-        ? sandboxStatus
+      : promotionStatus === "blocked"
+        ? "blocked"
+        : healthStatus === "ready"
+          ? (sandboxStatus === "review" || promotionStatus === "review" ? "review" : "ready")
         : "review";
 
   return {
@@ -235,6 +266,14 @@ const createFallbackReadiness = (
             ? "No sandbox certification evidence loaded."
             : `${passed} passed / ${failed} failed / ${missing} missing certification profile(s).`,
       },
+      {
+        name: "promotion-gates",
+        status: promotionStatus,
+        detail:
+          promotionProfiles.length === 0
+            ? "No sandbox promotion gate evidence loaded."
+            : promotionProfiles.map((profile) => `${profile.id}:${profile.sourceStatus}`).join(" | "),
+      },
     ],
     sandboxCertification: {
       total: certification.length,
@@ -252,6 +291,13 @@ const createFallbackReadiness = (
         sourceStatus: entry.status,
         ...(entry.generatedAt ? { generatedAt: entry.generatedAt } : {}),
       })),
+    },
+    promotionGates: {
+      total: promotionProfiles.length,
+      blocked: promotionProfiles.filter((profile) => profile.sourceStatus === "blocked").length,
+      reviewRequired: promotionProfiles.filter((profile) => profile.sourceStatus === "review-required").length,
+      promotable: promotionProfiles.filter((profile) => profile.sourceStatus === "promotable").length,
+      profiles: promotionProfiles,
     },
   };
 };
@@ -686,6 +732,13 @@ export function createOperatorConsoleSnapshot(
           missing: 0,
           profiles: [],
         },
+        promotionGates: {
+          total: 0,
+          blocked: 0,
+          reviewRequired: 0,
+          promotable: 0,
+          profiles: [],
+        },
       },
     automationCycles: input.automationCycles ?? [],
     fixtures: input.fixtures ?? [],
@@ -839,6 +892,12 @@ export function buildOperatorConsoleModel(
         (certification) =>
           `sandbox:${certification.profileName}/${certification.packId} ${certification.status} (${certification.diffEntryCount} diff)`,
       ),
+    ...snapshot.sandboxCertification
+      .filter((certification) => certification.promotion && certification.promotion.status !== "promotable")
+      .map(
+        (certification) =>
+          `promotion:${certification.profileName}/${certification.packId} ${certification.promotion?.status ?? "unknown"}`,
+      ),
   ];
 
   const panels: OperatorConsolePanel[] = [
@@ -957,7 +1016,7 @@ export function buildOperatorConsoleModel(
           ? ["No sandbox certification evidence loaded."]
           : snapshot.sandboxCertification.map(
               (certification) =>
-                `${certification.profileName}/${certification.packId} | ${certification.status} | diff ${certification.diffEntryCount} | replay ${certification.replayEventCount} | generated ${certification.generatedAt ?? "missing"}`,
+                `${certification.profileName}/${certification.packId} | ${certification.status} | promotion ${certification.promotion?.status ?? "unknown"} | diff ${certification.diffEntryCount} | replay ${certification.replayEventCount} | generated ${certification.generatedAt ?? "missing"}`,
             ),
     },
     {
@@ -1856,7 +1915,7 @@ const renderCertificationList = (payload) => {
       '<strong>' + escapeHtml(certification.profileName) + ' / ' + escapeHtml(certification.packId) + '</strong>' +
       '<div>' + formatBadge(certification.status) + '</div>' +
       '<div class="subtle">Mode ' + escapeHtml(certification.mode) + ' | replay ' + escapeHtml(certification.replayEventCount) + ' | fixtures ' + escapeHtml(certification.fixtureCount) + '</div>' +
-      '<div class="subtle">Generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + ' | diff ' + escapeHtml(certification.diffEntryCount) + '</div>' +
+      '<div class="subtle">Generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + ' | diff ' + escapeHtml(certification.diffEntryCount) + ' | promotion ' + escapeHtml(certification.promotion?.status || 'unknown') + '</div>' +
       '<div class="list-actions">' +
         '<button class="fixture-action" type="button" data-console-action="inspect-certification" data-certification-profile="' + escapeHtml(certification.profileName) + '" data-certification-pack="' + escapeHtml(certification.packId) + '" data-tone="neutral">Inspect</button>' +
       '</div>' +
@@ -1997,6 +2056,8 @@ const renderCertificationInspector = () => {
   const diffEntries = Array.isArray(certification.diffEntries) ? certification.diffEntries : [];
   const assertions = Array.isArray(certification.assertions) ? certification.assertions : [];
   const allowedHosts = Array.isArray(certification.allowedHosts) ? certification.allowedHosts : [];
+  const promotionGates = Array.isArray(certification.promotion?.gates) ? certification.promotion.gates : [];
+  const policyTrace = certification.policyTrace || null;
 
   return '<div class="list">' +
     '<article class="list-item is-selected">' +
@@ -2005,12 +2066,32 @@ const renderCertificationInspector = () => {
       '<div class="subtle">Mode ' + escapeHtml(certification.mode) + ' | generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + '</div>' +
       '<div class="subtle">Golden ' + escapeHtml(certification.goldenPath) + '</div>' +
       '<div class="subtle">Artifact ' + escapeHtml(certification.artifactPath || 'missing') + '</div>' +
-      '<div class="subtle">Replay ' + escapeHtml(certification.replayEventCount) + ' | fixtures ' + escapeHtml(certification.fixtureCount) + ' | diff entries ' + escapeHtml(certification.diffEntryCount) + '</div>' +
+      '<div class="subtle">Replay ' + escapeHtml(certification.replayEventCount) + ' | fixtures ' + escapeHtml(certification.fixtureCount) + ' | diff entries ' + escapeHtml(certification.diffEntryCount) + ' | promotion ' + escapeHtml(certification.promotion?.status || 'unknown') + '</div>' +
     '</article>' +
     '<article class="list-item">' +
       '<strong>Safety & assertions</strong>' +
       '<div class="panel-line">Allowed hosts: ' + escapeHtml(allowedHosts.join(', ') || 'none') + '</div>' +
       '<div class="panel-line">Assertions: ' + escapeHtml(assertions.join(', ') || 'none') + '</div>' +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Promotion gates</strong>' +
+      (promotionGates.length === 0
+        ? '<div class="empty-state">No promotion gate evidence available.</div>'
+        : promotionGates.map((gate) =>
+            '<div class="panel-line">' + escapeHtml(gate.status.toUpperCase()) + ' | ' + escapeHtml(gate.name) + ' | ' + escapeHtml(gate.detail) + '</div>'
+          ).join('')) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Policy trace</strong>' +
+      (policyTrace
+        ? '<div class="panel-line">Capabilities: ' + escapeHtml((policyTrace.capabilityAllowlist || []).join(', ') || 'none') + '</div>' +
+          '<div class="panel-line">Side effects: ' + escapeHtml((policyTrace.sideEffects || []).join(', ') || 'none') + '</div>' +
+          '<div class="panel-line">Memory: ' + escapeHtml(policyTrace.memoryIsolation?.strategy || 'n/a') + ' | ' + escapeHtml(policyTrace.memoryIsolation?.namespaceRoot || 'n/a') + '</div>' +
+          '<div class="panel-line">Sessions: ' + escapeHtml(policyTrace.sessionIsolation?.strategy || 'n/a') + ' | ' + escapeHtml(policyTrace.sessionIsolation?.namespaceRoot || 'n/a') + '</div>' +
+          '<div class="panel-line">Skills: ' + escapeHtml((policyTrace.skillPolicy?.enabledSkills || []).join(', ') || 'none') + ' | default deny ' + escapeHtml(policyTrace.skillPolicy?.defaultDeny ? 'yes' : 'no') + '</div>' +
+          '<div class="panel-line">Secrets: ' + escapeHtml(policyTrace.secretsPolicy?.mode || 'n/a') + ' | production creds ' + escapeHtml(policyTrace.secretsPolicy?.allowProductionCredentials ? 'yes' : 'no') + '</div>' +
+          '<div class="panel-line">Manual QA: ' + escapeHtml(policyTrace.requiresManualQa ? 'yes' : 'no') + ' | publish enabled ' + escapeHtml(policyTrace.publishEnabled ? 'yes' : 'no') + '</div>'
+        : '<div class="empty-state">No policy trace available.</div>') +
     '</article>' +
     '<article class="list-item">' +
       '<strong>Diff entries</strong>' +

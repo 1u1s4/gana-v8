@@ -6,8 +6,11 @@
   "assertions": [
     "namespace-isolation",
     "provider-routing",
+    "policy-default-deny",
     "replay-integrity",
-    "cron-validation-dry-run"
+    "cron-validation-dry-run",
+    "replay-integrity",
+    "contract-coverage"
   ],
   "providerModes": {
     "fixtures_api": "replay",
@@ -138,5 +141,82 @@
       "sandbox-regression.local"
     ],
     "cronDryRunOnly": true
+  },
+  "policy": {
+    "sideEffects": [
+      "sandbox-object-storage-write",
+      "sandbox-queue-write"
+    ],
+    "secretsPolicy": {
+      "mode": "allow-sandbox-secrets",
+      "allowedSecretRefs": [
+        "sandbox/ci-regression/provider-token",
+        "sandbox/ci-regression/ops-token"
+      ],
+      "allowProductionCredentials": false
+    },
+    "capabilityAllowlist": [
+      "fixtures.read",
+      "odds.read",
+      "research.read",
+      "research.assignments",
+      "cron.validate"
+    ],
+    "memoryIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-memory://ci-regression",
+      "allowProductionMemory": false
+    },
+    "sessionIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-session://ci-regression",
+      "allowSharedSessions": false
+    },
+    "skillPolicy": {
+      "mode": "allowlist",
+      "defaultDeny": true,
+      "enabledSkills": [
+        "fixture-inspection",
+        "research-triage"
+      ]
+    },
+    "requiresManualQa": false,
+    "defaultDeny": true
+  },
+  "promotion": {
+    "status": "promotable",
+    "summary": "Sandbox promotion evidence is promotable.",
+    "gates": [
+      {
+        "name": "sandbox-certification",
+        "status": "pass",
+        "detail": "Sandbox profile materialized with certification-ready assertions and policy snapshot."
+      },
+      {
+        "name": "contract-coverage",
+        "status": "pass",
+        "detail": "Contract coverage assertions are included in the sandbox evidence pack."
+      },
+      {
+        "name": "cron-workflows",
+        "status": "pass",
+        "detail": "cron-regression-diff:dry-run:720m | cron-regression-scorecard:dry-run:1440m"
+      },
+      {
+        "name": "publication-safety",
+        "status": "pass",
+        "detail": "Publishing remains disabled and publication safety is enforced."
+      },
+      {
+        "name": "capability-isolation",
+        "status": "pass",
+        "detail": "Default deny is active with 5 allowed capability(ies)."
+      },
+      {
+        "name": "manual-qa",
+        "status": "pass",
+        "detail": "No manual QA review is required for this profile."
+      }
+    ]
   }
 }

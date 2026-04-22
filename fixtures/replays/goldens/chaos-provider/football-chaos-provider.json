@@ -1,0 +1,197 @@
+{
+  "schemaVersion": "sandbox-golden-v1",
+  "mode": "replay",
+  "fixturePackId": "football-chaos-provider",
+  "profileName": "chaos-provider",
+  "assertions": [
+    "namespace-isolation",
+    "provider-routing",
+    "policy-default-deny",
+    "replay-integrity",
+    "cron-validation-dry-run",
+    "chaos-provider-degradation",
+    "contract-coverage"
+  ],
+  "providerModes": {
+    "fixtures_api": "replay",
+    "odds_api": "replay",
+    "research_api": "replay",
+    "publish_api": "disabled"
+  },
+  "stats": {
+    "fixtureCount": 2,
+    "completedFixtures": 1,
+    "replayEventCount": 8,
+    "replayChannels": [
+      "fixtures",
+      "odds",
+      "research",
+      "validation"
+    ],
+    "cronJobsValidated": 1
+  },
+  "clock": {
+    "mode": "virtual",
+    "startAt": "2026-08-16T18:00:00.000Z",
+    "endAt": "2026-08-16T18:24:00.000Z",
+    "tickCount": 8
+  },
+  "replayTimeline": [
+    {
+      "id": "football-chaos-provider-fx-1-evt-fixture-upsert",
+      "fixtureId": "football-chaos-provider-fx-1",
+      "channel": "fixtures",
+      "offsetMinutes": 0,
+      "scheduledAt": "2026-08-16T18:00:00.000Z"
+    },
+    {
+      "id": "football-chaos-provider-fx-1-evt-odds-open",
+      "fixtureId": "football-chaos-provider-fx-1",
+      "channel": "odds",
+      "offsetMinutes": 3,
+      "scheduledAt": "2026-08-16T18:03:00.000Z"
+    },
+    {
+      "id": "football-chaos-provider-fx-1-evt-research-chaos",
+      "fixtureId": "football-chaos-provider-fx-1",
+      "channel": "research",
+      "offsetMinutes": 8,
+      "scheduledAt": "2026-08-16T18:08:00.000Z"
+    },
+    {
+      "id": "football-chaos-provider-fx-2-evt-fixture-upsert",
+      "fixtureId": "football-chaos-provider-fx-2",
+      "channel": "fixtures",
+      "offsetMinutes": 10,
+      "scheduledAt": "2026-08-16T18:10:00.000Z"
+    },
+    {
+      "id": "football-chaos-provider-fx-2-evt-odds-open",
+      "fixtureId": "football-chaos-provider-fx-2",
+      "channel": "odds",
+      "offsetMinutes": 13,
+      "scheduledAt": "2026-08-16T18:13:00.000Z"
+    },
+    {
+      "id": "football-chaos-provider-fx-1-evt-validation-chaos",
+      "fixtureId": "football-chaos-provider-fx-1",
+      "channel": "validation",
+      "offsetMinutes": 14,
+      "scheduledAt": "2026-08-16T18:14:00.000Z"
+    },
+    {
+      "id": "football-chaos-provider-fx-2-evt-research-chaos",
+      "fixtureId": "football-chaos-provider-fx-2",
+      "channel": "research",
+      "offsetMinutes": 18,
+      "scheduledAt": "2026-08-16T18:18:00.000Z"
+    },
+    {
+      "id": "football-chaos-provider-fx-2-evt-validation-chaos",
+      "fixtureId": "football-chaos-provider-fx-2",
+      "channel": "validation",
+      "offsetMinutes": 24,
+      "scheduledAt": "2026-08-16T18:24:00.000Z"
+    }
+  ],
+  "golden": {
+    "packId": "football-chaos-provider",
+    "version": "2026.08.16",
+    "fingerprint": "{\"id\":\"football-chaos-provider\",\"version\":\"2026.08.16\",\"fixtures\":[{\"id\":\"football-chaos-provider-fx-1\",\"status\":\"completed\",\"scheduledAt\":\"2026-11-05T19:30:00.000Z\",\"homeTeam\":\"Liverpool\",\"awayTeam\":\"Newcastle\",\"metadata\":{\"seed\":\"chaos-provider-seed-2026\",\"scenario\":\"chaos-drill\",\"synthetic\":\"true\"}},{\"id\":\"football-chaos-provider-fx-2\",\"status\":\"scheduled\",\"scheduledAt\":\"2026-11-05T21:00:00.000Z\",\"homeTeam\":\"Roma\",\"awayTeam\":\"Napoli\",\"metadata\":{\"seed\":\"chaos-provider-seed-2026\",\"scenario\":\"chaos-drill\",\"synthetic\":\"true\"}}],\"replayEvents\":[{\"id\":\"football-chaos-provider-fx-1-evt-fixture-upsert\",\"fixtureId\":\"football-chaos-provider-fx-1\",\"offsetMinutes\":0,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"completed\"}},{\"id\":\"football-chaos-provider-fx-1-evt-odds-open\",\"fixtureId\":\"football-chaos-provider-fx-1\",\"offsetMinutes\":3,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":1.73,\"awayPrice\":2.72}},{\"id\":\"football-chaos-provider-fx-1-evt-research-chaos\",\"fixtureId\":\"football-chaos-provider-fx-1\",\"offsetMinutes\":8,\"channel\":\"research\",\"payload\":{\"event\":\"research.provider_fault\",\"fault\":\"timeout\",\"severity\":\"high\"}},{\"id\":\"football-chaos-provider-fx-1-evt-validation-chaos\",\"fixtureId\":\"football-chaos-provider-fx-1\",\"offsetMinutes\":14,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.degradation_gate\",\"verdict\":\"review\",\"operatorReview\":true}},{\"id\":\"football-chaos-provider-fx-2-evt-fixture-upsert\",\"fixtureId\":\"football-chaos-provider-fx-2\",\"offsetMinutes\":10,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"scheduled\"}},{\"id\":\"football-chaos-provider-fx-2-evt-odds-open\",\"fixtureId\":\"football-chaos-provider-fx-2\",\"offsetMinutes\":13,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.17,\"awayPrice\":3.04}},{\"id\":\"football-chaos-provider-fx-2-evt-research-chaos\",\"fixtureId\":\"football-chaos-provider-fx-2\",\"offsetMinutes\":18,\"channel\":\"research\",\"payload\":{\"event\":\"research.provider_fault\",\"fault\":\"stale-data\",\"severity\":\"medium\"}},{\"id\":\"football-chaos-provider-fx-2-evt-validation-chaos\",\"fixtureId\":\"football-chaos-provider-fx-2\",\"offsetMinutes\":24,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.degradation_gate\",\"verdict\":\"pass\",\"operatorReview\":true}}]}"
+  },
+  "comparison": {
+    "baselinePackId": "football-chaos-provider",
+    "candidatePackId": "football-chaos-provider",
+    "changed": false,
+    "fixtureDelta": 0,
+    "replayEventDelta": 0,
+    "changedFixtureIds": []
+  },
+  "safety": {
+    "publishEnabled": false,
+    "allowedHosts": [
+      "sandbox-chaos.local"
+    ],
+    "cronDryRunOnly": true
+  },
+  "policy": {
+    "sideEffects": [
+      "sandbox-object-storage-write",
+      "sandbox-queue-write",
+      "human-review"
+    ],
+    "secretsPolicy": {
+      "mode": "allow-sandbox-secrets",
+      "allowedSecretRefs": [
+        "sandbox/chaos-provider/provider-token",
+        "sandbox/chaos-provider/ops-token"
+      ],
+      "allowProductionCredentials": false
+    },
+    "capabilityAllowlist": [
+      "fixtures.read",
+      "odds.read",
+      "research.read",
+      "research.assignments",
+      "cron.validate",
+      "operator.review"
+    ],
+    "memoryIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-memory://chaos-provider",
+      "allowProductionMemory": false
+    },
+    "sessionIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-session://chaos-provider",
+      "allowSharedSessions": false
+    },
+    "skillPolicy": {
+      "mode": "allowlist",
+      "defaultDeny": true,
+      "enabledSkills": [
+        "fixture-inspection",
+        "research-triage",
+        "ops-audit"
+      ]
+    },
+    "requiresManualQa": true,
+    "defaultDeny": true
+  },
+  "promotion": {
+    "status": "review-required",
+    "summary": "Sandbox promotion evidence requires review before promotion.",
+    "gates": [
+      {
+        "name": "sandbox-certification",
+        "status": "pass",
+        "detail": "Sandbox profile materialized with certification-ready assertions and policy snapshot."
+      },
+      {
+        "name": "contract-coverage",
+        "status": "pass",
+        "detail": "Contract coverage assertions are included in the sandbox evidence pack."
+      },
+      {
+        "name": "cron-workflows",
+        "status": "pass",
+        "detail": "cron-chaos-drill:dry-run:180m"
+      },
+      {
+        "name": "publication-safety",
+        "status": "pass",
+        "detail": "Publishing remains disabled and publication safety is enforced."
+      },
+      {
+        "name": "capability-isolation",
+        "status": "pass",
+        "detail": "Default deny is active with 6 allowed capability(ies)."
+      },
+      {
+        "name": "manual-qa",
+        "status": "warn",
+        "detail": "Manual QA review is required before promotion for this profile."
+      }
+    ]
+  }
+}

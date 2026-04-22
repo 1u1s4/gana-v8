@@ -38,6 +38,8 @@ test("sandbox runner emits smoke summary with dry-run safety guarantees", () => 
   assert.equal(summary.comparison.changed, false);
   assert.equal(summary.safety.publishEnabled, false);
   assert.equal(summary.safety.cronDryRunOnly, true);
+  assert.equal(summary.policy.defaultDeny, true);
+  assert.equal(summary.promotion.status, "promotable");
   assert.ok(summary.namespaceKeys.every((key) => key.startsWith(`sandbox:${summary.sandboxId}:`)));
 });
 
@@ -179,8 +181,38 @@ test("sandbox runner creates stable golden snapshots and empty diffs for the sam
   const diff = diffSandboxGoldenSnapshot(baseline, candidate);
 
   assert.equal(baseline.schemaVersion, "sandbox-golden-v1");
+  assert.equal(baseline.policy.defaultDeny, true);
   assert.equal(diff.changed, false);
   assert.equal(diff.entryCount, 0);
+});
+
+test("sandbox runner emits review-required promotion for chaos and human QA profiles", () => {
+  const chaos = runSandboxScenario({
+    mode: "replay",
+    profileName: "chaos-provider",
+    packId: "football-chaos-provider",
+    gitSha: "abcdef1234567890",
+    now: new Date("2026-08-16T20:00:00.000Z"),
+  });
+  const humanQa = runSandboxScenario({
+    mode: "smoke",
+    profileName: "human-qa-demo",
+    packId: "football-human-qa-demo",
+    gitSha: "abcdef1234567890",
+    now: new Date("2026-08-16T20:00:00.000Z"),
+  });
+  const staging = runSandboxScenario({
+    mode: "replay",
+    profileName: "staging-like",
+    packId: "football-staging-parity",
+    gitSha: "abcdef1234567890",
+    now: new Date("2026-08-16T20:00:00.000Z"),
+  });
+
+  assert.equal(chaos.promotion.status, "review-required");
+  assert.equal(humanQa.promotion.status, "review-required");
+  assert.equal(staging.promotion.status, "promotable");
+  assert.equal(staging.policy.capabilityAllowlist.includes("publication.inspect"), true);
 });
 
 test("sandbox runner certification detects golden drift and writes evidence artifacts", async () => {
@@ -227,6 +259,44 @@ test("sandbox runner certification detects golden drift and writes evidence arti
       allowedHosts: [],
       cronDryRunOnly: true,
     },
+    policy: {
+      sideEffects: [],
+      secretsPolicy: {
+        mode: "forbid-real-secrets",
+        allowedSecretRefs: [],
+        allowProductionCredentials: false,
+      },
+      capabilityAllowlist: [],
+      memoryIsolation: {
+        strategy: "profile-run-namespace",
+        namespaceRoot: "sandbox-memory://bad",
+        allowProductionMemory: false,
+      },
+      sessionIsolation: {
+        strategy: "profile-run-namespace",
+        namespaceRoot: "sandbox-session://bad",
+        allowSharedSessions: false,
+      },
+      skillPolicy: {
+        mode: "allowlist",
+        defaultDeny: true,
+        enabledSkills: [],
+      },
+      requiresManualQa: false,
+      defaultDeny: true,
+    },
+    promotion: {
+      status: "blocked",
+      summary: "blocked",
+      gates: [
+        { name: "sandbox-certification", status: "block", detail: "drift" },
+        { name: "contract-coverage", status: "block", detail: "missing" },
+        { name: "cron-workflows", status: "pass", detail: "ok" },
+        { name: "publication-safety", status: "pass", detail: "ok" },
+        { name: "capability-isolation", status: "block", detail: "bad" },
+        { name: "manual-qa", status: "pass", detail: "ok" },
+      ],
+    },
   });
 
   const result = await certifySandboxRun({
@@ -244,10 +314,11 @@ test("sandbox runner certification detects golden drift and writes evidence arti
   assert.equal(typeof result.artifactPath, "string");
   const artifact = JSON.parse(await readFile(artifactPath, "utf8")) as {
     schemaVersion: string;
-    summary: { fixturePackId: string };
+    summary: { fixturePackId: string; promotion: { status: string } };
   };
   assert.equal(artifact.schemaVersion, "sandbox-certification-v1");
   assert.equal(artifact.summary.fixturePackId, "football-dual-smoke");
+  assert.equal(artifact.summary.promotion.status, "blocked");
 });
 
 test("sandbox runner certification cli parses golden and artifact flags", () => {
@@ -308,10 +379,11 @@ test("sandbox runner certification cli renders a passed certification payload", 
   ) as {
     status: string;
     diff: { entryCount: number };
-    evidence: { goldenSnapshot: { fixturePackId: string } };
+    evidence: { goldenSnapshot: { fixturePackId: string }; summary: { promotion: { status: string } } };
   };
 
   assert.equal(rendered.status, "passed");
   assert.equal(rendered.diff.entryCount, 0);
   assert.equal(rendered.evidence.goldenSnapshot.fixturePackId, "football-dual-smoke");
+  assert.equal(rendered.evidence.summary.promotion.status, "promotable");
 });

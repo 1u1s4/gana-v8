@@ -1,0 +1,198 @@
+{
+  "schemaVersion": "sandbox-golden-v1",
+  "mode": "replay",
+  "fixturePackId": "football-hybrid-routing",
+  "profileName": "hybrid",
+  "assertions": [
+    "namespace-isolation",
+    "provider-routing",
+    "policy-default-deny",
+    "replay-integrity",
+    "cron-validation-dry-run",
+    "mixed-provider-routing",
+    "contract-coverage"
+  ],
+  "providerModes": {
+    "fixtures_api": "replay",
+    "odds_api": "live-readonly",
+    "research_api": "mock",
+    "publish_api": "disabled"
+  },
+  "stats": {
+    "fixtureCount": 2,
+    "completedFixtures": 1,
+    "replayEventCount": 8,
+    "replayChannels": [
+      "fixtures",
+      "odds",
+      "research",
+      "validation"
+    ],
+    "cronJobsValidated": 1
+  },
+  "clock": {
+    "mode": "virtual",
+    "startAt": "2026-08-16T18:00:00.000Z",
+    "endAt": "2026-08-16T18:26:00.000Z",
+    "tickCount": 8
+  },
+  "replayTimeline": [
+    {
+      "id": "football-hybrid-routing-fx-1-evt-fixture-upsert",
+      "fixtureId": "football-hybrid-routing-fx-1",
+      "channel": "fixtures",
+      "offsetMinutes": 0,
+      "scheduledAt": "2026-08-16T18:00:00.000Z"
+    },
+    {
+      "id": "football-hybrid-routing-fx-1-evt-odds-open",
+      "fixtureId": "football-hybrid-routing-fx-1",
+      "channel": "odds",
+      "offsetMinutes": 3,
+      "scheduledAt": "2026-08-16T18:03:00.000Z"
+    },
+    {
+      "id": "football-hybrid-routing-fx-2-evt-fixture-upsert",
+      "fixtureId": "football-hybrid-routing-fx-2",
+      "channel": "fixtures",
+      "offsetMinutes": 10,
+      "scheduledAt": "2026-08-16T18:10:00.000Z"
+    },
+    {
+      "id": "football-hybrid-routing-fx-1-evt-research-hybrid",
+      "fixtureId": "football-hybrid-routing-fx-1",
+      "channel": "research",
+      "offsetMinutes": 11,
+      "scheduledAt": "2026-08-16T18:11:00.000Z"
+    },
+    {
+      "id": "football-hybrid-routing-fx-2-evt-odds-open",
+      "fixtureId": "football-hybrid-routing-fx-2",
+      "channel": "odds",
+      "offsetMinutes": 13,
+      "scheduledAt": "2026-08-16T18:13:00.000Z"
+    },
+    {
+      "id": "football-hybrid-routing-fx-1-evt-validation-hybrid",
+      "fixtureId": "football-hybrid-routing-fx-1",
+      "channel": "validation",
+      "offsetMinutes": 16,
+      "scheduledAt": "2026-08-16T18:16:00.000Z"
+    },
+    {
+      "id": "football-hybrid-routing-fx-2-evt-research-hybrid",
+      "fixtureId": "football-hybrid-routing-fx-2",
+      "channel": "research",
+      "offsetMinutes": 21,
+      "scheduledAt": "2026-08-16T18:21:00.000Z"
+    },
+    {
+      "id": "football-hybrid-routing-fx-2-evt-validation-hybrid",
+      "fixtureId": "football-hybrid-routing-fx-2",
+      "channel": "validation",
+      "offsetMinutes": 26,
+      "scheduledAt": "2026-08-16T18:26:00.000Z"
+    }
+  ],
+  "golden": {
+    "packId": "football-hybrid-routing",
+    "version": "2026.08.16",
+    "fingerprint": "{\"id\":\"football-hybrid-routing\",\"version\":\"2026.08.16\",\"fixtures\":[{\"id\":\"football-hybrid-routing-fx-1\",\"status\":\"completed\",\"scheduledAt\":\"2026-10-02T17:00:00.000Z\",\"homeTeam\":\"Benfica\",\"awayTeam\":\"Porto\",\"metadata\":{\"seed\":\"hybrid-routing-seed-2026\",\"scenario\":\"hybrid-mix\",\"synthetic\":\"true\"}},{\"id\":\"football-hybrid-routing-fx-2\",\"status\":\"scheduled\",\"scheduledAt\":\"2026-10-02T18:30:00.000Z\",\"homeTeam\":\"Ajax\",\"awayTeam\":\"PSV\",\"metadata\":{\"seed\":\"hybrid-routing-seed-2026\",\"scenario\":\"hybrid-mix\",\"synthetic\":\"true\"}}],\"replayEvents\":[{\"id\":\"football-hybrid-routing-fx-1-evt-fixture-upsert\",\"fixtureId\":\"football-hybrid-routing-fx-1\",\"offsetMinutes\":0,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"completed\"}},{\"id\":\"football-hybrid-routing-fx-1-evt-odds-open\",\"fixtureId\":\"football-hybrid-routing-fx-1\",\"offsetMinutes\":3,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":1.79,\"awayPrice\":2.52}},{\"id\":\"football-hybrid-routing-fx-1-evt-research-hybrid\",\"fixtureId\":\"football-hybrid-routing-fx-1\",\"offsetMinutes\":11,\"channel\":\"research\",\"payload\":{\"event\":\"research.hybrid_snapshot\",\"providerMode\":\"live-readonly\",\"safeFallback\":true}},{\"id\":\"football-hybrid-routing-fx-1-evt-validation-hybrid\",\"fixtureId\":\"football-hybrid-routing-fx-1\",\"offsetMinutes\":16,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.hybrid_gate\",\"verdict\":\"pass\",\"operatorReview\":false}},{\"id\":\"football-hybrid-routing-fx-2-evt-fixture-upsert\",\"fixtureId\":\"football-hybrid-routing-fx-2\",\"offsetMinutes\":10,\"channel\":\"fixtures\",\"payload\":{\"event\":\"fixture.upserted\",\"status\":\"scheduled\"}},{\"id\":\"football-hybrid-routing-fx-2-evt-odds-open\",\"fixtureId\":\"football-hybrid-routing-fx-2\",\"offsetMinutes\":13,\"channel\":\"odds\",\"payload\":{\"event\":\"odds.open\",\"homePrice\":2.05,\"awayPrice\":2.9}},{\"id\":\"football-hybrid-routing-fx-2-evt-research-hybrid\",\"fixtureId\":\"football-hybrid-routing-fx-2\",\"offsetMinutes\":21,\"channel\":\"research\",\"payload\":{\"event\":\"research.hybrid_snapshot\",\"providerMode\":\"replay\",\"safeFallback\":true}},{\"id\":\"football-hybrid-routing-fx-2-evt-validation-hybrid\",\"fixtureId\":\"football-hybrid-routing-fx-2\",\"offsetMinutes\":26,\"channel\":\"validation\",\"payload\":{\"event\":\"validation.hybrid_gate\",\"verdict\":\"pass\",\"operatorReview\":false}}]}"
+  },
+  "comparison": {
+    "baselinePackId": "football-hybrid-routing",
+    "candidatePackId": "football-hybrid-routing",
+    "changed": false,
+    "fixtureDelta": 0,
+    "replayEventDelta": 0,
+    "changedFixtureIds": []
+  },
+  "safety": {
+    "publishEnabled": false,
+    "allowedHosts": [
+      "sandbox-hybrid.local",
+      "api-football-v1.p.rapidapi.com"
+    ],
+    "cronDryRunOnly": true
+  },
+  "policy": {
+    "sideEffects": [
+      "sandbox-object-storage-write",
+      "sandbox-queue-write",
+      "network-live-readonly"
+    ],
+    "secretsPolicy": {
+      "mode": "allow-sandbox-secrets",
+      "allowedSecretRefs": [
+        "sandbox/hybrid/provider-token",
+        "sandbox/hybrid/ops-token"
+      ],
+      "allowProductionCredentials": false
+    },
+    "capabilityAllowlist": [
+      "fixtures.read",
+      "odds.read",
+      "research.read",
+      "research.assignments",
+      "cron.validate",
+      "publication.inspect"
+    ],
+    "memoryIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-memory://hybrid",
+      "allowProductionMemory": false
+    },
+    "sessionIsolation": {
+      "strategy": "profile-run-namespace",
+      "namespaceRoot": "sandbox-session://hybrid",
+      "allowSharedSessions": false
+    },
+    "skillPolicy": {
+      "mode": "allowlist",
+      "defaultDeny": true,
+      "enabledSkills": [
+        "fixture-inspection",
+        "research-triage",
+        "ops-audit"
+      ]
+    },
+    "requiresManualQa": false,
+    "defaultDeny": true
+  },
+  "promotion": {
+    "status": "promotable",
+    "summary": "Sandbox promotion evidence is promotable.",
+    "gates": [
+      {
+        "name": "sandbox-certification",
+        "status": "pass",
+        "detail": "Sandbox profile materialized with certification-ready assertions and policy snapshot."
+      },
+      {
+        "name": "contract-coverage",
+        "status": "pass",
+        "detail": "Contract coverage assertions are included in the sandbox evidence pack."
+      },
+      {
+        "name": "cron-workflows",
+        "status": "pass",
+        "detail": "cron-hybrid-routing:dry-run:240m"
+      },
+      {
+        "name": "publication-safety",
+        "status": "pass",
+        "detail": "Publishing remains disabled and publication safety is enforced."
+      },
+      {
+        "name": "capability-isolation",
+        "status": "pass",
+        "detail": "Default deny is active with 6 allowed capability(ies)."
+      },
+      {
+        "name": "manual-qa",
+        "status": "pass",
+        "detail": "No manual QA review is required for this profile."
+      }
+    ]
+  }
+}

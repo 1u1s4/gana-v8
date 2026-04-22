@@ -25,6 +25,9 @@ export const runtimeProfiles = [
   "ci-regression",
   "staging-like",
   "historical-backtest",
+  "hybrid",
+  "chaos-provider",
+  "human-qa-demo",
   "production",
 ] as const;
 
@@ -137,6 +140,33 @@ const runtimeProfilePresets: Readonly<Record<RuntimeProfile, RuntimeProfilePrese
     logLevel: "info",
     dryRun: true,
     demoMode: false,
+  },
+  hybrid: {
+    appEnv: "staging",
+    databaseUrl: createLocalDatabaseUrl("gana_v8_hybrid"),
+    providerSource: "live-readonly",
+    providerBaseUrl: defaultProviderBaseUrls["live-readonly"],
+    logLevel: "info",
+    dryRun: true,
+    demoMode: false,
+  },
+  "chaos-provider": {
+    appEnv: "test",
+    databaseUrl: createLocalDatabaseUrl("gana_v8_chaos_provider"),
+    providerSource: "replay",
+    providerBaseUrl: defaultProviderBaseUrls.replay,
+    logLevel: "warn",
+    dryRun: true,
+    demoMode: false,
+  },
+  "human-qa-demo": {
+    appEnv: "test",
+    databaseUrl: createLocalDatabaseUrl("gana_v8_human_qa_demo"),
+    providerSource: "mock",
+    providerBaseUrl: defaultProviderBaseUrls.mock,
+    logLevel: "info",
+    dryRun: true,
+    demoMode: true,
   },
   production: {
     appEnv: "production",

@@ -13,6 +13,7 @@ import {
   describeWorkspace,
   evaluateFixtureCoverageScope,
   evaluateOperationalPolicy,
+  evaluateSandboxPromotion,
 } from "../src/index.ts";
 
 test("policy-engine reports ready status when health, retries, and backfills are clean", () => {
@@ -164,4 +165,40 @@ test("coverage scope resolver excludes untracked fixtures when policy requires t
   assert.equal(decision.visibleInOps, true);
   assert.equal(decision.eligibleForScoring, false);
   assert.equal(decision.excludedBy.some((reason) => reason.code === "not-tracked-by-policy"), true);
+});
+
+test("sandbox promotion report becomes promotable when every gate passes", () => {
+  const report = evaluateSandboxPromotion({
+    certification: { status: "pass", detail: "Certification evidence matches the golden snapshot." },
+    contractCoverage: { status: "pass", detail: "Research contracts and source records are covered." },
+    cronWorkflows: { status: "pass", detail: "Cron workflows are dry-run only and fully enumerated." },
+    publicationSafety: { status: "pass", detail: "Publication side effects remain disabled." },
+    capabilityIsolation: { status: "pass", detail: "Default deny is active for skills and capabilities." },
+    manualQa: { status: "pass", detail: "No manual QA review is required for this profile." },
+  });
+
+  assert.equal(report.status, "promotable");
+  assert.equal(report.gates.every((gate) => gate.status === "pass"), true);
+});
+
+test("sandbox promotion report prefers blocked over review-required", () => {
+  const blocked = evaluateSandboxPromotion({
+    certification: { status: "block", detail: "Certification drift detected." },
+    contractCoverage: { status: "pass", detail: "Contracts are covered." },
+    cronWorkflows: { status: "pass", detail: "Cron workflows are dry-run only." },
+    publicationSafety: { status: "pass", detail: "Publication side effects remain disabled." },
+    capabilityIsolation: { status: "warn", detail: "Manual QA is still required." },
+    manualQa: { status: "warn", detail: "Operator QA walkthrough pending." },
+  });
+  const review = evaluateSandboxPromotion({
+    certification: { status: "pass", detail: "Certification evidence matches the golden snapshot." },
+    contractCoverage: { status: "pass", detail: "Contracts are covered." },
+    cronWorkflows: { status: "pass", detail: "Cron workflows are dry-run only." },
+    publicationSafety: { status: "pass", detail: "Publication side effects remain disabled." },
+    capabilityIsolation: { status: "pass", detail: "Default deny is active." },
+    manualQa: { status: "warn", detail: "Operator QA walkthrough pending." },
+  });
+
+  assert.equal(blocked.status, "blocked");
+  assert.equal(review.status, "review-required");
 });

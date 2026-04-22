@@ -69,6 +69,33 @@ export interface OperationalPolicyReport {
   readonly summary: string;
 }
 
+export interface SandboxPromotionGate {
+  readonly name:
+    | "sandbox-certification"
+    | "contract-coverage"
+    | "cron-workflows"
+    | "publication-safety"
+    | "capability-isolation"
+    | "manual-qa";
+  readonly status: "pass" | "warn" | "block";
+  readonly detail: string;
+}
+
+export interface SandboxPromotionReport {
+  readonly status: "blocked" | "review-required" | "promotable";
+  readonly summary: string;
+  readonly gates: readonly SandboxPromotionGate[];
+}
+
+export interface EvaluateSandboxPromotionInput {
+  readonly certification: Omit<SandboxPromotionGate, "name">;
+  readonly contractCoverage: Omit<SandboxPromotionGate, "name">;
+  readonly cronWorkflows: Omit<SandboxPromotionGate, "name">;
+  readonly publicationSafety: Omit<SandboxPromotionGate, "name">;
+  readonly capabilityIsolation: Omit<SandboxPromotionGate, "name">;
+  readonly manualQa: Omit<SandboxPromotionGate, "name">;
+}
+
 export interface CoverageDecisionReason {
   readonly code:
     | "force-include"
@@ -377,6 +404,34 @@ export const evaluateOperationalPolicy = (
         ? "Operator policy ready"
         : overallStatus === "degraded"
           ? "Operator policy degraded but still serviceable"
-          : "Operator policy blocked: clear backfills/quarantines before publishing",
+      : "Operator policy blocked: clear backfills/quarantines before publishing",
   };
-}
+};
+
+export const evaluateSandboxPromotion = (
+  input: EvaluateSandboxPromotionInput,
+): SandboxPromotionReport => {
+  const gates: SandboxPromotionGate[] = [
+    { name: "sandbox-certification", ...input.certification },
+    { name: "contract-coverage", ...input.contractCoverage },
+    { name: "cron-workflows", ...input.cronWorkflows },
+    { name: "publication-safety", ...input.publicationSafety },
+    { name: "capability-isolation", ...input.capabilityIsolation },
+    { name: "manual-qa", ...input.manualQa },
+  ];
+
+  const hasBlock = gates.some((gate) => gate.status === "block");
+  const hasWarn = gates.some((gate) => gate.status === "warn");
+  const status = hasBlock ? "blocked" : hasWarn ? "review-required" : "promotable";
+
+  return {
+    status,
+    summary:
+      status === "promotable"
+        ? "Sandbox promotion evidence is promotable."
+        : status === "review-required"
+          ? "Sandbox promotion evidence requires review before promotion."
+          : "Sandbox promotion evidence is blocked until failing gates are cleared.",
+    gates,
+  };
+};

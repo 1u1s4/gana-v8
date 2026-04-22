@@ -124,6 +124,44 @@ const createSandboxCertificationFixture = async (input: {
       allowedHosts: ["sandbox-ci.local"],
       cronDryRunOnly: true,
     },
+    policy: {
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write"],
+      secretsPolicy: {
+        mode: "allow-sandbox-secrets",
+        allowedSecretRefs: ["sandbox/ci-smoke/provider-token"],
+        allowProductionCredentials: false,
+      },
+      capabilityAllowlist: ["fixtures.read", "odds.read", "cron.validate"],
+      memoryIsolation: {
+        strategy: "profile-run-namespace",
+        namespaceRoot: "sandbox-memory://ci-smoke",
+        allowProductionMemory: false,
+      },
+      sessionIsolation: {
+        strategy: "profile-run-namespace",
+        namespaceRoot: "sandbox-session://ci-smoke",
+        allowSharedSessions: false,
+      },
+      skillPolicy: {
+        mode: "allowlist",
+        defaultDeny: true,
+        enabledSkills: ["ops-audit"],
+      },
+      requiresManualQa: false,
+      defaultDeny: true,
+    },
+    promotion: {
+      status: "promotable",
+      summary: "Sandbox promotion evidence is promotable.",
+      gates: [
+        { name: "sandbox-certification", status: "pass", detail: "Certification evidence matches the tracked golden snapshot." },
+        { name: "contract-coverage", status: "pass", detail: "Contract coverage assertions are included." },
+        { name: "cron-workflows", status: "pass", detail: "Cron workflows are dry-run only." },
+        { name: "publication-safety", status: "pass", detail: "Publication side effects remain disabled." },
+        { name: "capability-isolation", status: "pass", detail: "Default deny is active." },
+        { name: "manual-qa", status: "pass", detail: "No manual QA review is required." },
+      ],
+    },
   };
 
   await writeFile(
@@ -151,6 +189,8 @@ const createSandboxCertificationFixture = async (input: {
           generatedAt: "2026-08-16T20:30:00.000Z",
           summary: {
             fixturePackId: "football-dual-smoke",
+            promotion: goldenSnapshot.promotion,
+            policy: goldenSnapshot.policy,
           },
           goldenSnapshot: evidenceSnapshot,
         },

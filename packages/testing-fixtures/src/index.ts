@@ -85,10 +85,52 @@ export type SandboxProfileName =
   | "local-dev"
   | "ci-smoke"
   | "ci-regression"
-  | "historical-backtest";
+  | "historical-backtest"
+  | "staging-like"
+  | "hybrid"
+  | "chaos-provider"
+  | "human-qa-demo";
 
 export type ProviderMode = "mock" | "replay" | "disabled" | "live-readonly";
 export type RunnerMode = "smoke" | "replay" | "cron-validation";
+export type SandboxSideEffect =
+  | "sandbox-object-storage-write"
+  | "sandbox-queue-write"
+  | "network-live-readonly"
+  | "human-review";
+export type SandboxCapability =
+  | "fixtures.read"
+  | "odds.read"
+  | "research.read"
+  | "research.assignments"
+  | "cron.validate"
+  | "publication.inspect"
+  | "operator.review";
+export type SandboxSkill = "fixture-inspection" | "research-triage" | "ops-audit" | "manual-qa";
+
+export interface SandboxSecretsPolicy {
+  readonly mode: "forbid-real-secrets" | "allow-sandbox-secrets";
+  readonly allowedSecretRefs: readonly string[];
+  readonly allowProductionCredentials: false;
+}
+
+export interface SandboxMemoryIsolationPolicy {
+  readonly strategy: "profile-run-namespace";
+  readonly namespaceRoot: string;
+  readonly allowProductionMemory: false;
+}
+
+export interface SandboxSessionIsolationPolicy {
+  readonly strategy: "profile-run-namespace";
+  readonly namespaceRoot: string;
+  readonly allowSharedSessions: false;
+}
+
+export interface SandboxSkillPolicy {
+  readonly mode: "allowlist";
+  readonly defaultDeny: true;
+  readonly enabledSkills: readonly SandboxSkill[];
+}
 
 export interface ReplayEvent {
   readonly id: string;
@@ -104,6 +146,8 @@ export interface SyntheticFixturePack {
   readonly seed: string;
   readonly sport: string;
   readonly profileHints: readonly SandboxProfileName[];
+  readonly assertionHints: readonly string[];
+  readonly promotionExpectation: "normal" | "review-required";
   readonly fixtures: readonly FixtureEntity[];
   readonly replayEvents: readonly ReplayEvent[];
   readonly validationTargets: {
@@ -134,6 +178,13 @@ export interface SandboxProfileConfig {
     readonly allowedHosts: readonly string[];
     readonly objectStorageRoot: string;
     readonly redisPrefixRoot: string;
+    readonly sideEffects: readonly SandboxSideEffect[];
+    readonly secretsPolicy: SandboxSecretsPolicy;
+    readonly capabilityAllowlist: readonly SandboxCapability[];
+    readonly memoryIsolation: SandboxMemoryIsolationPolicy;
+    readonly sessionIsolation: SandboxSessionIsolationPolicy;
+    readonly skillPolicy: SandboxSkillPolicy;
+    readonly requiresManualQa: boolean;
   };
 }
 
@@ -217,9 +268,11 @@ const createSyntheticPack = (input: {
   readonly id: string;
   readonly seed: string;
   readonly profileHints: readonly SandboxProfileName[];
+  readonly assertionHints: readonly string[];
+  readonly promotionExpectation: "normal" | "review-required";
   readonly baseKickoff: string;
   readonly teams: readonly [string, string][];
-  readonly replayShape: "smoke" | "odds-swing";
+  readonly replayShape: "smoke" | "odds-swing" | "hybrid-mix" | "chaos-drill" | "manual-qa";
 }): SyntheticFixturePack => {
   const rand = createPrng(input.seed);
 
@@ -275,6 +328,90 @@ const createSyntheticPack = (input: {
       return nominalEvents;
     }
 
+    if (input.replayShape === "hybrid-mix") {
+      return [
+        ...nominalEvents,
+        {
+          id: `${baseId}-research-hybrid`,
+          fixtureId: fixture.id,
+          offsetMinutes: index * 10 + 11,
+          channel: "research" as const,
+          payload: {
+            event: "research.hybrid_snapshot",
+            providerMode: index % 2 === 0 ? "live-readonly" : "replay",
+            safeFallback: true,
+          },
+        },
+        {
+          id: `${baseId}-validation-hybrid`,
+          fixtureId: fixture.id,
+          offsetMinutes: index * 10 + 16,
+          channel: "validation" as const,
+          payload: {
+            event: "validation.hybrid_gate",
+            verdict: "pass",
+            operatorReview: false,
+          },
+        },
+      ];
+    }
+
+    if (input.replayShape === "chaos-drill") {
+      return [
+        ...nominalEvents,
+        {
+          id: `${baseId}-research-chaos`,
+          fixtureId: fixture.id,
+          offsetMinutes: index * 10 + 8,
+          channel: "research" as const,
+          payload: {
+            event: "research.provider_fault",
+            fault: index % 2 === 0 ? "timeout" : "stale-data",
+            severity: index === 0 ? "high" : "medium",
+          },
+        },
+        {
+          id: `${baseId}-validation-chaos`,
+          fixtureId: fixture.id,
+          offsetMinutes: index * 10 + 14,
+          channel: "validation" as const,
+          payload: {
+            event: "validation.degradation_gate",
+            verdict: index === 0 ? "review" : "pass",
+            operatorReview: true,
+          },
+        },
+      ];
+    }
+
+    if (input.replayShape === "manual-qa") {
+      return [
+        ...nominalEvents,
+        {
+          id: `${baseId}-research-manual`,
+          fixtureId: fixture.id,
+          offsetMinutes: index * 10 + 9,
+          channel: "research" as const,
+          payload: {
+            event: "research.manual_checkpoint",
+            checklist: true,
+            operatorReview: true,
+          },
+        },
+        {
+          id: `${baseId}-validation-manual`,
+          fixtureId: fixture.id,
+          offsetMinutes: index * 10 + 15,
+          channel: "validation" as const,
+          payload: {
+            event: "validation.manual_gate",
+            verdict: "review",
+            operatorReview: true,
+          },
+        },
+      ];
+    }
+
     return [
       ...nominalEvents,
       {
@@ -307,6 +444,8 @@ const createSyntheticPack = (input: {
     seed: input.seed,
     sport: "football",
     profileHints: input.profileHints,
+    assertionHints: input.assertionHints,
+    promotionExpectation: input.promotionExpectation,
     fixtures,
     replayEvents,
     validationTargets: {
@@ -322,6 +461,8 @@ const fixturePackCatalog = {
     id: "football-dual-smoke",
     seed: "smoke-seed-2026",
     profileHints: ["local-dev", "ci-smoke"],
+    assertionHints: ["smoke-health", "contract-coverage"],
+    promotionExpectation: "normal",
     baseKickoff: baseTimestamp,
     teams: [
       ["Chelsea", "Arsenal"],
@@ -333,6 +474,8 @@ const fixturePackCatalog = {
     id: "football-replay-late-swing",
     seed: "replay-seed-2026",
     profileHints: ["ci-regression", "historical-backtest"],
+    assertionHints: ["replay-integrity", "contract-coverage"],
+    promotionExpectation: "normal",
     baseKickoff: "2026-05-09T17:30:00.000Z",
     teams: [
       ["Inter", "Milan"],
@@ -341,7 +484,98 @@ const fixturePackCatalog = {
     ],
     replayShape: "odds-swing",
   }),
+  "football-staging-parity": createSyntheticPack({
+    id: "football-staging-parity",
+    seed: "staging-parity-seed-2026",
+    profileHints: ["staging-like"],
+    assertionHints: ["staging-parity", "publication-safety", "contract-coverage"],
+    promotionExpectation: "normal",
+    baseKickoff: "2026-09-12T18:00:00.000Z",
+    teams: [
+      ["Manchester City", "Tottenham"],
+      ["Atletico Madrid", "Sevilla"],
+    ],
+    replayShape: "odds-swing",
+  }),
+  "football-hybrid-routing": createSyntheticPack({
+    id: "football-hybrid-routing",
+    seed: "hybrid-routing-seed-2026",
+    profileHints: ["hybrid"],
+    assertionHints: ["mixed-provider-routing", "contract-coverage"],
+    promotionExpectation: "normal",
+    baseKickoff: "2026-10-02T17:00:00.000Z",
+    teams: [
+      ["Benfica", "Porto"],
+      ["Ajax", "PSV"],
+    ],
+    replayShape: "hybrid-mix",
+  }),
+  "football-chaos-provider": createSyntheticPack({
+    id: "football-chaos-provider",
+    seed: "chaos-provider-seed-2026",
+    profileHints: ["chaos-provider"],
+    assertionHints: ["chaos-provider-degradation", "contract-coverage"],
+    promotionExpectation: "review-required",
+    baseKickoff: "2026-11-05T19:30:00.000Z",
+    teams: [
+      ["Liverpool", "Newcastle"],
+      ["Roma", "Napoli"],
+    ],
+    replayShape: "chaos-drill",
+  }),
+  "football-human-qa-demo": createSyntheticPack({
+    id: "football-human-qa-demo",
+    seed: "human-qa-seed-2026",
+    profileHints: ["human-qa-demo"],
+    assertionHints: ["manual-qa-checklist", "contract-coverage"],
+    promotionExpectation: "review-required",
+    baseKickoff: "2026-12-08T20:00:00.000Z",
+    teams: [
+      ["Club America", "Pumas"],
+      ["LAFC", "Seattle Sounders"],
+    ],
+    replayShape: "manual-qa",
+  }),
 } as const satisfies Record<string, SyntheticFixturePack>;
+
+const createProfileIsolation = (input: {
+  readonly profileName: SandboxProfileName;
+  readonly allowedHosts: readonly string[];
+  readonly objectStorageRoot: string;
+  readonly redisPrefixRoot: string;
+  readonly sideEffects: readonly SandboxSideEffect[];
+  readonly capabilityAllowlist: readonly SandboxCapability[];
+  readonly enabledSkills: readonly SandboxSkill[];
+  readonly requiresManualQa: boolean;
+}): SandboxProfileConfig["isolation"] => ({
+  publishEnabled: false,
+  allowedHosts: input.allowedHosts,
+  objectStorageRoot: input.objectStorageRoot,
+  redisPrefixRoot: input.redisPrefixRoot,
+  sideEffects: input.sideEffects,
+  secretsPolicy: {
+    mode: "allow-sandbox-secrets",
+    allowedSecretRefs: [`sandbox/${input.profileName}/provider-token`, `sandbox/${input.profileName}/ops-token`],
+    allowProductionCredentials: false,
+  },
+  capabilityAllowlist: input.capabilityAllowlist,
+  memoryIsolation: {
+    strategy: "profile-run-namespace",
+    namespaceRoot: `sandbox-memory://${input.profileName}`,
+    allowProductionMemory: false,
+  },
+  sessionIsolation: {
+    strategy: "profile-run-namespace",
+    namespaceRoot: `sandbox-session://${input.profileName}`,
+    allowSharedSessions: false,
+  },
+  skillPolicy: {
+    mode: "allowlist",
+    defaultDeny: true,
+    enabledSkills: input.enabledSkills,
+  },
+  requiresManualQa: input.requiresManualQa,
+});
 
 const profileCatalog: Readonly<Record<SandboxProfileName, SandboxProfileConfig>> = {
   "local-dev": {
@@ -359,12 +593,16 @@ const profileCatalog: Readonly<Record<SandboxProfileName, SandboxProfileConfig>>
     cronValidation: [
       { jobName: "validation-smoke", cadenceMinutes: 15, lookbackMinutes: 120, dryRun: true, writesAllowed: false },
     ],
-    isolation: {
-      publishEnabled: false,
+    isolation: createProfileIsolation({
+      profileName: "local-dev",
       allowedHosts: ["localhost", "127.0.0.1"],
       objectStorageRoot: "sandbox://local-dev",
       redisPrefixRoot: "sandbox:local-dev",
-    },
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "research.read", "cron.validate"],
+      enabledSkills: ["fixture-inspection"],
+      requiresManualQa: false,
+    }),
   },
   "ci-smoke": {
     name: "ci-smoke",
@@ -381,12 +619,16 @@ const profileCatalog: Readonly<Record<SandboxProfileName, SandboxProfileConfig>>
     cronValidation: [
       { jobName: "cron-health-smoke", cadenceMinutes: 30, lookbackMinutes: 180, dryRun: true, writesAllowed: false },
     ],
-    isolation: {
-      publishEnabled: false,
+    isolation: createProfileIsolation({
+      profileName: "ci-smoke",
       allowedHosts: ["sandbox-ci.local"],
       objectStorageRoot: "sandbox://ci-smoke",
       redisPrefixRoot: "sandbox:ci-smoke",
-    },
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "cron.validate"],
+      enabledSkills: ["ops-audit"],
+      requiresManualQa: false,
+    }),
   },
   "ci-regression": {
     name: "ci-regression",
@@ -404,12 +646,16 @@ const profileCatalog: Readonly<Record<SandboxProfileName, SandboxProfileConfig>>
       { jobName: "cron-regression-diff", cadenceMinutes: 60, lookbackMinutes: 720, dryRun: true, writesAllowed: false },
       { jobName: "cron-regression-scorecard", cadenceMinutes: 180, lookbackMinutes: 1440, dryRun: true, writesAllowed: false },
     ],
-    isolation: {
-      publishEnabled: false,
+    isolation: createProfileIsolation({
+      profileName: "ci-regression",
       allowedHosts: ["sandbox-regression.local"],
       objectStorageRoot: "sandbox://ci-regression",
       redisPrefixRoot: "sandbox:ci-regression",
-    },
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "research.read", "research.assignments", "cron.validate"],
+      enabledSkills: ["fixture-inspection", "research-triage"],
+      requiresManualQa: false,
+    }),
   },
   "historical-backtest": {
     name: "historical-backtest",
@@ -426,14 +672,193 @@ const profileCatalog: Readonly<Record<SandboxProfileName, SandboxProfileConfig>>
     cronValidation: [
       { jobName: "cron-backtest-snapshot", cadenceMinutes: 120, lookbackMinutes: 2880, dryRun: true, writesAllowed: false },
     ],
-    isolation: {
-      publishEnabled: false,
+    isolation: createProfileIsolation({
+      profileName: "historical-backtest",
       allowedHosts: ["sandbox-historical.local"],
       objectStorageRoot: "sandbox://historical-backtest",
       redisPrefixRoot: "sandbox:historical-backtest",
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write", "network-live-readonly"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "research.read", "research.assignments", "cron.validate"],
+      enabledSkills: ["fixture-inspection", "research-triage"],
+      requiresManualQa: false,
+    }),
+  },
+  "staging-like": {
+    name: "staging-like",
+    description: "Highest parity sandbox profile with live-readonly provider policy and publication safety locked down.",
+    providerModes: {
+      fixtures_api: "live-readonly",
+      odds_api: "live-readonly",
+      research_api: "replay",
+      publish_api: "disabled",
     },
+    workerTopology: ["sandbox-runner", "research-worker", "validation-worker", "scoring-worker", "ingestion-worker"],
+    clockMode: "virtual",
+    seedMode: "snapshot-boot",
+    cronValidation: [
+      { jobName: "cron-staging-parity", cadenceMinutes: 60, lookbackMinutes: 360, dryRun: true, writesAllowed: false },
+      { jobName: "cron-staging-publication-safety", cadenceMinutes: 180, lookbackMinutes: 1440, dryRun: true, writesAllowed: false },
+    ],
+    isolation: createProfileIsolation({
+      profileName: "staging-like",
+      allowedHosts: ["sandbox-staging.local", "api-football-v1.p.rapidapi.com"],
+      objectStorageRoot: "sandbox://staging-like",
+      redisPrefixRoot: "sandbox:staging-like",
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write", "network-live-readonly"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "research.read", "research.assignments", "cron.validate", "publication.inspect"],
+      enabledSkills: ["fixture-inspection", "research-triage", "ops-audit"],
+      requiresManualQa: false,
+    }),
+  },
+  hybrid: {
+    name: "hybrid",
+    description: "Mixed-provider sandbox with replay fixtures, mock assists, and explicit live-readonly policy tracing.",
+    providerModes: {
+      fixtures_api: "replay",
+      odds_api: "live-readonly",
+      research_api: "mock",
+      publish_api: "disabled",
+    },
+    workerTopology: ["sandbox-runner", "research-worker", "validation-worker", "scoring-worker"],
+    clockMode: "virtual",
+    seedMode: "snapshot-boot",
+    cronValidation: [
+      { jobName: "cron-hybrid-routing", cadenceMinutes: 45, lookbackMinutes: 240, dryRun: true, writesAllowed: false },
+    ],
+    isolation: createProfileIsolation({
+      profileName: "hybrid",
+      allowedHosts: ["sandbox-hybrid.local", "api-football-v1.p.rapidapi.com"],
+      objectStorageRoot: "sandbox://hybrid",
+      redisPrefixRoot: "sandbox:hybrid",
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write", "network-live-readonly"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "research.read", "research.assignments", "cron.validate", "publication.inspect"],
+      enabledSkills: ["fixture-inspection", "research-triage", "ops-audit"],
+      requiresManualQa: false,
+    }),
+  },
+  "chaos-provider": {
+    name: "chaos-provider",
+    description: "Deterministic failure-injection profile for validating safe degradation and promotion review gates.",
+    providerModes: {
+      fixtures_api: "replay",
+      odds_api: "replay",
+      research_api: "replay",
+      publish_api: "disabled",
+    },
+    workerTopology: ["sandbox-runner", "research-worker", "validation-worker", "scoring-worker"],
+    clockMode: "virtual",
+    seedMode: "snapshot-boot",
+    cronValidation: [
+      { jobName: "cron-chaos-drill", cadenceMinutes: 30, lookbackMinutes: 180, dryRun: true, writesAllowed: false },
+    ],
+    isolation: createProfileIsolation({
+      profileName: "chaos-provider",
+      allowedHosts: ["sandbox-chaos.local"],
+      objectStorageRoot: "sandbox://chaos-provider",
+      redisPrefixRoot: "sandbox:chaos-provider",
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write", "human-review"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "research.read", "research.assignments", "cron.validate", "operator.review"],
+      enabledSkills: ["fixture-inspection", "research-triage", "ops-audit"],
+      requiresManualQa: true,
+    }),
+  },
+  "human-qa-demo": {
+    name: "human-qa-demo",
+    description: "Operator-supervised QA walkthrough profile with checklist evidence and explicit manual review gates.",
+    providerModes: {
+      fixtures_api: "replay",
+      odds_api: "mock",
+      research_api: "mock",
+      publish_api: "disabled",
+    },
+    workerTopology: ["sandbox-runner", "validation-worker", "research-worker"],
+    clockMode: "virtual",
+    seedMode: "seed-boot",
+    cronValidation: [
+      { jobName: "cron-human-qa-checklist", cadenceMinutes: 90, lookbackMinutes: 240, dryRun: true, writesAllowed: false },
+    ],
+    isolation: createProfileIsolation({
+      profileName: "human-qa-demo",
+      allowedHosts: ["sandbox-human-qa.local"],
+      objectStorageRoot: "sandbox://human-qa-demo",
+      redisPrefixRoot: "sandbox:human-qa-demo",
+      sideEffects: ["sandbox-object-storage-write", "sandbox-queue-write", "human-review"],
+      capabilityAllowlist: ["fixtures.read", "odds.read", "research.read", "cron.validate", "operator.review"],
+      enabledSkills: ["fixture-inspection", "manual-qa", "ops-audit"],
+      requiresManualQa: true,
+    }),
   },
 };
+
+const ensureUnique = (values: readonly string[], label: string): void => {
+  if (new Set(values).size !== values.length) {
+    throw new Error(`Sandbox profile ${label} contains duplicated values`);
+  }
+};
+
+export const validateSandboxProfileConfig = (profile: SandboxProfileConfig): void => {
+  if (profile.isolation.publishEnabled) {
+    throw new Error(`Sandbox profile ${profile.name} must keep publishing disabled`);
+  }
+
+  if (profile.providerModes.publish_api !== "disabled") {
+    throw new Error(`Sandbox profile ${profile.name} must disable publish_api`);
+  }
+
+  if (profile.isolation.allowedHosts.length === 0) {
+    throw new Error(`Sandbox profile ${profile.name} must define at least one allowed host`);
+  }
+
+  ensureUnique(profile.isolation.capabilityAllowlist, `${profile.name}:capabilityAllowlist`);
+  ensureUnique(profile.isolation.skillPolicy.enabledSkills, `${profile.name}:enabledSkills`);
+
+  if (!profile.isolation.skillPolicy.defaultDeny || profile.isolation.skillPolicy.mode !== "allowlist") {
+    throw new Error(`Sandbox profile ${profile.name} must enforce default-deny skill policy`);
+  }
+
+  if (profile.isolation.secretsPolicy.allowProductionCredentials) {
+    throw new Error(`Sandbox profile ${profile.name} must forbid production credentials`);
+  }
+
+  const usesLiveReadonly = Object.values(profile.providerModes).some((mode) => mode === "live-readonly");
+  const allowsReadonlyNetwork = profile.isolation.sideEffects.includes("network-live-readonly");
+  if (usesLiveReadonly !== allowsReadonlyNetwork) {
+    throw new Error(
+      `Sandbox profile ${profile.name} must align live-readonly providers with network-live-readonly side effects`,
+    );
+  }
+
+  if (
+    profile.isolation.requiresManualQa &&
+    !profile.isolation.capabilityAllowlist.includes("operator.review")
+  ) {
+    throw new Error(`Sandbox profile ${profile.name} requires manual QA but lacks operator.review capability`);
+  }
+};
+
+export interface SandboxPolicySnapshot {
+  readonly sideEffects: readonly SandboxSideEffect[];
+  readonly secretsPolicy: SandboxSecretsPolicy;
+  readonly capabilityAllowlist: readonly SandboxCapability[];
+  readonly memoryIsolation: SandboxMemoryIsolationPolicy;
+  readonly sessionIsolation: SandboxSessionIsolationPolicy;
+  readonly skillPolicy: SandboxSkillPolicy;
+  readonly requiresManualQa: boolean;
+  readonly defaultDeny: true;
+}
+
+export const createSandboxPolicySnapshot = (
+  profile: SandboxProfileConfig,
+): SandboxPolicySnapshot => ({
+  sideEffects: profile.isolation.sideEffects,
+  secretsPolicy: profile.isolation.secretsPolicy,
+  capabilityAllowlist: profile.isolation.capabilityAllowlist,
+  memoryIsolation: profile.isolation.memoryIsolation,
+  sessionIsolation: profile.isolation.sessionIsolation,
+  skillPolicy: profile.isolation.skillPolicy,
+  requiresManualQa: profile.isolation.requiresManualQa,
+  defaultDeny: profile.isolation.skillPolicy.defaultDeny,
+});
 
 export const listSyntheticFixturePackIds = (): readonly string[] =>
   Object.keys(fixturePackCatalog).sort();
@@ -476,6 +901,7 @@ export const createSandboxNamespaces = (input: {
   readonly profile: SandboxProfileConfig;
   readonly now?: string;
 }): SandboxNamespaces => {
+  validateSandboxProfileConfig(input.profile);
   const createdAt = input.now ?? baseTimestamp;
   const createScopedNamespace = (scope: string, storageSegment: string, queueSegment: string): SandboxNamespace => {
     const namespace = createSandboxNamespace({
@@ -488,6 +914,8 @@ export const createSandboxNamespaces = (input: {
       metadata: {
         dryRun: "true",
         profile: input.profile.name,
+        memoryIsolation: input.profile.isolation.memoryIsolation.strategy,
+        sessionIsolation: input.profile.isolation.sessionIsolation.strategy,
       },
       createdAt,
       updatedAt: createdAt,
@@ -514,6 +942,10 @@ export const createSandboxRunManifest = (input: {
 }): SandboxRunManifest => {
   const profile = getSandboxProfileConfig(input.profileName);
   const fixturePack = getSyntheticFixturePack(input.packId);
+  validateSandboxProfileConfig(profile);
+  if (!fixturePack.profileHints.includes(input.profileName)) {
+    throw new Error(`Fixture pack ${input.packId} is not approved for profile ${input.profileName}`);
+  }
   const identifiers = createSandboxIdentifiers({
     profileName: input.profileName,
     packId: input.packId,
@@ -535,8 +967,10 @@ export const createSandboxRunManifest = (input: {
       input.assertionsPack ?? [
         "namespace-isolation",
         "provider-routing",
+        "policy-default-deny",
         "synthetic-fixture-integrity",
         "cron-validation-dry-run",
+        ...fixturePack.assertionHints,
       ],
   };
 };

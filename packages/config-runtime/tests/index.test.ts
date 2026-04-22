@@ -48,6 +48,32 @@ test("loadRuntimeConfig honors explicit environment overrides", () => {
   assert.equal(config.flags.demoMode, false);
 });
 
+test("loadRuntimeConfig supports the new sandbox-aligned runtime profiles", () => {
+  const hybrid = loadRuntimeConfig({
+    env: {
+      GANA_RUNTIME_PROFILE: "hybrid",
+    },
+  });
+  const chaos = loadRuntimeConfig({
+    env: {
+      GANA_RUNTIME_PROFILE: "chaos-provider",
+    },
+  });
+  const humanQa = loadRuntimeConfig({
+    env: {
+      GANA_RUNTIME_PROFILE: "human-qa-demo",
+    },
+  });
+
+  assert.equal(hybrid.app.profile, "hybrid");
+  assert.equal(hybrid.provider.source, "live-readonly");
+  assert.equal(chaos.app.profile, "chaos-provider");
+  assert.equal(chaos.provider.source, "replay");
+  assert.equal(humanQa.app.profile, "human-qa-demo");
+  assert.equal(humanQa.provider.source, "mock");
+  assert.equal(humanQa.flags.demoMode, true);
+});
+
 test("loadRuntimeConfig rejects unsupported enum values", () => {
   assert.throws(
     () =>
