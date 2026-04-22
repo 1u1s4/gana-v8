@@ -46,6 +46,72 @@ export interface FixtureLike {
   readonly metadata: Record<string, string>;
 }
 
+export interface ResearchFormSignal {
+  readonly home: number;
+  readonly away: number;
+  readonly updatedAt?: string;
+}
+
+export interface ResearchScheduleSignal {
+  readonly restHomeDays: number;
+  readonly restAwayDays: number;
+  readonly updatedAt?: string;
+}
+
+export interface ResearchAvailabilitySignal {
+  readonly injuriesHome: number;
+  readonly injuriesAway: number;
+  readonly official: boolean;
+  readonly updatedAt?: string;
+  readonly homeUnavailableNames?: readonly string[];
+  readonly awayUnavailableNames?: readonly string[];
+}
+
+export interface ResearchWeatherSignal {
+  readonly severity: number;
+  readonly elevatedRisk?: boolean;
+  readonly updatedAt?: string;
+}
+
+export interface ResearchMarketSignal {
+  readonly lean?: Exclude<EvidenceDirection, "neutral">;
+  readonly move?: number;
+  readonly oddsHomeImplied?: number;
+  readonly oddsDrawImplied?: number;
+  readonly oddsAwayImplied?: number;
+  readonly updatedAt?: string;
+}
+
+export interface ResearchContextSignal {
+  readonly derby: boolean;
+  readonly drawBias?: number;
+  readonly updatedAt?: string;
+}
+
+export interface ResearchLineupTeamSignal {
+  readonly status: "projected" | "confirmed";
+  readonly formation?: string;
+  readonly starters?: readonly string[];
+  readonly bench?: readonly string[];
+}
+
+export interface ResearchLineupsSignal {
+  readonly official: boolean;
+  readonly updatedAt?: string;
+  readonly home?: ResearchLineupTeamSignal;
+  readonly away?: ResearchLineupTeamSignal;
+}
+
+export interface ResearchSignalSnapshot {
+  readonly form?: ResearchFormSignal;
+  readonly schedule?: ResearchScheduleSignal;
+  readonly availability?: ResearchAvailabilitySignal;
+  readonly weather?: ResearchWeatherSignal;
+  readonly market?: ResearchMarketSignal;
+  readonly context?: ResearchContextSignal;
+  readonly lineups?: ResearchLineupsSignal;
+}
+
 export type ResearchKickoffPhase =
   | "precheck"
   | "midcycle"
@@ -274,6 +340,7 @@ export interface ResearchBundle {
 export interface ResearchEngineOptions {
   readonly now?: () => string;
   readonly synthesisHook?: ResearchSynthesisHook;
+  readonly signals?: ResearchSignalSnapshot;
 }
 
 export interface BuildResearchBundleOptions extends ResearchEngineOptions {
@@ -288,6 +355,60 @@ interface ResearchExecutionArtifacts {
   readonly assignments: readonly ResearchAssignmentResult[];
   readonly sources: readonly SourceRecord[];
   readonly evidence: readonly EvidenceItem[];
+}
+
+interface ResolvedResearchSignals {
+  readonly form: {
+    readonly available: boolean;
+    readonly home: number;
+    readonly away: number;
+    readonly updatedAt: string;
+  };
+  readonly schedule: {
+    readonly available: boolean;
+    readonly restHomeDays: number;
+    readonly restAwayDays: number;
+    readonly updatedAt: string;
+  };
+  readonly availability: {
+    readonly available: boolean;
+    readonly injuriesHome: number;
+    readonly injuriesAway: number;
+    readonly official: boolean;
+    readonly updatedAt: string;
+    readonly sourceProvider: string;
+    readonly sourceReference: string;
+    readonly homeUnavailableNames: readonly string[];
+    readonly awayUnavailableNames: readonly string[];
+  };
+  readonly weather: {
+    readonly available: boolean;
+    readonly severity: number;
+    readonly elevatedRisk: boolean;
+    readonly updatedAt: string;
+  };
+  readonly market: {
+    readonly available: boolean;
+    readonly lean?: Exclude<EvidenceDirection, "neutral">;
+    readonly move: number;
+    readonly oddsHomeImplied?: number;
+    readonly oddsDrawImplied?: number;
+    readonly oddsAwayImplied?: number;
+    readonly updatedAt: string;
+  };
+  readonly context: {
+    readonly available: boolean;
+    readonly derby: boolean;
+    readonly drawBias: number;
+    readonly updatedAt: string;
+  };
+  readonly lineups: {
+    readonly available: boolean;
+    readonly official: boolean;
+    readonly updatedAt: string;
+    readonly home?: ResearchLineupTeamSignal;
+    readonly away?: ResearchLineupTeamSignal;
+  };
 }
 
 interface ClaimSeed {
@@ -321,16 +442,34 @@ const SOURCE_AUTHORITY: Record<
   string,
   { readonly sourceType: SourceType; readonly tier: SourceTier; readonly authority: number; readonly official: boolean }
 > = {
-  "fixture-metadata": {
+  "canonical-fixture": {
     sourceType: "metadata",
     tier: "B",
     authority: 0.78,
+    official: false,
+  },
+  "fixture-metadata": {
+    sourceType: "metadata",
+    tier: "C",
+    authority: 0.62,
     official: false,
   },
   "official-team-feed": {
     sourceType: "official",
     tier: "A",
     authority: 0.95,
+    official: true,
+  },
+  "availability-snapshot": {
+    sourceType: "official",
+    tier: "A",
+    authority: 0.92,
+    official: true,
+  },
+  "lineup-snapshot": {
+    sourceType: "official",
+    tier: "A",
+    authority: 0.94,
     official: true,
   },
   "weather-feed": {
@@ -395,6 +534,167 @@ const metadataTimestamp = (
   }
 
   return fallback;
+};
+
+const maybeNumber = (value: number | undefined): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const maybeTimestamp = (value: string | undefined, fallback: string): string =>
+  value && Number.isFinite(Date.parse(value)) ? value : fallback;
+
+const resolveResearchSignals = (
+  fixture: FixtureLike,
+  input: ResearchSignalSnapshot | undefined,
+  generatedAt: string,
+): ResolvedResearchSignals => {
+  const metadata = fixture.metadata;
+  const formHomeFromMetadata = metadataString(metadata, "formHome");
+  const formAwayFromMetadata = metadataString(metadata, "formAway");
+  const restHomeFromMetadata = metadataString(metadata, "restHomeDays");
+  const restAwayFromMetadata = metadataString(metadata, "restAwayDays");
+  const injuriesHomeFromMetadata = metadataString(metadata, "injuriesHome");
+  const injuriesAwayFromMetadata = metadataString(metadata, "injuriesAway");
+  const weatherSeverityFromMetadata = metadataString(metadata, "weatherSeverity");
+  const marketLeanFromMetadata = metadataString(metadata, "marketLean");
+  const marketMoveFromMetadata = metadataString(metadata, "marketMove");
+  const drawBiasFromMetadata = metadataString(metadata, "drawBias");
+  const officialAvailabilityFromMetadata = metadataBoolean(metadata, "officialAvailability");
+  const officialLineupFromMetadata = metadataBoolean(metadata, "officialLineup");
+  const homeImpliedFromMetadata = maybeNumber(metadataNumber(metadata, "oddsHomeImplied", Number.NaN));
+  const drawImpliedFromMetadata = maybeNumber(metadataNumber(metadata, "oddsDrawImplied", Number.NaN));
+  const awayImpliedFromMetadata = maybeNumber(metadataNumber(metadata, "oddsAwayImplied", Number.NaN));
+
+  const lineupsAvailable =
+    input?.lineups !== undefined ||
+    officialLineupFromMetadata;
+  const lineupsOfficial =
+    input?.lineups?.official ??
+    officialLineupFromMetadata;
+  const lineupsUpdatedAt =
+    maybeTimestamp(
+      input?.lineups?.updatedAt,
+      metadataTimestamp(metadata, ["officialLineupUpdatedAt"], generatedAt),
+    );
+  const availabilityOfficial =
+    input?.availability?.official ??
+    (officialAvailabilityFromMetadata || lineupsOfficial);
+  const marketHomeImplied = maybeNumber(input?.market?.oddsHomeImplied) ?? homeImpliedFromMetadata;
+  const marketDrawImplied = maybeNumber(input?.market?.oddsDrawImplied) ?? drawImpliedFromMetadata;
+  const marketAwayImplied = maybeNumber(input?.market?.oddsAwayImplied) ?? awayImpliedFromMetadata;
+
+  return {
+    form: {
+      available: input?.form !== undefined || formHomeFromMetadata !== undefined || formAwayFromMetadata !== undefined,
+      home: input?.form?.home ?? metadataNumber(metadata, "formHome", 0.5),
+      away: input?.form?.away ?? metadataNumber(metadata, "formAway", 0.5),
+      updatedAt: maybeTimestamp(input?.form?.updatedAt, metadataTimestamp(metadata, ["formUpdatedAt"], generatedAt)),
+    },
+    schedule: {
+      available:
+        input?.schedule !== undefined ||
+        restHomeFromMetadata !== undefined ||
+        restAwayFromMetadata !== undefined,
+      restHomeDays: input?.schedule?.restHomeDays ?? metadataNumber(metadata, "restHomeDays", 3),
+      restAwayDays: input?.schedule?.restAwayDays ?? metadataNumber(metadata, "restAwayDays", 3),
+      updatedAt: maybeTimestamp(
+        input?.schedule?.updatedAt,
+        metadataTimestamp(metadata, ["scheduleUpdatedAt"], generatedAt),
+      ),
+    },
+    availability: {
+      available:
+        input?.availability !== undefined ||
+        injuriesHomeFromMetadata !== undefined ||
+        injuriesAwayFromMetadata !== undefined ||
+        officialAvailabilityFromMetadata ||
+        lineupsAvailable,
+      injuriesHome: input?.availability?.injuriesHome ?? metadataNumber(metadata, "injuriesHome", 0),
+      injuriesAway: input?.availability?.injuriesAway ?? metadataNumber(metadata, "injuriesAway", 0),
+      official: availabilityOfficial,
+      updatedAt: maybeTimestamp(
+        input?.availability?.updatedAt,
+        metadataTimestamp(
+          metadata,
+          ["officialAvailabilityUpdatedAt", "injuriesUpdatedAt", "officialLineupUpdatedAt"],
+          generatedAt,
+        ),
+      ),
+      sourceProvider:
+        input?.availability !== undefined
+          ? "availability-snapshot"
+          : lineupsAvailable
+            ? "lineup-snapshot"
+            : "canonical-fixture",
+      sourceReference:
+        input?.availability !== undefined
+          ? "availability-snapshot"
+          : lineupsAvailable
+            ? "lineup-snapshot"
+            : "fixture-context",
+      homeUnavailableNames: [...(input?.availability?.homeUnavailableNames ?? [])],
+      awayUnavailableNames: [...(input?.availability?.awayUnavailableNames ?? [])],
+    },
+    weather: {
+      available:
+        input?.weather !== undefined ||
+        weatherSeverityFromMetadata !== undefined ||
+        metadataString(metadata, "weatherRisk") !== undefined ||
+        metadataString(metadata, "weatherUpdatedAt") !== undefined,
+      severity:
+        input?.weather?.severity ??
+        clamp(
+          Math.max(
+            metadataNumber(metadata, "weatherSeverity", 0),
+            metadataBoolean(metadata, "weatherRisk") ? 0.45 : 0,
+          ),
+          0,
+          1,
+        ),
+      elevatedRisk:
+        input?.weather?.elevatedRisk ??
+        metadataBoolean(metadata, "weatherRisk"),
+      updatedAt: maybeTimestamp(
+        input?.weather?.updatedAt,
+        metadataTimestamp(metadata, ["weatherUpdatedAt"], generatedAt),
+      ),
+    },
+    market: {
+      available:
+        input?.market !== undefined ||
+        marketLeanFromMetadata !== undefined ||
+        marketMoveFromMetadata !== undefined ||
+        homeImpliedFromMetadata !== undefined ||
+        awayImpliedFromMetadata !== undefined,
+      ...(input?.market?.lean ? { lean: input.market.lean } : {}),
+      move: maybeNumber(input?.market?.move) ?? Math.abs(metadataNumber(metadata, "marketMove", 0)),
+      ...(marketHomeImplied !== undefined ? { oddsHomeImplied: marketHomeImplied } : {}),
+      ...(marketDrawImplied !== undefined ? { oddsDrawImplied: marketDrawImplied } : {}),
+      ...(marketAwayImplied !== undefined ? { oddsAwayImplied: marketAwayImplied } : {}),
+      updatedAt: maybeTimestamp(
+        input?.market?.updatedAt,
+        metadataTimestamp(metadata, ["marketUpdatedAt"], generatedAt),
+      ),
+    },
+    context: {
+      available:
+        input?.context !== undefined ||
+        metadataBoolean(metadata, "derby") ||
+        drawBiasFromMetadata !== undefined,
+      derby: input?.context?.derby ?? metadataBoolean(metadata, "derby"),
+      drawBias: maybeNumber(input?.context?.drawBias) ?? metadataNumber(metadata, "drawBias", 0),
+      updatedAt: maybeTimestamp(
+        input?.context?.updatedAt,
+        metadataTimestamp(metadata, ["contextUpdatedAt"], generatedAt),
+      ),
+    },
+    lineups: {
+      available: lineupsAvailable,
+      official: lineupsOfficial,
+      updatedAt: lineupsUpdatedAt,
+      ...(input?.lineups?.home ? { home: input.lineups.home } : {}),
+      ...(input?.lineups?.away ? { away: input.lineups.away } : {}),
+    },
+  };
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -497,31 +797,15 @@ const resolveKickoffPhase = (
 };
 
 const estimateCoverageMap = (
-  fixture: FixtureLike,
+  signals: ResolvedResearchSignals,
 ): ResearchCoverageMap => {
-  const metadata = fixture.metadata;
   return {
-    form: metadataString(metadata, "formHome") !== undefined || metadataString(metadata, "formAway") !== undefined,
-    schedule:
-      metadataString(metadata, "restHomeDays") !== undefined ||
-      metadataString(metadata, "restAwayDays") !== undefined,
-    availability:
-      metadataString(metadata, "injuriesHome") !== undefined ||
-      metadataString(metadata, "injuriesAway") !== undefined ||
-      metadataBoolean(metadata, "officialAvailability") ||
-      metadataBoolean(metadata, "officialLineup"),
-    weather:
-      metadataString(metadata, "weatherSeverity") !== undefined ||
-      metadataString(metadata, "weatherRisk") !== undefined ||
-      metadataString(metadata, "weatherUpdatedAt") !== undefined,
-    market:
-      metadataString(metadata, "marketLean") !== undefined ||
-      metadataString(metadata, "marketMove") !== undefined ||
-      metadataString(metadata, "oddsHomeImplied") !== undefined ||
-      metadataString(metadata, "oddsAwayImplied") !== undefined,
-    context:
-      metadataBoolean(metadata, "derby") ||
-      metadataString(metadata, "drawBias") !== undefined,
+    form: signals.form.available,
+    schedule: signals.schedule.available,
+    availability: signals.availability.available || signals.lineups.available,
+    weather: signals.weather.available,
+    market: signals.market.available,
+    context: signals.context.available,
   };
 };
 
@@ -580,9 +864,9 @@ const scoreCoverage = (
 };
 
 const buildPlanFocus = (
-  fixture: FixtureLike,
   kickoffPhase: ResearchKickoffPhase,
   coverage: ResearchCoverageMap,
+  signals: ResolvedResearchSignals,
 ): string[] => {
   const focus: string[] = [];
 
@@ -602,7 +886,7 @@ const buildPlanFocus = (
   if (!coverage.weather && kickoffPhase !== "precheck") {
     focus.push("Weather coverage is missing close to kickoff.");
   }
-  if (fixture.metadata.derby === "true") {
+  if (signals.context.derby) {
     focus.push("Derby context should keep volatility and draw scenarios in view.");
   }
 
@@ -665,8 +949,9 @@ const createAssignment = (
         : "",
     ]),
     sourceHints: uniqueStrings([
-      "fixture-metadata",
-      taskType === "lineup_projection" ? "official-team-feed" : "",
+      "canonical-fixture",
+      taskType === "lineup_projection" ? "availability-snapshot" : "",
+      taskType === "lineup_projection" ? "lineup-snapshot" : "",
       taskType === "weather_check" ? "weather-feed" : "",
       taskType === "market_crosscheck" ? "market-feed" : "",
     ]),
@@ -678,53 +963,62 @@ const createAssignment = (
 
 const discoverSourcesFromFixture = (
   fixture: FixtureLike,
+  signals: ResolvedResearchSignals,
   generatedAt: string,
 ): SourceRecord[] => {
-  const metadata = fixture.metadata;
   const sources: SourceRecord[] = [
-    createSourceRecord(fixture, "fixture-metadata", "canonical-fixture", generatedAt),
+    createSourceRecord(fixture, "canonical-fixture", "fixture-context", generatedAt),
   ];
 
-  if (metadataBoolean(metadata, "officialAvailability") || metadataBoolean(metadata, "officialLineup")) {
+  if (signals.availability.available) {
     sources.push(
       createSourceRecord(
         fixture,
-        "official-team-feed",
-        "availability",
-        metadataTimestamp(
-          metadata,
-          ["officialAvailabilityUpdatedAt", "officialLineupUpdatedAt"],
-          generatedAt,
-        ),
+        signals.availability.sourceProvider,
+        signals.availability.sourceReference,
+        signals.availability.updatedAt,
+        {
+          homeUnavailableCount: String(signals.availability.homeUnavailableNames.length),
+          awayUnavailableCount: String(signals.availability.awayUnavailableNames.length),
+        },
       ),
     );
   }
 
-  if (
-    metadataString(metadata, "weatherSeverity") !== undefined ||
-    metadataString(metadata, "weatherRisk") !== undefined
-  ) {
+  if (signals.lineups.available) {
+    sources.push(
+      createSourceRecord(
+        fixture,
+        "lineup-snapshot",
+        "lineup-snapshot",
+        signals.lineups.updatedAt,
+        {
+          official: String(signals.lineups.official),
+          homeStatus: signals.lineups.home?.status ?? "",
+          awayStatus: signals.lineups.away?.status ?? "",
+        },
+      ),
+    );
+  }
+
+  if (signals.weather.available) {
     sources.push(
       createSourceRecord(
         fixture,
         "weather-feed",
         "pregame-weather",
-        metadataTimestamp(metadata, ["weatherUpdatedAt"], generatedAt),
+        signals.weather.updatedAt,
       ),
     );
   }
 
-  if (
-    metadataString(metadata, "marketLean") !== undefined ||
-    metadataString(metadata, "marketMove") !== undefined ||
-    metadataString(metadata, "oddsHomeImplied") !== undefined
-  ) {
+  if (signals.market.available) {
     sources.push(
       createSourceRecord(
         fixture,
         "market-feed",
         "odds-snapshot",
-        metadataTimestamp(metadata, ["marketUpdatedAt"], generatedAt),
+        signals.market.updatedAt,
       ),
     );
   }
@@ -780,15 +1074,15 @@ const dedupeEvidence = (evidence: readonly EvidenceItem[]): EvidenceItem[] => {
 
 const createFormAndContextEvidence = (
   fixture: FixtureLike,
+  signals: ResolvedResearchSignals,
   generatedAt: string,
 ): EvidenceItem[] => {
-  const metadata = fixture.metadata;
   const evidence: EvidenceItem[] = [];
 
-  const homeForm = metadataNumber(metadata, "formHome", 0.5);
-  const awayForm = metadataNumber(metadata, "formAway", 0.5);
+  const homeForm = signals.form.home;
+  const awayForm = signals.form.away;
   const formDiff = homeForm - awayForm;
-  if (Math.abs(formDiff) >= 0.05) {
+  if (signals.form.available && Math.abs(formDiff) >= 0.05) {
     evidence.push({
       id: createEvidenceId(fixture.id, "form"),
       fixtureId: fixture.id,
@@ -798,17 +1092,17 @@ const createFormAndContextEvidence = (
       direction: formDiff >= 0 ? "home" : "away",
       confidence: 0.68,
       impact: clamp(Math.abs(formDiff) * 1.35, 0.08, 0.28),
-      source: { provider: "fixture-metadata", reference: "formHome/formAway" },
+      source: { provider: "canonical-fixture", reference: "form-window" },
       tags: ["form", fixture.competition],
-      extractedAt: metadataTimestamp(metadata, ["formUpdatedAt"], generatedAt),
+      extractedAt: signals.form.updatedAt,
       metadata: { homeForm: String(homeForm), awayForm: String(awayForm) },
     });
   }
 
-  const restHomeDays = metadataNumber(metadata, "restHomeDays", 3);
-  const restAwayDays = metadataNumber(metadata, "restAwayDays", 3);
+  const restHomeDays = signals.schedule.restHomeDays;
+  const restAwayDays = signals.schedule.restAwayDays;
   const restDiff = restHomeDays - restAwayDays;
-  if (Math.abs(restDiff) >= 1) {
+  if (signals.schedule.available && Math.abs(restDiff) >= 1) {
     evidence.push({
       id: createEvidenceId(fixture.id, "schedule"),
       fixtureId: fixture.id,
@@ -819,11 +1113,11 @@ const createFormAndContextEvidence = (
       confidence: 0.62,
       impact: clamp(Math.abs(restDiff) * 0.05, 0.05, 0.2),
       source: {
-        provider: "fixture-metadata",
-        reference: "restHomeDays/restAwayDays",
+        provider: "canonical-fixture",
+        reference: "rest-window",
       },
       tags: ["rest", "schedule"],
-      extractedAt: metadataTimestamp(metadata, ["scheduleUpdatedAt"], generatedAt),
+      extractedAt: signals.schedule.updatedAt,
       metadata: {
         restHomeDays: String(restHomeDays),
         restAwayDays: String(restAwayDays),
@@ -831,25 +1125,25 @@ const createFormAndContextEvidence = (
     });
   }
 
-  const drawBias = metadataNumber(metadata, "drawBias", 0);
-  if (drawBias >= 0.08) {
+  const drawBias = signals.context.drawBias;
+  if (signals.context.available && drawBias >= 0.08) {
     evidence.push({
       id: createEvidenceId(fixture.id, "draw-bias"),
       fixtureId: fixture.id,
       kind: "tactical",
       title: "Game-state compression",
-      summary: "Metadata suggests a slow-tempo or low-separation matchup that can support draw outcomes.",
+      summary: "Context signals suggest a slow-tempo or low-separation matchup that can support draw outcomes.",
       direction: "draw",
       confidence: 0.58,
       impact: clamp(drawBias * 0.8, 0.05, 0.18),
-      source: { provider: "fixture-metadata", reference: "drawBias" },
+      source: { provider: "canonical-fixture", reference: "context-draw-bias" },
       tags: ["draw", "tempo"],
-      extractedAt: metadataTimestamp(metadata, ["contextUpdatedAt"], generatedAt),
+      extractedAt: signals.context.updatedAt,
       metadata: { drawBias: String(drawBias) },
     });
   }
 
-  if (metadataBoolean(metadata, "derby")) {
+  if (signals.context.derby) {
     evidence.push({
       id: createEvidenceId(fixture.id, "derby"),
       fixtureId: fixture.id,
@@ -859,9 +1153,9 @@ const createFormAndContextEvidence = (
       direction: "draw",
       confidence: 0.55,
       impact: 0.08,
-      source: { provider: "fixture-metadata", reference: "derby" },
+      source: { provider: "canonical-fixture", reference: "context-derby" },
       tags: ["derby", "motivation"],
-      extractedAt: metadataTimestamp(metadata, ["contextUpdatedAt"], generatedAt),
+      extractedAt: signals.context.updatedAt,
       metadata: { derby: "true" },
     });
   }
@@ -871,49 +1165,84 @@ const createFormAndContextEvidence = (
 
 const createAvailabilityEvidence = (
   fixture: FixtureLike,
+  signals: ResolvedResearchSignals,
   generatedAt: string,
 ): EvidenceItem[] => {
-  const metadata = fixture.metadata;
-  const injuriesHome = metadataNumber(metadata, "injuriesHome", 0);
-  const injuriesAway = metadataNumber(metadata, "injuriesAway", 0);
-  if (injuriesHome === 0 && injuriesAway === 0 && !metadataBoolean(metadata, "officialAvailability")) {
+  const injuriesHome = signals.availability.injuriesHome;
+  const injuriesAway = signals.availability.injuriesAway;
+  const lineupDirection =
+    signals.lineups.home?.status === "confirmed" && signals.lineups.away?.status !== "confirmed"
+      ? "home"
+      : signals.lineups.away?.status === "confirmed" && signals.lineups.home?.status !== "confirmed"
+        ? "away"
+        : null;
+
+  if (
+    injuriesHome === 0 &&
+    injuriesAway === 0 &&
+    !signals.availability.official &&
+    lineupDirection === null
+  ) {
     return [];
   }
 
   const injuryDiff = injuriesAway - injuriesHome;
-  const provider = metadataBoolean(metadata, "officialAvailability") || metadataBoolean(metadata, "officialLineup")
-    ? "official-team-feed"
-    : "fixture-metadata";
-  const extractedAt = metadataTimestamp(
-    metadata,
-    ["officialAvailabilityUpdatedAt", "officialLineupUpdatedAt", "injuriesUpdatedAt"],
-    generatedAt,
-  );
+  const direction = injuryDiff !== 0 ? (injuryDiff >= 0 ? "home" : "away") : lineupDirection;
+  if (direction === null) {
+    return [];
+  }
+
+  const provider =
+    lineupDirection !== null
+      ? "lineup-snapshot"
+      : signals.availability.sourceProvider;
+  const extractedAt =
+    lineupDirection !== null
+      ? signals.lineups.updatedAt
+      : signals.availability.updatedAt;
+  const impact =
+    injuryDiff !== 0
+      ? clamp(Math.abs(injuryDiff) * 0.06, 0.05, 0.22)
+      : 0.08;
+  const title =
+    lineupDirection !== null && injuryDiff === 0
+      ? "Confirmed lineup edge"
+      : signals.availability.official
+        ? "Confirmed availability shift"
+        : "Availability pressure";
+  const summaryParts = [`${fixture.homeTeam} injuries ${injuriesHome}, ${fixture.awayTeam} injuries ${injuriesAway}.`];
+  if (signals.lineups.available) {
+    summaryParts.push(
+      `Lineups ${fixture.homeTeam} ${signals.lineups.home?.status ?? "unknown"}${signals.lineups.home?.formation ? ` (${signals.lineups.home.formation})` : ""}, ` +
+      `${fixture.awayTeam} ${signals.lineups.away?.status ?? "unknown"}${signals.lineups.away?.formation ? ` (${signals.lineups.away.formation})` : ""}.`,
+    );
+  }
 
   return [
     {
       id: createEvidenceId(fixture.id, "availability"),
       fixtureId: fixture.id,
       kind: "availability",
-      title: metadataBoolean(metadata, "officialAvailability") || metadataBoolean(metadata, "officialLineup")
-        ? "Confirmed availability shift"
-        : "Availability pressure",
-      summary: `${fixture.homeTeam} injuries ${injuriesHome}, ${fixture.awayTeam} injuries ${injuriesAway}.`,
-      direction: injuryDiff >= 0 ? "home" : "away",
-      confidence: provider === "official-team-feed" ? 0.82 : 0.7,
-      impact: clamp(Math.abs(injuryDiff) * 0.06, 0.05, 0.22),
+      title,
+      summary: summaryParts.join(" "),
+      direction,
+      confidence: provider === "availability-snapshot" || provider === "lineup-snapshot" ? 0.82 : 0.7,
+      impact,
       source: {
         provider,
-        reference: provider === "official-team-feed" ? "availability" : "injuriesHome/injuriesAway",
+        reference: provider === "lineup-snapshot" ? "lineup-snapshot" : signals.availability.sourceReference,
       },
       tags: [
         "availability",
-        provider === "official-team-feed" ? "official" : "baseline",
+        signals.availability.official || signals.lineups.official ? "official" : "baseline",
+        ...(lineupDirection !== null ? ["lineups"] : []),
       ],
       extractedAt,
       metadata: {
         injuriesHome: String(injuriesHome),
         injuriesAway: String(injuriesAway),
+        ...(signals.lineups.home?.status ? { lineupStatusHome: signals.lineups.home.status } : {}),
+        ...(signals.lineups.away?.status ? { lineupStatusAway: signals.lineups.away.status } : {}),
       },
     },
   ];
@@ -921,23 +1250,16 @@ const createAvailabilityEvidence = (
 
 const createWeatherEvidence = (
   fixture: FixtureLike,
+  signals: ResolvedResearchSignals,
   generatedAt: string,
 ): EvidenceItem[] => {
-  const metadata = fixture.metadata;
-  const weatherSeverity = clamp(
-    Math.max(
-      metadataNumber(metadata, "weatherSeverity", 0),
-      metadataBoolean(metadata, "weatherRisk") ? 0.45 : 0,
-    ),
-    0,
-    1,
-  );
+  const weatherSeverity = signals.weather.severity;
 
-  if (weatherSeverity < 0.35) {
+  if (!signals.weather.available || weatherSeverity < 0.35) {
     return [];
   }
 
-  const extractedAt = metadataTimestamp(metadata, ["weatherUpdatedAt"], generatedAt);
+  const extractedAt = signals.weather.updatedAt;
   return [
     {
       id: createEvidenceId(fixture.id, "weather"),
@@ -960,22 +1282,18 @@ const createWeatherEvidence = (
 
 const createMarketEvidence = (
   fixture: FixtureLike,
+  signals: ResolvedResearchSignals,
   generatedAt: string,
 ): EvidenceItem[] => {
-  const metadata = fixture.metadata;
-  const marketLean = metadataString(metadata, "marketLean");
-  const homeImplied = metadataNumber(metadata, "oddsHomeImplied", Number.NaN);
-  const drawImplied = metadataNumber(metadata, "oddsDrawImplied", Number.NaN);
-  const awayImplied = metadataNumber(metadata, "oddsAwayImplied", Number.NaN);
-  const marketMove = Math.abs(metadataNumber(metadata, "marketMove", 0));
+  const marketLean = signals.market.lean;
+  const homeImplied = signals.market.oddsHomeImplied ?? Number.NaN;
+  const drawImplied = signals.market.oddsDrawImplied ?? Number.NaN;
+  const awayImplied = signals.market.oddsAwayImplied ?? Number.NaN;
+  const marketMove = Math.abs(signals.market.move);
 
   let direction: EvidenceDirection | null = null;
   let separation = marketMove;
-  if (
-    marketLean === "home" ||
-    marketLean === "draw" ||
-    marketLean === "away"
-  ) {
+  if (marketLean === "home" || marketLean === "draw" || marketLean === "away") {
     direction = marketLean;
   } else {
     const candidates: Array<{
@@ -1004,7 +1322,7 @@ const createMarketEvidence = (
     return [];
   }
 
-  const extractedAt = metadataTimestamp(metadata, ["marketUpdatedAt"], generatedAt);
+  const extractedAt = signals.market.updatedAt;
   return [
     {
       id: createEvidenceId(fixture.id, "market"),
@@ -1039,6 +1357,7 @@ const createInjectedSource = (
 
 const runResearchAssignments = (
   fixture: FixtureLike,
+  signals: ResolvedResearchSignals,
   plan: ResearchPlan,
   generatedAt: string,
   extraEvidence: readonly EvidenceItem[] = [],
@@ -1065,7 +1384,7 @@ const runResearchAssignments = (
 
   for (const assignment of plan.assignments) {
     if (assignment.taskType === "source_discovery") {
-      const sources = discoverSourcesFromFixture(fixture, generatedAt);
+      const sources = discoverSourcesFromFixture(fixture, signals, generatedAt);
       assignmentResults.push({
         assignmentId: assignment.id,
         taskType: assignment.taskType,
@@ -1080,7 +1399,7 @@ const runResearchAssignments = (
     }
 
     if (assignment.taskType === "news_scan") {
-      const items = createFormAndContextEvidence(fixture, generatedAt);
+      const items = createFormAndContextEvidence(fixture, signals, generatedAt);
       assignmentResults.push({
         assignmentId: assignment.id,
         taskType: assignment.taskType,
@@ -1098,7 +1417,7 @@ const runResearchAssignments = (
     }
 
     if (assignment.taskType === "lineup_projection") {
-      const items = createAvailabilityEvidence(fixture, generatedAt);
+      const items = createAvailabilityEvidence(fixture, signals, generatedAt);
       assignmentResults.push({
         assignmentId: assignment.id,
         taskType: assignment.taskType,
@@ -1116,7 +1435,7 @@ const runResearchAssignments = (
     }
 
     if (assignment.taskType === "weather_check") {
-      const items = createWeatherEvidence(fixture, generatedAt);
+      const items = createWeatherEvidence(fixture, signals, generatedAt);
       assignmentResults.push({
         assignmentId: assignment.id,
         taskType: assignment.taskType,
@@ -1134,7 +1453,7 @@ const runResearchAssignments = (
     }
 
     if (assignment.taskType === "market_crosscheck") {
-      const items = createMarketEvidence(fixture, generatedAt);
+      const items = createMarketEvidence(fixture, signals, generatedAt);
       assignmentResults.push({
         assignmentId: assignment.id,
         taskType: assignment.taskType,
@@ -1979,23 +2298,24 @@ const determinePublicationStatus = (
 
 export const buildResearchBrief = (
   fixture: FixtureLike,
-  options: Pick<ResearchEngineOptions, "now"> = {},
+  options: Pick<ResearchEngineOptions, "now" | "signals"> = {},
 ): ResearchBrief => {
   const now = options.now ?? nowIso;
   const generatedAt = now();
+  const signals = resolveResearchSignals(fixture, options.signals, generatedAt);
   return {
     fixtureId: fixture.id,
     generatedAt,
     headline: `Research brief ${fixture.homeTeam} vs ${fixture.awayTeam}`,
     context: [
       `${fixture.competition} | ${fixture.homeTeam} vs ${fixture.awayTeam}`,
-      fixture.metadata.derby === "true" ? "derby context" : "regular context",
+      signals.context.derby ? "derby context" : "regular context",
       `status ${fixture.status}`,
     ].join(" | "),
     questions: baseQuestions(fixture),
     assumptions: [
       "Deterministic-first bundle generation enabled.",
-      "Fixture metadata may contain pregame enrichment from ETL feeds.",
+      "Structured research signals are preferred over fixture metadata fallbacks.",
       "AI can only rewrite summary and risks after bundle consolidation.",
     ],
   };
@@ -2003,11 +2323,12 @@ export const buildResearchBrief = (
 
 export const buildResearchPlan = (
   fixture: FixtureLike,
-  options: Pick<ResearchEngineOptions, "now"> = {},
+  options: Pick<ResearchEngineOptions, "now" | "signals"> = {},
 ): ResearchPlan => {
   const now = options.now ?? nowIso;
   const generatedAt = now();
-  const coverage = estimateCoverageMap(fixture);
+  const signals = resolveResearchSignals(fixture, options.signals, generatedAt);
+  const coverage = estimateCoverageMap(signals);
   const kickoffPhase = resolveKickoffPhase(fixture, generatedAt);
   const requiredFamilies = resolveRequiredFamilies(kickoffPhase, coverage);
   const coverageScore = scoreCoverage(coverage, requiredFamilies);
@@ -2119,7 +2440,7 @@ export const buildResearchPlan = (
     generatedAt,
     kickoffPhase,
     coverageScore,
-    focus: buildPlanFocus(fixture, kickoffPhase, coverage),
+    focus: buildPlanFocus(kickoffPhase, coverage, signals),
     assignments,
     requiredFamilies,
     coverage,
@@ -2133,8 +2454,12 @@ export const createBaselineEvidence = (
 ): EvidenceItem[] => {
   const now = options.now ?? nowIso;
   const generatedAt = now();
-  const plan = buildResearchPlan(fixture, { now: () => generatedAt });
-  const execution = runResearchAssignments(fixture, plan, generatedAt);
+  const signals = resolveResearchSignals(fixture, options.signals, generatedAt);
+  const plan = buildResearchPlan(fixture, {
+    now: () => generatedAt,
+    ...(options.signals ? { signals: options.signals } : {}),
+  });
+  const execution = runResearchAssignments(fixture, signals, plan, generatedAt);
   return [...execution.evidence];
 };
 
@@ -2144,10 +2469,18 @@ export const buildResearchBundle = (
 ): ResearchBundle => {
   const now = options.now ?? nowIso;
   const generatedAt = now();
-  const brief = buildResearchBrief(fixture, { now: () => generatedAt });
-  const plan = buildResearchPlan(fixture, { now: () => generatedAt });
+  const signals = resolveResearchSignals(fixture, options.signals, generatedAt);
+  const brief = buildResearchBrief(fixture, {
+    now: () => generatedAt,
+    ...(options.signals ? { signals: options.signals } : {}),
+  });
+  const plan = buildResearchPlan(fixture, {
+    now: () => generatedAt,
+    ...(options.signals ? { signals: options.signals } : {}),
+  });
   const execution = runResearchAssignments(
     fixture,
+    signals,
     plan,
     generatedAt,
     options.evidence ?? [],

@@ -1,11 +1,14 @@
 import type { FixtureEntity } from "@gana-v8/domain-core";
-import type { ResearchDossier } from "@gana-v8/research-engine";
+import type {
+  ResearchDossier,
+  ResearchSignalSnapshot,
+} from "@gana-v8/research-engine";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/feature-store",
   workspaceName: "feature-store",
   category: "package",
-  description: "Feature vector snapshots derived from fixture metadata and research dossiers.",
+  description: "Feature vector snapshots derived from structured research signals and research dossiers.",
   dependencies: [
     { name: "@gana-v8/contract-schemas", category: "workspace" },
     { name: "@gana-v8/domain-core", category: "workspace" },
@@ -66,27 +69,7 @@ export interface BuildFeatureVectorSnapshotInput {
   readonly dossier: ResearchDossier;
   readonly generatedAt?: string;
   readonly researchTrace?: ResearchTraceMetadata;
-}
-
-export interface PersistedFeatureSnapshotMetadata {
-  readonly researchGeneratedAt?: string;
-  readonly researchRecommendedLean?: FeatureVectorSnapshot["recommendedLean"];
-  readonly researchEvidenceCount?: number;
-  readonly researchTopEvidenceIds: readonly string[];
-  readonly researchTopEvidenceTitles: readonly string[];
-  readonly researchRiskSummary: readonly string[];
-  readonly researchSynthesisMode?: ResearchTraceMetadata["synthesisMode"];
-  readonly researchAiRunId?: string;
-  readonly researchAiProvider?: string;
-  readonly researchAiModel?: string;
-  readonly researchAiPromptVersion?: string;
-  readonly researchAiProviderRequestId?: string;
-  readonly researchFallbackSummary?: string;
-  readonly featureReadinessStatus?: FeatureReadiness["status"];
-  readonly featureReadinessReasons: readonly string[];
-  readonly featureScoreHome?: number;
-  readonly featureScoreDraw?: number;
-  readonly featureScoreAway?: number;
+  readonly signals?: Pick<ResearchSignalSnapshot, "form" | "schedule" | "availability" | "context">;
 }
 
 const toNumber = (value: string | undefined, fallback = 0): number => {
@@ -97,12 +80,6 @@ const toNumber = (value: string | undefined, fallback = 0): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
-
-const splitMetadataList = (value: string | undefined): string[] =>
-  value
-    ?.split("|")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0) ?? [];
 
 const round = (value: number): number => Number(value.toFixed(4));
 
@@ -166,109 +143,17 @@ export const summarizeFeatureReadiness = (
   };
 };
 
-export const summarizePersistedFeatureMetadata = (
+const resolveFeatureSignalValues = (
   fixture: FixtureEntity,
-): PersistedFeatureSnapshotMetadata => ({
-  ...(fixture.metadata.researchGeneratedAt !== undefined
-    ? { researchGeneratedAt: fixture.metadata.researchGeneratedAt }
-    : {}),
-  ...(fixture.metadata.researchRecommendedLean !== undefined
-    ? {
-        researchRecommendedLean:
-          fixture.metadata.researchRecommendedLean as FeatureVectorSnapshot["recommendedLean"],
-      }
-    : {}),
-  ...(fixture.metadata.researchEvidenceCount !== undefined
-    ? { researchEvidenceCount: toNumber(fixture.metadata.researchEvidenceCount, 0) }
-    : {}),
-  researchTopEvidenceIds: splitMetadataList(fixture.metadata.researchTopEvidenceIds),
-  researchTopEvidenceTitles: splitMetadataList(fixture.metadata.researchTopEvidenceTitles),
-  researchRiskSummary: splitMetadataList(fixture.metadata.researchRiskSummary),
-  ...(fixture.metadata.researchSynthesisMode !== undefined
-    ? {
-        researchSynthesisMode:
-          fixture.metadata.researchSynthesisMode as ResearchTraceMetadata["synthesisMode"],
-      }
-    : {}),
-  ...(fixture.metadata.researchAiRunId !== undefined
-    ? { researchAiRunId: fixture.metadata.researchAiRunId }
-    : {}),
-  ...(fixture.metadata.researchAiProvider !== undefined
-    ? { researchAiProvider: fixture.metadata.researchAiProvider }
-    : {}),
-  ...(fixture.metadata.researchAiModel !== undefined
-    ? { researchAiModel: fixture.metadata.researchAiModel }
-    : {}),
-  ...(fixture.metadata.researchAiPromptVersion !== undefined
-    ? { researchAiPromptVersion: fixture.metadata.researchAiPromptVersion }
-    : {}),
-  ...(fixture.metadata.researchAiProviderRequestId !== undefined
-    ? { researchAiProviderRequestId: fixture.metadata.researchAiProviderRequestId }
-    : {}),
-  ...(fixture.metadata.researchFallbackSummary !== undefined
-    ? { researchFallbackSummary: fixture.metadata.researchFallbackSummary }
-    : {}),
-  ...(fixture.metadata.featureReadinessStatus !== undefined
-    ? {
-        featureReadinessStatus:
-          fixture.metadata.featureReadinessStatus as FeatureReadiness["status"],
-      }
-    : {}),
-  featureReadinessReasons: splitMetadataList(fixture.metadata.featureReadinessReasons),
-  ...(fixture.metadata.featureScoreHome !== undefined
-    ? { featureScoreHome: toNumber(fixture.metadata.featureScoreHome, 0) }
-    : {}),
-  ...(fixture.metadata.featureScoreDraw !== undefined
-    ? { featureScoreDraw: toNumber(fixture.metadata.featureScoreDraw, 0) }
-    : {}),
-  ...(fixture.metadata.featureScoreAway !== undefined
-    ? { featureScoreAway: toNumber(fixture.metadata.featureScoreAway, 0) }
-    : {}),
-});
-
-export const applyFeatureSnapshotToFixture = (
-  fixture: FixtureEntity,
-  snapshot: FeatureVectorSnapshot,
-): FixtureEntity => ({
-  ...fixture,
-  metadata: {
-    ...fixture.metadata,
-    researchGeneratedAt: snapshot.generatedAt,
-    researchRecommendedLean: snapshot.recommendedLean,
-    researchEvidenceCount: String(snapshot.evidenceCount),
-    researchTopEvidenceIds: snapshot.topEvidence.map((item) => item.id).join(" | "),
-    researchTopEvidenceTitles: snapshot.topEvidence.map((item) => item.title).join(" | "),
-    researchRiskSummary: snapshot.risks.join(" | "),
-    ...(snapshot.researchTrace
-      ? {
-          researchSynthesisMode: snapshot.researchTrace.synthesisMode,
-          ...(snapshot.researchTrace.aiRunId
-            ? { researchAiRunId: snapshot.researchTrace.aiRunId }
-            : {}),
-          ...(snapshot.researchTrace.aiProvider
-            ? { researchAiProvider: snapshot.researchTrace.aiProvider }
-            : {}),
-          ...(snapshot.researchTrace.aiModel
-            ? { researchAiModel: snapshot.researchTrace.aiModel }
-            : {}),
-          ...(snapshot.researchTrace.aiPromptVersion
-            ? { researchAiPromptVersion: snapshot.researchTrace.aiPromptVersion }
-            : {}),
-          ...(snapshot.researchTrace.providerRequestId
-            ? { researchAiProviderRequestId: snapshot.researchTrace.providerRequestId }
-            : {}),
-          ...(snapshot.researchTrace.fallbackSummary
-            ? { researchFallbackSummary: snapshot.researchTrace.fallbackSummary }
-            : {}),
-        }
-      : {}),
-    featureReadinessStatus: snapshot.readiness.status,
-    featureReadinessReasons: snapshot.readiness.reasons.join(" | "),
-    featureScoreHome: String(snapshot.features.researchScoreHome),
-    featureScoreDraw: String(snapshot.features.researchScoreDraw),
-    featureScoreAway: String(snapshot.features.researchScoreAway),
-  },
-  updatedAt: snapshot.generatedAt,
+  signals: BuildFeatureVectorSnapshotInput["signals"],
+): Omit<FeatureVectorValues, "researchScoreHome" | "researchScoreDraw" | "researchScoreAway" | "hoursUntilKickoff"> => ({
+  formHome: signals?.form?.home ?? toNumber(fixture.metadata.formHome),
+  formAway: signals?.form?.away ?? toNumber(fixture.metadata.formAway),
+  restHomeDays: signals?.schedule?.restHomeDays ?? toNumber(fixture.metadata.restHomeDays),
+  restAwayDays: signals?.schedule?.restAwayDays ?? toNumber(fixture.metadata.restAwayDays),
+  injuriesHome: signals?.availability?.injuriesHome ?? toNumber(fixture.metadata.injuriesHome),
+  injuriesAway: signals?.availability?.injuriesAway ?? toNumber(fixture.metadata.injuriesAway),
+  derby: (signals?.context?.derby ?? (fixture.metadata.derby === "true")) ? 1 : 0,
 });
 
 export const buildFeatureVectorSnapshot = (
@@ -278,6 +163,7 @@ export const buildFeatureVectorSnapshot = (
   const generatedAtMs = Date.parse(generatedAt);
   const scheduledAtMs = Date.parse(input.fixture.scheduledAt);
   const topEvidence = pickTopEvidenceFeatures(input.dossier, 3);
+  const signalValues = resolveFeatureSignalValues(input.fixture, input.signals);
 
   const snapshot: FeatureVectorSnapshot = {
     fixtureId: input.fixture.id,
@@ -290,13 +176,7 @@ export const buildFeatureVectorSnapshot = (
       researchScoreHome: input.dossier.directionalScore.home,
       researchScoreDraw: input.dossier.directionalScore.draw,
       researchScoreAway: input.dossier.directionalScore.away,
-      formHome: toNumber(input.fixture.metadata.formHome),
-      formAway: toNumber(input.fixture.metadata.formAway),
-      restHomeDays: toNumber(input.fixture.metadata.restHomeDays),
-      restAwayDays: toNumber(input.fixture.metadata.restAwayDays),
-      injuriesHome: toNumber(input.fixture.metadata.injuriesHome),
-      injuriesAway: toNumber(input.fixture.metadata.injuriesAway),
-      derby: input.fixture.metadata.derby === "true" ? 1 : 0,
+      ...signalValues,
       hoursUntilKickoff:
         Number.isFinite(generatedAtMs) && Number.isFinite(scheduledAtMs)
           ? round((scheduledAtMs - generatedAtMs) / 3_600_000)

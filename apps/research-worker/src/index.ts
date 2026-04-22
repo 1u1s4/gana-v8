@@ -12,10 +12,13 @@ import {
   transitionFixtureWorkflowStage,
   type AiRunEntity,
   type AiRunUsage,
+  type AvailabilitySnapshotEntity,
   type AuditEventEntity,
   type FeatureSnapshotEntity,
   type FixtureEntity,
   type FixtureWorkflowEntity,
+  type LineupParticipantEntity,
+  type LineupSnapshotEntity,
   type ResearchAssignmentEntity,
   type ResearchBundleEntity,
   type ResearchClaimEntity,
@@ -38,6 +41,8 @@ import {
   type ResearchBrief,
   type ResearchBundle,
   type ResearchDossier,
+  type ResearchLineupTeamSignal,
+  type ResearchSignalSnapshot,
   type ResearchSynthesisHookInput,
 } from "@gana-v8/research-engine";
 import type {
@@ -138,6 +143,15 @@ export interface ResearchWorkerPersistence {
   readonly featureSnapshots?: {
     save(entity: FeatureSnapshotEntity): Promise<FeatureSnapshotEntity>;
   };
+  readonly availabilitySnapshots?: {
+    findByFixtureId(fixtureId: string): Promise<AvailabilitySnapshotEntity[]>;
+  };
+  readonly lineupSnapshots?: {
+    findByFixtureId(fixtureId: string): Promise<LineupSnapshotEntity[]>;
+  };
+  readonly lineupParticipants?: {
+    findByLineupSnapshotId(lineupSnapshotId: string): Promise<LineupParticipantEntity[]>;
+  };
   readonly researchAssignments?: {
     save(entity: ResearchAssignmentEntity): Promise<ResearchAssignmentEntity>;
   };
@@ -227,6 +241,310 @@ const addHours = (iso: string, hours: number): string | undefined => {
     return undefined;
   }
   return new Date(timestamp + hours * 3_600_000).toISOString();
+};
+
+const metadataNumber = (
+  metadata: Readonly<Record<string, string>>,
+  key: string,
+): number | undefined => {
+  const value = metadata[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const metadataBoolean = (
+  metadata: Readonly<Record<string, string>>,
+  key: string,
+): boolean | undefined => {
+  const value = metadata[key]?.trim().toLowerCase();
+  if (value === undefined) {
+    return undefined;
+  }
+  return value === "true";
+};
+
+const metadataTimestamp = (
+  metadata: Readonly<Record<string, string>>,
+  keys: readonly string[],
+): string | undefined => {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (value && Number.isFinite(Date.parse(value))) {
+      return value;
+    }
+  }
+  return undefined;
+};
+
+const sortByIsoDescending = <T>(
+  items: readonly T[],
+  selector: (item: T) => string | undefined,
+): T[] =>
+  [...items].sort((left, right) => (selector(right) ?? "").localeCompare(selector(left) ?? ""));
+
+const buildFixtureMetadataSignals = (
+  fixture: FixtureEntity,
+): ResearchSignalSnapshot => {
+  const metadata = fixture.metadata;
+  const marketMove = metadataNumber(metadata, "marketMove");
+  const oddsHomeImplied = metadataNumber(metadata, "oddsHomeImplied");
+  const oddsDrawImplied = metadataNumber(metadata, "oddsDrawImplied");
+  const oddsAwayImplied = metadataNumber(metadata, "oddsAwayImplied");
+  const drawBias = metadataNumber(metadata, "drawBias");
+  const formUpdatedAt = metadataTimestamp(metadata, ["formUpdatedAt"]);
+  const scheduleUpdatedAt = metadataTimestamp(metadata, ["scheduleUpdatedAt"]);
+  const availabilityUpdatedAt = metadataTimestamp(metadata, ["officialAvailabilityUpdatedAt", "injuriesUpdatedAt"]);
+  const weatherUpdatedAt = metadataTimestamp(metadata, ["weatherUpdatedAt"]);
+  const marketUpdatedAt = metadataTimestamp(metadata, ["marketUpdatedAt"]);
+  const contextUpdatedAt = metadataTimestamp(metadata, ["contextUpdatedAt"]);
+  const officialLineupUpdatedAt = metadataTimestamp(metadata, ["officialLineupUpdatedAt"]);
+  const marketLean =
+    metadata.marketLean === "home" || metadata.marketLean === "draw" || metadata.marketLean === "away"
+      ? metadata.marketLean
+      : undefined;
+  return {
+    ...(metadataNumber(metadata, "formHome") !== undefined || metadataNumber(metadata, "formAway") !== undefined
+      ? {
+          form: {
+            home: metadataNumber(metadata, "formHome") ?? 0.5,
+            away: metadataNumber(metadata, "formAway") ?? 0.5,
+            ...(formUpdatedAt ? { updatedAt: formUpdatedAt } : {}),
+          },
+        }
+      : {}),
+    ...(metadataNumber(metadata, "restHomeDays") !== undefined || metadataNumber(metadata, "restAwayDays") !== undefined
+      ? {
+          schedule: {
+            restHomeDays: metadataNumber(metadata, "restHomeDays") ?? 3,
+            restAwayDays: metadataNumber(metadata, "restAwayDays") ?? 3,
+            ...(scheduleUpdatedAt ? { updatedAt: scheduleUpdatedAt } : {}),
+          },
+        }
+      : {}),
+    ...(metadataNumber(metadata, "injuriesHome") !== undefined ||
+    metadataNumber(metadata, "injuriesAway") !== undefined ||
+    metadataBoolean(metadata, "officialAvailability") !== undefined
+      ? {
+          availability: {
+            injuriesHome: metadataNumber(metadata, "injuriesHome") ?? 0,
+            injuriesAway: metadataNumber(metadata, "injuriesAway") ?? 0,
+            official: metadataBoolean(metadata, "officialAvailability") ?? false,
+            ...(availabilityUpdatedAt ? { updatedAt: availabilityUpdatedAt } : {}),
+          },
+        }
+      : {}),
+    ...(metadataNumber(metadata, "weatherSeverity") !== undefined || metadataBoolean(metadata, "weatherRisk") !== undefined
+      ? {
+          weather: {
+            severity: metadataNumber(metadata, "weatherSeverity") ?? ((metadataBoolean(metadata, "weatherRisk") ?? false) ? 0.45 : 0),
+            elevatedRisk: metadataBoolean(metadata, "weatherRisk") ?? false,
+            ...(weatherUpdatedAt ? { updatedAt: weatherUpdatedAt } : {}),
+          },
+        }
+      : {}),
+    ...(metadata[ "marketLean" ] !== undefined ||
+    marketMove !== undefined ||
+    oddsHomeImplied !== undefined ||
+    oddsDrawImplied !== undefined ||
+    oddsAwayImplied !== undefined
+      ? {
+          market: {
+            ...(marketLean ? { lean: marketLean } : {}),
+            ...(marketMove !== undefined ? { move: marketMove } : {}),
+            ...(oddsHomeImplied !== undefined ? { oddsHomeImplied } : {}),
+            ...(oddsDrawImplied !== undefined ? { oddsDrawImplied } : {}),
+            ...(oddsAwayImplied !== undefined ? { oddsAwayImplied } : {}),
+            ...(marketUpdatedAt ? { updatedAt: marketUpdatedAt } : {}),
+          },
+        }
+      : {}),
+    ...(metadataBoolean(metadata, "derby") !== undefined || drawBias !== undefined
+      ? {
+          context: {
+            derby: metadataBoolean(metadata, "derby") ?? false,
+            ...(drawBias !== undefined ? { drawBias } : {}),
+            ...(contextUpdatedAt ? { updatedAt: contextUpdatedAt } : {}),
+          },
+        }
+      : {}),
+    ...(metadataBoolean(metadata, "officialLineup")
+      ? {
+          lineups: {
+            official: true,
+            ...(officialLineupUpdatedAt ? { updatedAt: officialLineupUpdatedAt } : {}),
+          },
+        }
+      : {}),
+  };
+};
+
+const buildAvailabilitySignals = (
+  snapshots: readonly AvailabilitySnapshotEntity[],
+): ResearchSignalSnapshot["availability"] | undefined => {
+  if (snapshots.length === 0) {
+    return undefined;
+  }
+
+  const latestBySubject = new Map<string, AvailabilitySnapshotEntity>();
+  for (const snapshot of sortByIsoDescending(
+    snapshots,
+    (item) => item.sourceUpdatedAt ?? item.capturedAt,
+  )) {
+    const key = `${snapshot.teamSide ?? "unknown"}:${snapshot.subjectName}`;
+    if (!latestBySubject.has(key)) {
+      latestBySubject.set(key, snapshot);
+    }
+  }
+
+  const latestSnapshots = [...latestBySubject.values()];
+  const unavailableBySide = latestSnapshots.reduce(
+    (accumulator, snapshot) => {
+      if ((snapshot.status === "out" || snapshot.status === "questionable") && snapshot.teamSide) {
+        accumulator[snapshot.teamSide].push(snapshot.subjectName);
+      }
+      return accumulator;
+    },
+    { home: [] as string[], away: [] as string[] },
+  );
+  const updatedAt = sortByIsoDescending(
+    latestSnapshots,
+    (item) => item.sourceUpdatedAt ?? item.capturedAt,
+  )[0]?.sourceUpdatedAt ??
+    sortByIsoDescending(latestSnapshots, (item) => item.capturedAt)[0]?.capturedAt;
+
+  return {
+    injuriesHome: unavailableBySide.home.length,
+    injuriesAway: unavailableBySide.away.length,
+    official: true,
+    ...(updatedAt ? { updatedAt } : {}),
+    homeUnavailableNames: unavailableBySide.home,
+    awayUnavailableNames: unavailableBySide.away,
+  };
+};
+
+const buildLineupSignals = async (
+  persistence: ResearchWorkerPersistence,
+  fixtureId: string,
+): Promise<ResearchSignalSnapshot["lineups"] | undefined> => {
+  if (!persistence.lineupSnapshots) {
+    return undefined;
+  }
+
+  const snapshots = await persistence.lineupSnapshots.findByFixtureId(fixtureId);
+  if (snapshots.length === 0) {
+    return undefined;
+  }
+
+  const latestBySide = new Map<"home" | "away", LineupSnapshotEntity>();
+  for (const snapshot of sortByIsoDescending(
+    snapshots,
+    (item) => `${item.lineupStatus === "confirmed" ? "1" : "0"}:${item.sourceUpdatedAt ?? item.capturedAt}`,
+  )) {
+    if (!latestBySide.has(snapshot.teamSide)) {
+      latestBySide.set(snapshot.teamSide, snapshot);
+    }
+  }
+
+  const toTeamSignal = async (
+    snapshot: LineupSnapshotEntity | undefined,
+  ): Promise<ResearchLineupTeamSignal | undefined> => {
+    if (!snapshot) {
+      return undefined;
+    }
+    const participants = persistence.lineupParticipants
+      ? await persistence.lineupParticipants.findByLineupSnapshotId(snapshot.id)
+      : [];
+    return {
+      status: snapshot.lineupStatus,
+      ...(snapshot.formation ? { formation: snapshot.formation } : {}),
+      starters: participants
+        .filter((participant) => participant.role === "starting")
+        .sort((left, right) => left.index - right.index)
+        .map((participant) => participant.participantName),
+      bench: participants
+        .filter((participant) => participant.role === "bench")
+        .sort((left, right) => left.index - right.index)
+        .map((participant) => participant.participantName),
+    };
+  };
+
+  const home = await toTeamSignal(latestBySide.get("home"));
+  const away = await toTeamSignal(latestBySide.get("away"));
+  const updatedAt = sortByIsoDescending(
+    [...latestBySide.values()],
+    (item) => item.sourceUpdatedAt ?? item.capturedAt,
+  )[0]?.sourceUpdatedAt ??
+    sortByIsoDescending([...latestBySide.values()], (item) => item.capturedAt)[0]?.capturedAt;
+  const official = [...latestBySide.values()].some((snapshot) => snapshot.lineupStatus === "confirmed");
+
+  return {
+    official,
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(home ? { home } : {}),
+    ...(away ? { away } : {}),
+  };
+};
+
+const mergeResearchSignals = (
+  base: ResearchSignalSnapshot,
+  overrides: Partial<ResearchSignalSnapshot>,
+): ResearchSignalSnapshot => ({
+  ...base,
+  ...overrides,
+  ...(base.form || overrides.form
+    ? { form: { ...(base.form ?? {}), ...(overrides.form ?? {}) } as NonNullable<ResearchSignalSnapshot["form"]> }
+    : {}),
+  ...(base.schedule || overrides.schedule
+    ? { schedule: { ...(base.schedule ?? {}), ...(overrides.schedule ?? {}) } as NonNullable<ResearchSignalSnapshot["schedule"]> }
+    : {}),
+  ...(base.availability || overrides.availability
+    ? { availability: { ...(base.availability ?? {}), ...(overrides.availability ?? {}) } as NonNullable<ResearchSignalSnapshot["availability"]> }
+    : {}),
+  ...(base.weather || overrides.weather
+    ? { weather: { ...(base.weather ?? {}), ...(overrides.weather ?? {}) } as NonNullable<ResearchSignalSnapshot["weather"]> }
+    : {}),
+  ...(base.market || overrides.market
+    ? { market: { ...(base.market ?? {}), ...(overrides.market ?? {}) } as NonNullable<ResearchSignalSnapshot["market"]> }
+    : {}),
+  ...(base.context || overrides.context
+    ? { context: { ...(base.context ?? {}), ...(overrides.context ?? {}) } as NonNullable<ResearchSignalSnapshot["context"]> }
+    : {}),
+  ...(base.lineups || overrides.lineups
+    ? { lineups: { ...(base.lineups ?? {}), ...(overrides.lineups ?? {}) } as NonNullable<ResearchSignalSnapshot["lineups"]> }
+    : {}),
+});
+
+const buildResearchSignals = async (
+  fixture: FixtureEntity,
+  persistence: ResearchWorkerPersistence | undefined,
+): Promise<ResearchSignalSnapshot> => {
+  const metadataSignals = buildFixtureMetadataSignals(fixture);
+  if (!persistence) {
+    return metadataSignals;
+  }
+
+  const availabilitySignals = persistence.availabilitySnapshots
+    ? buildAvailabilitySignals(await persistence.availabilitySnapshots.findByFixtureId(fixture.id))
+    : undefined;
+  const lineupsSignals = await buildLineupSignals(persistence, fixture.id);
+
+  return mergeResearchSignals(metadataSignals, {
+    ...(availabilitySignals ? { availability: availabilitySignals } : {}),
+    ...(lineupsSignals ? { lineups: lineupsSignals } : {}),
+    ...(lineupsSignals?.official && !availabilitySignals
+      ? {
+          availability: {
+            injuriesHome: metadataSignals.availability?.injuriesHome ?? 0,
+            injuriesAway: metadataSignals.availability?.injuriesAway ?? 0,
+            official: true,
+            ...(lineupsSignals.updatedAt ? { updatedAt: lineupsSignals.updatedAt } : {}),
+          },
+        }
+      : {}),
+  });
 };
 
 const stripLegacyResearchMetadata = (
@@ -1131,9 +1449,11 @@ export const runResearchTask = async (
 ): Promise<ProcessedResearchTaskResult> => {
   const generatedAt = createGeneratedAt(input.generatedAt);
   await ensureTask(input.persistence, input.fixture.id, generatedAt);
+  const researchSignals = await buildResearchSignals(input.fixture, input.persistence);
 
   const baseBundleOptions: BuildResearchBundleOptions = {
     now: () => generatedAt,
+    signals: researchSignals,
     ...(input.evidence ? { evidence: input.evidence } : {}),
     ...(input.synthesisHook ? { synthesisHook: input.synthesisHook } : {}),
   };
@@ -1203,6 +1523,7 @@ export const runResearchTask = async (
     dossier,
     generatedAt,
     researchTrace,
+    signals: researchSignals,
   });
   const persistableResearchBundle = toPersistableResearchBundle(bundle, bundleTrace);
   const persistableFeatureSnapshot = toPersistableFeatureSnapshot(

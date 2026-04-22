@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createFixture } from "@gana-v8/domain-core";
-import { buildResearchDossier } from "@gana-v8/research-engine";
+import {
+  createAvailabilitySnapshot,
+  createFixture,
+  createLineupParticipant,
+  createLineupSnapshot,
+} from "@gana-v8/domain-core";
 
 import {
   resolveResearchAiConfig,
@@ -81,6 +85,118 @@ test("runResearchWorker skips non-scheduled fixtures and reports counts", async 
   assert.match(summary.results[1]?.reason ?? "", /scheduled/i);
 });
 
+test("runResearchTask prefers persisted availability and lineup snapshots over fixture metadata", async () => {
+  const persistedFixture = createFixture({
+    ...scheduledFixture,
+    id: "fixture:api-football:777",
+    metadata: {
+      formHome: "0.74",
+      formAway: "0.41",
+      restHomeDays: "6",
+      restAwayDays: "3",
+      derby: "true",
+    },
+  });
+  const availabilitySnapshots = [
+    createAvailabilitySnapshot({
+      id: "availability-home",
+      batchId: "batch-a",
+      fixtureId: persistedFixture.id,
+      providerFixtureId: "777",
+      providerCode: "api-football",
+      teamSide: "home",
+      subjectType: "player",
+      subjectName: "Home striker",
+      status: "out",
+      capturedAt: "2026-04-16T11:30:00.000Z",
+      summary: "Home striker out",
+      payload: {},
+    }),
+    createAvailabilitySnapshot({
+      id: "availability-away",
+      batchId: "batch-a",
+      fixtureId: persistedFixture.id,
+      providerFixtureId: "777",
+      providerCode: "api-football",
+      teamSide: "away",
+      subjectType: "player",
+      subjectName: "Away midfielder",
+      status: "questionable",
+      capturedAt: "2026-04-16T11:32:00.000Z",
+      summary: "Away midfielder questionable",
+      payload: {},
+    }),
+  ];
+  const lineupSnapshots = [
+    createLineupSnapshot({
+      id: "lineup-home",
+      batchId: "batch-l",
+      fixtureId: persistedFixture.id,
+      providerFixtureId: "777",
+      providerCode: "api-football",
+      teamSide: "home",
+      lineupStatus: "confirmed",
+      formation: "4-2-3-1",
+      capturedAt: "2026-04-16T11:40:00.000Z",
+      payload: {},
+    }),
+    createLineupSnapshot({
+      id: "lineup-away",
+      batchId: "batch-l",
+      fixtureId: persistedFixture.id,
+      providerFixtureId: "777",
+      providerCode: "api-football",
+      teamSide: "away",
+      lineupStatus: "projected",
+      formation: "4-3-3",
+      capturedAt: "2026-04-16T11:41:00.000Z",
+      payload: {},
+    }),
+  ];
+  const lineupParticipants = [
+    createLineupParticipant({
+      id: "lineup-home-p1",
+      lineupSnapshotId: "lineup-home",
+      index: 0,
+      participantName: "Home striker",
+      role: "starting",
+    }),
+  ];
+
+  const result = await runResearchTask({
+    fixture: persistedFixture,
+    generatedAt: "2026-04-16T12:00:00.000Z",
+    persistence: {
+      availabilitySnapshots: {
+        async findByFixtureId(fixtureId) {
+          return availabilitySnapshots.filter((snapshot) => snapshot.fixtureId === fixtureId);
+        },
+      },
+      lineupSnapshots: {
+        async findByFixtureId(fixtureId) {
+          return lineupSnapshots.filter((snapshot) => snapshot.fixtureId === fixtureId);
+        },
+      },
+      lineupParticipants: {
+        async findByLineupSnapshotId(lineupSnapshotId) {
+          return lineupParticipants.filter((participant) => participant.lineupSnapshotId === lineupSnapshotId);
+        },
+      },
+    },
+  });
+
+  assert.equal(result.featureSnapshot.features.injuriesHome, 1);
+  assert.equal(result.featureSnapshot.features.injuriesAway, 1);
+  assert.equal(
+    result.persistableResearchBundle.sources.some((source) => source.provider === "availability-snapshot"),
+    true,
+  );
+  assert.equal(
+    result.persistableResearchBundle.sources.some((source) => source.provider === "lineup-snapshot"),
+    true,
+  );
+});
+
 test("resolveResearchAiConfig enables AI mode from environment defaults", () => {
   const config = resolveResearchAiConfig({
     GANA_RESEARCH_SYNTHESIS_MODE: "ai-assisted",
@@ -96,8 +212,9 @@ test("resolveResearchAiConfig enables AI mode from environment defaults", () => 
 });
 
 test("AI fallback preserves deterministic dossier baseline when synthesis fails", async () => {
-  const deterministic = buildResearchDossier(scheduledFixture, {
-    now: () => "2026-04-16T12:00:00.000Z",
+  const deterministic = await runResearchTask({
+    fixture: scheduledFixture,
+    generatedAt: "2026-04-16T12:00:00.000Z",
   });
 
   const result = await runResearchTask({
@@ -120,7 +237,8 @@ test("AI fallback preserves deterministic dossier baseline when synthesis fails"
     },
   });
 
-  assert.equal(result.dossier.summary, deterministic.summary);
+  assert.equal(result.dossier.summary, deterministic.dossier.summary);
+  assert.equal(result.dossier.recommendedLean, deterministic.dossier.recommendedLean);
   assert.equal(result.featureSnapshot.researchTrace?.synthesisMode, "ai-fallback");
   assert.match(result.featureSnapshot.researchTrace?.fallbackSummary ?? "", /provider timeout/i);
   assert.equal(result.persistableFeatureSnapshot.researchTrace?.synthesisMode, "ai-fallback");

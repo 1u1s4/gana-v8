@@ -5,10 +5,8 @@ import { createFixture } from "@gana-v8/domain-core";
 import { buildResearchDossier } from "../../research-engine/src/index.js";
 
 import {
-  applyFeatureSnapshotToFixture,
   buildFeatureVectorSnapshot,
   summarizeFeatureReadiness,
-  summarizePersistedFeatureMetadata,
 } from "../src/index.js";
 
 const fixture = createFixture({
@@ -20,19 +18,19 @@ const fixture = createFixture({
   scheduledAt: "2026-04-16T20:00:00.000Z",
   status: "scheduled",
   metadata: {
-    formHome: "0.74",
-    formAway: "0.41",
-    restHomeDays: "6",
-    restAwayDays: "3",
-    injuriesHome: "1",
-    injuriesAway: "3",
     derby: "true",
   },
 });
 
-test("buildFeatureVectorSnapshot freezes research-derived scoring features", () => {
+test("buildFeatureVectorSnapshot freezes research-derived scoring features from structured signals", () => {
   const dossier = buildResearchDossier(fixture, {
     now: () => "2026-04-16T12:00:00.000Z",
+    signals: {
+      form: { home: 0.74, away: 0.41 },
+      schedule: { restHomeDays: 6, restAwayDays: 3 },
+      availability: { injuriesHome: 1, injuriesAway: 3, official: true },
+      context: { derby: true, drawBias: 0.1 },
+    },
   });
 
   const snapshot = buildFeatureVectorSnapshot({
@@ -46,6 +44,12 @@ test("buildFeatureVectorSnapshot freezes research-derived scoring features", () 
       aiModel: "gpt-5.4",
       aiPromptVersion: "v8-slice-1",
       providerRequestId: "req_123",
+    },
+    signals: {
+      form: { home: 0.74, away: 0.41 },
+      schedule: { restHomeDays: 6, restAwayDays: 3 },
+      availability: { injuriesHome: 1, injuriesAway: 3, official: true },
+      context: { derby: true },
     },
   });
 
@@ -64,12 +68,24 @@ test("buildFeatureVectorSnapshot freezes research-derived scoring features", () 
 test("summarizeFeatureReadiness marks snapshots with no evidence as degraded", () => {
   const dossier = buildResearchDossier(fixture, {
     now: () => "2026-04-16T12:00:00.000Z",
+    signals: {
+      form: { home: 0.74, away: 0.41 },
+      schedule: { restHomeDays: 6, restAwayDays: 3 },
+      availability: { injuriesHome: 1, injuriesAway: 3, official: true },
+      context: { derby: true, drawBias: 0.1 },
+    },
   });
 
   const snapshot = buildFeatureVectorSnapshot({
     fixture,
     dossier,
     generatedAt: "2026-04-16T12:05:00.000Z",
+    signals: {
+      form: { home: 0.74, away: 0.41 },
+      schedule: { restHomeDays: 6, restAwayDays: 3 },
+      availability: { injuriesHome: 1, injuriesAway: 3, official: true },
+      context: { derby: true },
+    },
   });
   const degradedSnapshot = {
     ...snapshot,
@@ -85,9 +101,15 @@ test("summarizeFeatureReadiness marks snapshots with no evidence as degraded", (
   assert.match(readiness.reasons.join("\n"), /evidence/i);
 });
 
-test("applyFeatureSnapshotToFixture persists research AI trace metadata for downstream consumers", () => {
+test("buildFeatureVectorSnapshot preserves AI trace without writing fixture metadata", () => {
   const dossier = buildResearchDossier(fixture, {
     now: () => "2026-04-16T12:00:00.000Z",
+    signals: {
+      form: { home: 0.74, away: 0.41 },
+      schedule: { restHomeDays: 6, restAwayDays: 3 },
+      availability: { injuriesHome: 1, injuriesAway: 3, official: true },
+      context: { derby: true, drawBias: 0.1 },
+    },
   });
   const snapshot = buildFeatureVectorSnapshot({
     fixture,
@@ -101,14 +123,18 @@ test("applyFeatureSnapshotToFixture persists research AI trace metadata for down
       aiPromptVersion: "v8-slice-1",
       fallbackSummary: "AI synthesis fallback to deterministic baseline: provider timeout",
     },
+    signals: {
+      form: { home: 0.74, away: 0.41 },
+      schedule: { restHomeDays: 6, restAwayDays: 3 },
+      availability: { injuriesHome: 1, injuriesAway: 3, official: true },
+      context: { derby: true },
+    },
   });
 
-  const enrichedFixture = applyFeatureSnapshotToFixture(fixture, snapshot);
-  const persisted = summarizePersistedFeatureMetadata(enrichedFixture);
-
-  assert.equal(persisted.researchSynthesisMode, "ai-fallback");
-  assert.equal(persisted.researchAiRunId, "airun:fallback");
-  assert.equal(persisted.researchAiProvider, "codex");
-  assert.equal(persisted.researchAiModel, "gpt-5.4-mini");
-  assert.match(persisted.researchFallbackSummary ?? "", /provider timeout/i);
+  assert.equal(snapshot.researchTrace?.synthesisMode, "ai-fallback");
+  assert.equal(snapshot.researchTrace?.aiRunId, "airun:fallback");
+  assert.equal(snapshot.researchTrace?.aiProvider, "codex");
+  assert.equal(snapshot.researchTrace?.aiModel, "gpt-5.4-mini");
+  assert.match(snapshot.researchTrace?.fallbackSummary ?? "", /provider timeout/i);
+  assert.equal(fixture.metadata.researchAiRunId, undefined);
 });

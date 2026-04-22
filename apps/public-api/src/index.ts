@@ -797,116 +797,6 @@ const createFixtureResearchReadModelFromDedicatedRecords = (
   };
 };
 
-const createFixtureResearchReadModelFromTaskArtifacts = (input: {
-  readonly fixtureId: string;
-  readonly task: TaskEntity;
-  readonly taskRun: TaskRunEntity;
-  readonly aiRuns: readonly AiRunEntity[];
-}): FixtureResearchReadModel | null => {
-  const result = asRecord(input.taskRun.result);
-  if (!result) {
-    return null;
-  }
-
-  const bundleRecord = asRecord(result.latestBundle ?? result.bundle);
-  const bundleGateResult = asRecord(bundleRecord?.gateResult);
-  const snapshotRecord = asRecord(result.latestSnapshot ?? result.featureSnapshot ?? result.snapshot);
-  const snapshotReadiness = asRecord(snapshotRecord?.readiness);
-  const topLevelTrace = asRecord(result.researchTrace ?? result.trace);
-  if (bundleRecord === null && snapshotRecord === null) {
-    return null;
-  }
-
-  const aiRunsById = new Map(input.aiRuns.map((aiRun) => [aiRun.id, aiRun]));
-  const explicitAiRunId =
-    asString(bundleRecord?.aiRunId) ??
-    asString(asRecord(snapshotRecord?.researchTrace)?.aiRunId) ??
-    asString(asRecord(bundleRecord?.trace)?.aiRunId) ??
-    asString(snapshotRecord?.aiRunId) ??
-    asString(topLevelTrace?.aiRunId) ??
-    asString(result.aiRunId);
-  const aiRun =
-    (explicitAiRunId ? aiRunsById.get(explicitAiRunId) : null) ??
-    sortByIsoDescending(input.aiRuns, (candidate) => candidate.updatedAt)[0] ??
-    null;
-  const resolvedStatus =
-    asBundleStatus(bundleGateResult?.status) ??
-    asBundleStatus(snapshotRecord?.bundleStatus) ??
-    null;
-  if (resolvedStatus === null) {
-    return null;
-  }
-  const readinessReasons =
-    asStringArray(snapshotReadiness?.reasons);
-  const gateReasons =
-    normalizeGateReasons(
-      snapshotRecord?.gateReasons ?? bundleGateResult?.reasons,
-      resolvedStatus,
-      readinessReasons,
-    );
-  const snapshotGeneratedAt =
-    asString(snapshotRecord?.generatedAt) ??
-    null;
-  const researchTrace = normalizeResearchTrace(
-    snapshotRecord?.researchTrace ?? bundleRecord?.trace ?? result.researchTrace ?? result.trace,
-    aiRun,
-  );
-  const latestSnapshot =
-    snapshotRecord !== null && snapshotGeneratedAt
-      ? createFixtureResearchSnapshotReadModel({
-          bundleId: asString(snapshotRecord?.bundleId) ?? asString(bundleRecord?.id),
-          generatedAt: snapshotGeneratedAt,
-          bundleStatus: resolvedStatus,
-          gateReasons,
-          recommendedLean:
-            asString(snapshotRecord?.recommendedLean) ??
-            asString(bundleRecord?.recommendedLean),
-          evidenceCount: asNumber(snapshotRecord?.evidenceCount),
-          topEvidenceTitles: Array.isArray(snapshotRecord?.topEvidence)
-            ? snapshotRecord.topEvidence.flatMap((entry) => asString(asRecord(entry)?.title) ? [asString(asRecord(entry)?.title)!] : [])
-            : [],
-          risks: asStringArray(snapshotRecord?.risks),
-          featureReadinessStatus:
-            asString(snapshotReadiness?.status),
-          featureReadinessReasons: readinessReasons,
-          researchTrace,
-        })
-      : null;
-  const bundleGeneratedAt =
-    asString(bundleRecord?.generatedAt) ??
-    latestSnapshot?.generatedAt ??
-    input.taskRun.finishedAt ??
-    input.taskRun.updatedAt ??
-    input.task.updatedAt;
-
-  if (!bundleGeneratedAt) {
-    return null;
-  }
-
-  return {
-    fixtureId: input.fixtureId,
-    status: resolvedStatus,
-    publishable: resolvedStatus === "publishable",
-    gateReasons,
-    latestBundle: {
-      id: asString(bundleRecord?.id) ?? input.taskRun.id,
-      generatedAt: bundleGeneratedAt,
-      ...(asString(bundleRecord?.summary) ? { summary: asString(bundleRecord?.summary) } : {}),
-      ...((latestSnapshot?.recommendedLean ??
-      asString(bundleRecord?.recommendedLean))
-        ? {
-            recommendedLean:
-              latestSnapshot?.recommendedLean ??
-              asString(bundleRecord?.recommendedLean)
-          }
-        : {}),
-      ...(explicitAiRunId ?? aiRun?.id ? { aiRunId: explicitAiRunId ?? aiRun?.id ?? null } : {}),
-    },
-    latestSnapshot,
-    researchTrace: latestSnapshot?.researchTrace ?? researchTrace,
-  };
-};
-
 const findLatestByGeneratedAt = <T extends { readonly fixtureId: string; readonly generatedAt: string }>(
   records: readonly T[],
   fixtureId: string,
@@ -944,61 +834,6 @@ const loadFixtureResearchFromRepositories = async (
   });
 };
 
-const extractFixtureIdFromTask = (task: TaskEntity): string | null =>
-  asString(asRecord(task.payload)?.fixtureId);
-
-const loadFixtureResearchFromTaskArtifacts = async (
-  fixtures: readonly FixtureEntity[],
-  tasks: readonly TaskEntity[],
-  taskRuns: readonly TaskRunEntity[],
-  aiRuns: readonly AiRunEntity[],
-): Promise<FixtureResearchReadModel[]> => {
-  const researchTasks = tasks.filter((task) => task.kind === "research");
-  const taskRunsByTaskId = new Map(
-    researchTasks.map((task) => [
-      task.id,
-      sortByIsoDescending(
-        taskRuns.filter((taskRun) => taskRun.taskId === task.id),
-        (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
-      )[0] ?? null,
-    ]),
-  );
-  const aiRunsByTaskId = new Map(
-    researchTasks.map((task) => [
-      task.id,
-      sortByIsoDescending(
-        aiRuns.filter((aiRun) => aiRun.taskId === task.id),
-        (aiRun) => aiRun.updatedAt,
-      ),
-    ]),
-  );
-
-  return fixtures.flatMap((fixture) => {
-    const candidate = sortByIsoDescending(
-      researchTasks
-        .filter((task) => extractFixtureIdFromTask(task) === fixture.id)
-        .flatMap((task) => {
-          const taskRun = taskRunsByTaskId.get(task.id);
-          if (!taskRun) {
-            return [];
-          }
-
-          const research = createFixtureResearchReadModelFromTaskArtifacts({
-            fixtureId: fixture.id,
-            task,
-            taskRun,
-            aiRuns: aiRunsByTaskId.get(task.id) ?? [],
-          });
-
-          return research ? [research] : [];
-        }),
-      (research) => research.latestBundle.generatedAt,
-    )[0];
-
-    return candidate ? [candidate] : [];
-  });
-};
-
 const loadOptionalClientReadModels = async (
   client: Record<string, unknown>,
   modelName: string,
@@ -1018,8 +853,6 @@ const loadOptionalClientReadModels = async (
 
 const loadFixtureResearchReadModels = async (input: {
   readonly fixtures: readonly FixtureEntity[];
-  readonly tasks: readonly TaskEntity[];
-  readonly taskRuns: readonly TaskRunEntity[];
   readonly aiRuns: readonly AiRunEntity[];
   readonly repositories?: FixtureResearchRepositoryCollectionLike;
   readonly researchBundles?: readonly ResearchBundleEntity[];
@@ -1048,16 +881,7 @@ const loadFixtureResearchReadModels = async (input: {
           input.aiRuns,
         );
 
-  if (repositoryReadModels.length > 0) {
-    return repositoryReadModels;
-  }
-
-  return loadFixtureResearchFromTaskArtifacts(
-    input.fixtures,
-    input.tasks,
-    input.taskRuns,
-    input.aiRuns,
-  );
+  return repositoryReadModels;
 };
 
 const summarizeResearchGateReasons = (
@@ -3386,8 +3210,6 @@ export async function loadOperationSnapshotFromUnitOfWork(
   const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
   const fixtureResearch = await loadFixtureResearchReadModels({
     fixtures,
-    tasks,
-    taskRuns,
     aiRuns,
     repositories: unitOfWork,
     ...(input.researchBundles ? { researchBundles: input.researchBundles } : {}),

@@ -957,7 +957,6 @@ export const scoreFixturePrediction = async (
     const persistedResearch = await loadPersistedFixtureResearch({
       fixtureId: fixture.id,
       unitOfWork: runtime.unitOfWork,
-      client: runtime.client as unknown as Record<string, unknown>,
     });
     if (!persistedResearch) {
       await persistResearchBundleBlockedWorkflow(
