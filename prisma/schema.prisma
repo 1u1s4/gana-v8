@@ -52,6 +52,18 @@ enum TaskTriggerKind {
   system
 }
 
+enum AutomationCycleKind {
+  scheduler
+  dispatcher
+  recovery
+}
+
+enum AutomationCycleStatus {
+  running
+  succeeded
+  failed
+}
+
 enum AiRunStatus {
   pending
   running
@@ -316,6 +328,24 @@ model TaskRun {
 
   @@unique([taskId, attemptNumber])
   @@index([taskId, startedAt])
+}
+
+model AutomationCycle {
+  id         String                @id
+  kind       AutomationCycleKind
+  status     AutomationCycleStatus
+  leaseOwner String
+  summary    Json?
+  metadata   Json?
+  error      String?               @db.Text
+  startedAt  DateTime
+  finishedAt DateTime?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  @@index([kind, startedAt])
+  @@index([status, startedAt])
+  @@index([leaseOwner, startedAt])
 }
 
 model AiRun {

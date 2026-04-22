@@ -73,6 +73,9 @@
       "@gana-v8/config-runtime": [
         "packages/config-runtime/src/index.ts"
       ],
+      "@gana-v8/control-plane-runtime": [
+        "packages/control-plane-runtime/src/index.ts"
+      ],
       "@gana-v8/storage-adapters": [
         "packages/storage-adapters/src/index.ts"
       ],
@@ -96,6 +99,15 @@
       ],
       "@gana-v8/public-api": [
         "apps/public-api/src/index.ts"
+      ],
+      "@gana-v8/hermes-scheduler": [
+        "apps/hermes-scheduler/src/index.ts"
+      ],
+      "@gana-v8/hermes-dispatcher": [
+        "apps/hermes-dispatcher/src/index.ts"
+      ],
+      "@gana-v8/hermes-recovery": [
+        "apps/hermes-recovery/src/index.ts"
       ],
       "@gana-v8/scoring-worker": [
         "apps/scoring-worker/src/index.ts"

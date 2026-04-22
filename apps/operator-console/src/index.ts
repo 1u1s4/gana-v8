@@ -7,6 +7,7 @@ import {
 
 import { createOperationalSummary, type
   AiRunReadModel,
+  type AutomationCycleReadModel,
   type CoverageDailyScopeReadModel,
   getDailyAutomationPolicy,
   listCoverageDailyScope,
@@ -15,6 +16,7 @@ import { createOperationalSummary, type
   type OperationalSummary,
   type ProviderStateReadModel,
   type PublicApiHealth,
+  type PublicApiReadinessReadModel,
   type RawIngestionBatchReadModel,
   type SandboxCertificationDetailReadModel,
   type SandboxCertificationReadModel,
@@ -29,7 +31,13 @@ export interface OperatorConsoleFixture {
   readonly homeTeam: string;
   readonly awayTeam: string;
   readonly status: string;
+  readonly researchBundleStatus?: string | null;
   readonly researchRecommendedLean?: string | null;
+  readonly researchSynthesisMode?: string | null;
+  readonly researchCycle?: string | null;
+  readonly researchNarrative?: string | null;
+  readonly researchTopEvidenceTitles?: readonly string[];
+  readonly researchRisks?: readonly string[];
   readonly featureReadinessStatus?: string | null;
   readonly featureReadinessReasons?: string | null;
   readonly researchGeneratedAt?: string | null;
@@ -98,6 +106,8 @@ export interface OperatorConsoleSandboxCertification extends SandboxCertificatio
 
 export interface OperatorConsoleSnapshot {
   readonly generatedAt: string;
+  readonly readiness: PublicApiReadinessReadModel;
+  readonly automationCycles: readonly AutomationCycleReadModel[];
   readonly fixtures: readonly OperatorConsoleFixture[];
   readonly predictions: readonly OperatorConsolePrediction[];
   readonly parlays: readonly OperatorConsoleParlay[];
@@ -130,6 +140,7 @@ export interface OperatorConsolePanel {
 export interface OperatorConsoleModel {
   readonly generatedAt: string;
   readonly health: PublicApiHealth;
+  readonly readiness: PublicApiReadinessReadModel;
   readonly validationSummary: ValidationSummary;
   readonly alerts: readonly string[];
   readonly panels: readonly OperatorConsolePanel[];
@@ -184,6 +195,65 @@ const sortByNewest = <T extends { readonly id: string }>(
 
     return left.id.localeCompare(right.id);
   });
+};
+
+const createFallbackReadiness = (
+  generatedAt: string,
+  health: PublicApiHealth,
+  certification: readonly OperatorConsoleSandboxCertification[],
+): PublicApiReadinessReadModel => {
+  const passed = certification.filter((entry) => entry.status === "passed").length;
+  const failed = certification.filter((entry) => entry.status === "failed").length;
+  const missing = certification.filter((entry) => entry.status === "missing").length;
+  const sandboxStatus =
+    failed > 0 ? "blocked" : certification.length === 0 || missing > 0 ? "review" : "ready";
+  const healthStatus = health.status === "ok" ? "ready" : "review";
+  const status =
+    sandboxStatus === "blocked"
+      ? "blocked"
+      : healthStatus === "ready"
+        ? sandboxStatus
+        : "review";
+
+  return {
+    generatedAt,
+    status,
+    checks: [
+      {
+        name: "health",
+        status: healthStatus,
+        detail:
+          health.status === "ok"
+            ? "Operational health checks are passing."
+            : "Operational health checks need review before promotion.",
+      },
+      {
+        name: "sandbox-certification",
+        status: sandboxStatus,
+        detail:
+          certification.length === 0
+            ? "No sandbox certification evidence loaded."
+            : `${passed} passed / ${failed} failed / ${missing} missing certification profile(s).`,
+      },
+    ],
+    sandboxCertification: {
+      total: certification.length,
+      passed,
+      failed,
+      missing,
+      profiles: certification.map((entry) => ({
+        id: entry.id,
+        status:
+          entry.status === "failed"
+            ? "blocked"
+            : entry.status === "passed"
+              ? "ready"
+              : "review",
+        sourceStatus: entry.status,
+        ...(entry.generatedAt ? { generatedAt: entry.generatedAt } : {}),
+      })),
+    },
+  };
 };
 
 const summarizeEndpointCounts = (
@@ -259,6 +329,124 @@ const summarizeFixtureResearchReasons = (
   return null;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const asNonEmptyString = (value: unknown): string | null =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+
+const asStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => (typeof entry === "string" && entry.trim().length > 0 ? [entry.trim()] : []));
+  }
+
+  const single = asNonEmptyString(value);
+  return single ? [single] : [];
+};
+
+const firstDefinedString = (...values: readonly (string | null | undefined)[]): string | null =>
+  values.find((value): value is string => typeof value === "string" && value.trim().length > 0) ?? null;
+
+const readOptionalString = (record: Record<string, unknown> | null, ...keys: readonly string[]): string | null => {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = asNonEmptyString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const readOptionalStringArray = (
+  record: Record<string, unknown> | null,
+  ...keys: readonly string[]
+): string[] => {
+  if (!record) {
+    return [];
+  }
+
+  for (const key of keys) {
+    const values = asStringArray(record[key]);
+    if (values.length > 0) {
+      return values;
+    }
+  }
+
+  return [];
+};
+
+const summarizeFixtureResearchCycle = (
+  research: OperationSnapshot["fixtureResearch"][number] | undefined,
+): string | null => {
+  if (!research) {
+    return null;
+  }
+
+  const latestSnapshotRecord = asRecord(research.latestSnapshot);
+  const traceRecord = asRecord(research.latestSnapshot?.researchTrace ?? research.researchTrace);
+  const cycle = firstDefinedString(
+    readOptionalString(latestSnapshotRecord, "cycle", "cycleLabel", "cyclePhase", "cycleId", "kickoffPhase"),
+    readOptionalString(traceRecord, "cycle", "cycleLabel", "cyclePhase", "cycleId", "kickoffPhase"),
+  );
+  if (cycle) {
+    return cycle;
+  }
+
+  const assignmentIds = readOptionalStringArray(traceRecord, "assignmentIds");
+  return assignmentIds.length > 0 ? `${assignmentIds.length} assignment(s)` : null;
+};
+
+const summarizeFixtureResearchNarrative = (
+  research: OperationSnapshot["fixtureResearch"][number] | undefined,
+): string | null => {
+  if (!research) {
+    return null;
+  }
+
+  const latestSnapshotRecord = asRecord(research.latestSnapshot);
+  const traceRecord = asRecord(research.latestSnapshot?.researchTrace ?? research.researchTrace);
+  const narrative = firstDefinedString(
+    readOptionalString(
+      latestSnapshotRecord,
+      "narrative",
+      "narrativeSummary",
+      "narrativeHeadline",
+      "summary",
+      "explanation",
+    ),
+    readOptionalString(traceRecord, "narrative", "narrativeSummary", "narrativeHeadline"),
+    research.latestBundle.summary ?? null,
+  );
+  if (narrative) {
+    return narrative;
+  }
+
+  const topEvidenceTitles = research.latestSnapshot?.topEvidenceTitles ?? [];
+  const risks = research.latestSnapshot?.risks ?? [];
+  return firstDefinedString(
+    topEvidenceTitles[0] ? `Top signal: ${topEvidenceTitles[0]}` : null,
+    risks[0] ? `Risk: ${risks[0]}` : null,
+  );
+};
+
+const isOperationalDataEmpty = (snapshot: OperatorConsoleSnapshot): boolean =>
+  snapshot.fixtures.length === 0 &&
+  snapshot.tasks.length === 0 &&
+  snapshot.taskRuns.length === 0 &&
+  snapshot.aiRuns.length === 0 &&
+  snapshot.predictions.length === 0 &&
+  snapshot.parlays.length === 0 &&
+  snapshot.operationalLogs.length === 0 &&
+  snapshot.operationalSummary.etl.rawBatchCount === 0 &&
+  snapshot.operationalSummary.etl.oddsSnapshotCount === 0;
+
 export function createOperatorConsoleSnapshotFromOperation(
   operationSnapshot: OperationSnapshot,
   certification: readonly OperatorConsoleSandboxCertification[] = [],
@@ -289,9 +477,15 @@ export function createOperatorConsoleSnapshotFromOperation(
   const fixtureResearch = operationSnapshot.fixtureResearch ?? [];
   const coverageDailyScope = listCoverageDailyScope(operationSnapshot);
   const dailyAutomationPolicy = getDailyAutomationPolicy(operationSnapshot);
+  const readiness =
+    operationSnapshot.readiness ??
+    createFallbackReadiness(operationSnapshot.generatedAt, operationSnapshot.health, certification);
+  const automationCycles = operationSnapshot.automationCycles ?? [];
 
   return {
     generatedAt: operationSnapshot.generatedAt,
+    readiness,
+    automationCycles,
     fixtures: operationSnapshot.fixtures.map((fixture) => {
       const workflow = fixtureWorkflows.find((candidate) => candidate.fixtureId === fixture.id);
       const research = fixtureResearch.find((candidate) => candidate.fixtureId === fixture.id);
@@ -337,10 +531,22 @@ export function createOperatorConsoleSnapshotFromOperation(
         homeTeam: fixture.homeTeam,
         awayTeam: fixture.awayTeam,
         status: fixture.status,
+        researchBundleStatus:
+          research?.latestSnapshot?.bundleStatus ??
+          research?.status ??
+          null,
         researchRecommendedLean:
           research?.latestSnapshot?.recommendedLean ??
           research?.latestBundle.recommendedLean ??
           null,
+        researchSynthesisMode:
+          research?.latestSnapshot?.researchTrace?.synthesisMode ??
+          research?.researchTrace?.synthesisMode ??
+          null,
+        researchCycle: summarizeFixtureResearchCycle(research ?? undefined),
+        researchNarrative: summarizeFixtureResearchNarrative(research ?? undefined),
+        researchTopEvidenceTitles: research?.latestSnapshot?.topEvidenceTitles ?? [],
+        researchRisks: research?.latestSnapshot?.risks ?? [],
         featureReadinessStatus:
           research?.latestSnapshot?.featureReadinessStatus ?? null,
         featureReadinessReasons: summarizeFixtureResearchReasons(research ?? undefined),
@@ -447,218 +653,86 @@ export function createOperatorConsoleSnapshotFromOperation(
 export function createOperatorConsoleSnapshot(
   input: Partial<OperatorConsoleSnapshot> = {},
 ): OperatorConsoleSnapshot {
+  const generatedAt = input.generatedAt ?? "1970-01-01T00:00:00.000Z";
+  const validationSummary =
+    input.validationSummary ??
+    {
+      total: 0,
+      passed: 0,
+      failed: 0,
+      partial: 0,
+      pending: 0,
+      completionRate: 0,
+    };
+
   return {
-    generatedAt: input.generatedAt ?? "2026-04-15T01:00:00.000Z",
-    fixtures:
-      input.fixtures ??
-      [
-        {
-          id: "fx-boca-river",
-          competition: "Liga Profesional",
-          homeTeam: "Boca Juniors",
-          awayTeam: "River Plate",
-          status: "scheduled",
-        },
-        {
-          id: "fx-inter-milan",
-          competition: "Serie A",
-          homeTeam: "Inter",
-          awayTeam: "Milan",
-          status: "scheduled",
-        },
-      ],
-    predictions:
-      input.predictions ??
-      [
-        {
-          id: "pred-boca-home",
-          fixtureId: "fx-boca-river",
-          aiRunId: "airun-demo-scoring",
-          market: "moneyline",
-          outcome: "home",
-          confidence: 0.64,
-          status: "published",
-        },
-        {
-          id: "pred-inter-over",
-          fixtureId: "fx-inter-milan",
-          aiRunId: "airun-demo-scoring",
-          market: "totals",
-          outcome: "over",
-          confidence: 0.58,
-          status: "published",
-        },
-      ],
-    parlays:
-      input.parlays ??
-      [
-        {
-          id: "parlay-core-slate",
-          status: "ready",
-          expectedPayout: 91.65,
-          legs: [
-            { predictionId: "pred-boca-home", fixtureId: "fx-boca-river" },
-            { predictionId: "pred-inter-over", fixtureId: "fx-inter-milan" },
-          ],
-        },
-      ],
-    tasks:
-      input.tasks ??
-      [
-        {
-          id: "task-demo-fixtures",
-          kind: "fixture-ingestion",
-          status: "succeeded",
-          priority: 80,
-          scheduledFor: "2026-04-15T00:00:00.000Z",
-          attempts: 1,
-        },
-      ],
-    taskRuns:
-      input.taskRuns ??
-      [
-        {
-          id: "task-demo-fixtures:attempt:1",
-          taskId: "task-demo-fixtures",
-          attemptNumber: 1,
-          status: "succeeded",
-          startedAt: "2026-04-15T00:00:00.000Z",
-          finishedAt: "2026-04-15T00:01:00.000Z",
-          error: null,
-        },
-      ],
-    aiRuns:
-      input.aiRuns ??
-      [
-        {
-          id: "airun-demo-scoring",
-          taskId: "task-demo-fixtures",
-          provider: "internal",
-          model: "deterministic-moneyline-v1",
-          promptVersion: "scoring-worker-mvp-v1",
-          latestPromptVersion: "scoring-worker-mvp-v1",
-          providerRequestId: "req-demo-scoring",
-          status: "completed",
-          usage: {
-            promptTokens: 120,
-            completionTokens: 48,
-            totalTokens: 168,
+    generatedAt,
+    readiness:
+      input.readiness ??
+      {
+        generatedAt,
+        status: "review",
+        checks: [
+          {
+            name: "sandbox-certification",
+            status: "review",
+            detail: "Awaiting sandbox certification evidence and operational history.",
           },
-          outputRef: "memory://demo/airuns/airun-demo-scoring.json",
-          createdAt: "2026-04-15T00:10:00.000Z",
-          updatedAt: "2026-04-15T00:10:05.000Z",
+        ],
+        sandboxCertification: {
+          total: 0,
+          passed: 0,
+          failed: 0,
+          missing: 0,
+          profiles: [],
         },
-      ],
-    providerStates:
-      input.providerStates ??
-      [
-        {
-          provider: "internal",
-          latestModel: "deterministic-moneyline-v1",
-          latestPromptVersion: "scoring-worker-mvp-v1",
-          aiRunCount: 1,
-          failedAiRunCount: 0,
-          latestAiRunAt: "2026-04-15T00:10:05.000Z",
-          rawBatchCount: 1,
-          latestRawBatchAt: "2026-04-15T00:01:00.000Z",
-          latestRawBatchStatus: "succeeded",
-          quota: {
-            limit: 1000,
-            used: 320,
-            remaining: 680,
-            updatedAt: "2026-04-15T00:10:05.000Z",
-          },
-        },
-      ],
+      },
+    automationCycles: input.automationCycles ?? [],
+    fixtures: input.fixtures ?? [],
+    predictions: input.predictions ?? [],
+    parlays: input.parlays ?? [],
+    tasks: input.tasks ?? [],
+    taskRuns: input.taskRuns ?? [],
+    aiRuns: input.aiRuns ?? [],
+    providerStates: input.providerStates ?? [],
     etl:
       input.etl ??
       {
-        rawBatchCount: 1,
-        oddsSnapshotCount: 1,
-        latestBatch: {
-          id: "raw-batch-demo-fixtures",
-          endpointFamily: "fixtures",
-          providerCode: "api-football",
-          extractionStatus: "succeeded",
-          extractionTime: "2026-04-15T00:01:00.000Z",
-          recordCount: 2,
-        },
-        latestOddsSnapshot: {
-          id: "odds-demo-boca-river",
-          fixtureId: "fx-boca-river",
-          providerFixtureId: "fixture-123",
-          bookmakerKey: "bet365",
-          marketKey: "h2h",
-          capturedAt: "2026-04-15T00:02:00.000Z",
-          selectionCount: 3,
-        },
-        endpointCounts: {
-          fixtures: 1,
-        },
+        rawBatchCount: 0,
+        oddsSnapshotCount: 0,
+        latestBatch: null,
+        latestOddsSnapshot: null,
+        endpointCounts: {},
       },
     operationalSummary:
       input.operationalSummary ??
       {
-        generatedAt: input.generatedAt ?? "2026-04-15T01:00:00.000Z",
+        generatedAt,
         taskCounts: {
-          total: 1,
+          total: 0,
           queued: 0,
           running: 0,
           failed: 0,
-          succeeded: 1,
+          succeeded: 0,
           cancelled: 0,
         },
         taskRunCounts: {
-          total: 1,
+          total: 0,
           running: 0,
           failed: 0,
-          succeeded: 1,
+          succeeded: 0,
           cancelled: 0,
         },
         etl: {
-          rawBatchCount: 1,
-          oddsSnapshotCount: 1,
-          endpointCounts: { fixtures: 1 },
-          latestBatch: {
-            id: "raw-batch-demo-fixtures",
-            endpointFamily: "fixtures",
-            providerCode: "api-football",
-            extractionStatus: "succeeded",
-            extractionTime: "2026-04-15T00:01:00.000Z",
-            recordCount: 2,
-          },
-          latestOddsSnapshot: {
-            id: "odds-demo-boca-river",
-            fixtureId: "fx-boca-river",
-            providerFixtureId: "fixture-123",
-            bookmakerKey: "bet365",
-            marketKey: "h2h",
-            capturedAt: "2026-04-15T00:02:00.000Z",
-            selectionCount: 3,
-          },
+          rawBatchCount: 0,
+          oddsSnapshotCount: 0,
+          endpointCounts: {},
+          latestBatch: null,
+          latestOddsSnapshot: null,
         },
         observability: {
-          workers: [
-            {
-              worker: "ingestion-worker",
-              taskKinds: ["fixture-ingestion"],
-              totalRuns: 1,
-              runningRuns: 0,
-              failedRuns: 0,
-              succeededRuns: 1,
-              cancelledRuns: 0,
-              latestRunAt: "2026-04-15T00:01:00.000Z",
-            },
-          ],
-          providers: [
-            {
-              provider: "internal",
-              aiRunCount: 1,
-              failedAiRunCount: 0,
-              rawBatchCount: 1,
-              latestActivityAt: "2026-04-15T00:03:00.000Z",
-            },
-          ],
+          workers: [],
+          providers: [],
           retries: {
             queuedWithRetryHistory: 0,
             retryingNow: 0,
@@ -667,101 +741,53 @@ export function createOperatorConsoleSnapshot(
             exhausted: 0,
           },
           backfills: [
-            { area: "fixtures", status: "ok", detail: "Latest fixtures batch is fresh" },
-            { area: "odds", status: "ok", detail: "Latest odds snapshot is fresh" },
-            { area: "validation", status: "ok", detail: "Validation surface is current" },
+            { area: "fixtures", status: "needed", detail: "No fixture ingestion batches loaded yet." },
+            { area: "odds", status: "needed", detail: "No odds snapshots loaded yet." },
+            { area: "validation", status: "needed", detail: "Validation evidence has not been produced yet." },
           ],
           traceability: {
-            tasksWithTraceId: 1,
+            tasksWithTraceId: 0,
             tasksWithoutTraceId: 0,
-            taskTraceCoverageRate: 1,
-            aiRunsWithProviderRequestId: 1,
+            taskTraceCoverageRate: 0,
+            aiRunsWithProviderRequestId: 0,
             aiRunsWithoutProviderRequestId: 0,
-            aiRunRequestCoverageRate: 1,
+            aiRunRequestCoverageRate: 0,
           },
           alerts: [],
         },
         policy: {
-          status: "ready",
-          publishAllowed: true,
+          status: "blocked",
+          publishAllowed: false,
           retryRecommended: false,
-          backfillRequired: false,
+          backfillRequired: true,
           gates: [
-            { name: "health", status: "pass", detail: "Health checks are green" },
-            { name: "retries", status: "pass", detail: "Retry queue is healthy" },
-            { name: "backfills", status: "pass", detail: "No backfill required" },
-            { name: "traceability", status: "pass", detail: "task traces 100% | provider requests 100%" },
-            { name: "publication-readiness", status: "pass", detail: "Publish allowed" },
+            { name: "health", status: "warn", detail: "No operational data has been loaded from public-api yet." },
+            { name: "retries", status: "pass", detail: "No retry pressure reported." },
+            { name: "backfills", status: "warn", detail: "Fixtures, odds, and validation backfills are required." },
+            { name: "traceability", status: "warn", detail: "No task or AI traceability has been recorded yet." },
+            { name: "publication-readiness", status: "block", detail: "Publication is blocked until live operational data exists." },
           ],
-          summary: "Operator policy ready",
+          summary: "Awaiting fixture ingestion, research, and scoring inputs.",
         },
-        validation: input.validationSummary ?? {
-          total: 2,
-          passed: 1,
-          failed: 0,
-          partial: 1,
-          pending: 0,
-          completionRate: 1,
-        },
+        validation: validationSummary,
       },
-    operationalLogs:
-      input.operationalLogs ??
-      [
-        {
-          id: "task-demo-fixtures:attempt:1:task-run",
-          timestamp: "2026-04-15T00:01:00.000Z",
-          level: "INFO",
-          taskId: "task-demo-fixtures",
-          taskRunId: "task-demo-fixtures:attempt:1",
-          taskKind: "fixture-ingestion",
-          taskStatus: "succeeded",
-          message: "fixture-ingestion attempt 1 succeeded",
-        },
-        {
-          id: "task-demo-fixtures:task",
-          timestamp: "2026-04-15T00:01:00.000Z",
-          level: "INFO",
-          taskId: "task-demo-fixtures",
-          taskKind: "fixture-ingestion",
-          taskStatus: "succeeded",
-          message: "fixture-ingestion succeeded",
-        },
-      ],
-    validationSummary:
-      input.validationSummary ??
-      {
-        total: 2,
-        passed: 1,
-        failed: 0,
-        partial: 1,
-        pending: 0,
-        completionRate: 1,
-      },
+    operationalLogs: input.operationalLogs ?? [],
+    validationSummary,
     health:
       input.health ??
       {
-        status: "ok",
-        generatedAt: input.generatedAt ?? "2026-04-15T01:00:00.000Z",
+        status: "degraded",
+        generatedAt,
         checks: [
           {
-            name: "fixtures",
-            status: "pass",
-            detail: "2 fixture(s) in snapshot",
-          },
-          {
-            name: "tasks",
-            status: "pass",
-            detail: "1 task(s) in snapshot",
-          },
-          {
-            name: "predictions",
-            status: "pass",
-            detail: "2 prediction(s) in snapshot",
+            name: "operational-data",
+            status: "warn",
+            detail: "public-api is reachable but has not returned fixtures, tasks, predictions, or ETL data yet.",
           },
           {
             name: "validations",
-            status: "pass",
-            detail: "1 passed / 0 failed / 1 partial / 0 pending",
+            status: "warn",
+            detail: "No validation summary has been produced yet.",
           },
         ],
       },
@@ -776,10 +802,14 @@ export function createOperatorConsoleSnapshot(
 export function buildOperatorConsoleModel(
   snapshot: OperatorConsoleSnapshot = createOperatorConsoleSnapshot(),
 ): OperatorConsoleModel {
+  snapshot = createOperatorConsoleSnapshot(snapshot);
+  const operationalDataEmpty = isOperationalDataEmpty(snapshot);
   const alerts = [
-    ...snapshot.health.checks
-      .filter((check) => check.status === "warn")
-      .map((check) => `${check.name}: ${check.detail}`),
+    ...(operationalDataEmpty
+      ? ["No operational data loaded from public-api yet."]
+      : snapshot.health.checks
+        .filter((check) => check.status === "warn")
+        .map((check) => `${check.name}: ${check.detail}`)),
     ...snapshot.operationalLogs
       .filter((log) => log.level === "ERROR")
       .slice(0, 3)
@@ -797,7 +827,10 @@ export function buildOperatorConsoleModel(
           `${providerState.provider}: ${providerState.failedAiRunCount} failed ai run(s)`,
       ),
     ...snapshot.operationalSummary.observability.alerts,
-    ...(snapshot.operationalSummary.policy.status !== "ready"
+    ...(snapshot.readiness.status !== "ready"
+      ? [`readiness: ${snapshot.readiness.status}`]
+      : []),
+    ...(snapshot.operationalSummary.policy.status !== "ready" && !operationalDataEmpty
       ? [`policy: ${snapshot.operationalSummary.policy.summary}`]
       : []),
     ...snapshot.sandboxCertification
@@ -814,12 +847,34 @@ export function buildOperatorConsoleModel(
       lines: [
         `Generated at: ${snapshot.generatedAt}`,
         `Health: ${snapshot.health.status}`,
+        `Readiness: ${snapshot.readiness.status}`,
+        `Operational data: ${operationalDataEmpty ? "awaiting first snapshot" : "loaded"}`,
         `Fixtures: ${snapshot.fixtures.length}`,
         `Tasks: ${snapshot.tasks.length}`,
         `Task runs: ${snapshot.taskRuns.length}`,
         `Predictions: ${snapshot.predictions.length}`,
         `Parlays: ${snapshot.parlays.length}`,
+        `Automation cycles: ${snapshot.automationCycles.length}`,
       ],
+    },
+    {
+      title: "Readiness",
+      lines: [
+        `Status: ${snapshot.readiness.status}`,
+        ...snapshot.readiness.checks.map(
+          (check) => `${check.status.toUpperCase()} | ${check.name} | ${check.detail}`,
+        ),
+      ],
+    },
+    {
+      title: "Automation cycles",
+      lines:
+        snapshot.automationCycles.length === 0
+          ? ["No scheduler/dispatcher/recovery cycles recorded yet."]
+          : snapshot.automationCycles.map(
+              (cycle) =>
+                `${cycle.id} | ${cycle.source} | ${cycle.status} | fixtures ${cycle.fixtureIds.length} | tasks ${cycle.taskIds.length} | started ${cycle.startedAt}`,
+            ),
     },
     {
       title: "ETL",
@@ -870,6 +925,30 @@ export function buildOperatorConsoleModel(
             `${providerState.provider} | aiRuns ${providerState.aiRunCount} | failed ${providerState.failedAiRunCount} | latestPrompt ${providerState.latestPromptVersion ?? "unknown"} | remaining ${providerState.quota?.remaining ?? "unknown"}`,
         ),
       ],
+    },
+    {
+      title: "Research trace",
+      lines: snapshot.fixtures
+        .map((fixture) => {
+          const traceParts = [
+            fixture.researchSynthesisMode ? `mode ${fixture.researchSynthesisMode}` : null,
+            fixture.researchBundleStatus ? `bundle ${fixture.researchBundleStatus}` : null,
+            fixture.researchCycle ? `cycle ${fixture.researchCycle}` : null,
+            fixture.researchNarrative ? `narrative ${fixture.researchNarrative}` : null,
+            fixture.researchTopEvidenceTitles && fixture.researchTopEvidenceTitles.length > 0
+              ? `evidence ${fixture.researchTopEvidenceTitles.slice(0, 2).join(" / ")}`
+              : null,
+            fixture.researchRisks && fixture.researchRisks.length > 0
+              ? `risks ${fixture.researchRisks.slice(0, 2).join(" / ")}`
+              : null,
+          ]
+            .filter((value): value is string => Boolean(value))
+            .join(" | ");
+          return traceParts.length > 0
+            ? `${fixture.id} | ${traceParts}`
+            : null;
+        })
+        .filter((line): line is string => Boolean(line)),
     },
     {
       title: "Sandbox certification",
@@ -955,7 +1034,13 @@ export function buildOperatorConsoleModel(
         const recentOps = fixture.recentAuditEvents && fixture.recentAuditEvents.length > 0
           ? ` | recent ops ${fixture.recentAuditEvents.join(" ; ")}`
           : "";
-        return `${fixture.id} | workflow ${fixture.featureReadinessStatus ?? "unknown"}${manualSelection}${selectionOverride}${eligibility} | predictions ${predictions.length} | parlays ${parlays.length} | validations ${snapshot.validationSummary.total}${recentOps}`;
+        const researchContext = [
+          fixture.researchBundleStatus ? `bundle ${fixture.researchBundleStatus}` : null,
+          fixture.researchCycle ? `cycle ${fixture.researchCycle}` : null,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(" | ");
+        return `${fixture.id} | workflow ${fixture.featureReadinessStatus ?? "unknown"}${manualSelection}${selectionOverride}${eligibility}${researchContext ? ` | ${researchContext}` : ""} | predictions ${predictions.length} | parlays ${parlays.length} | validations ${snapshot.validationSummary.total}${recentOps}`;
       }),
     },
     {
@@ -965,7 +1050,10 @@ export function buildOperatorConsoleModel(
         const lean = fixture.researchRecommendedLean ?? "n/a";
         const generatedAt = fixture.researchGeneratedAt ?? "n/a";
         const reasons = fixture.featureReadinessReasons ?? "none";
-        return `${fixture.homeTeam} vs ${fixture.awayTeam} | lean ${lean} | ${readiness} | researchGeneratedAt ${generatedAt} | reasons ${reasons}`;
+        const bundleStatus = fixture.researchBundleStatus ?? "n/a";
+        const cycle = fixture.researchCycle ?? "n/a";
+        const narrative = fixture.researchNarrative ?? "none";
+        return `${fixture.homeTeam} vs ${fixture.awayTeam} | lean ${lean} | readiness ${readiness} | bundle ${bundleStatus} | cycle ${cycle} | researchGeneratedAt ${generatedAt} | narrative ${narrative} | reasons ${reasons}`;
       }),
     },
     {
@@ -1034,6 +1122,7 @@ export function buildOperatorConsoleModel(
   return {
     generatedAt: snapshot.generatedAt,
     health: snapshot.health,
+    readiness: snapshot.readiness,
     validationSummary: snapshot.validationSummary,
     alerts,
     panels,
@@ -1046,6 +1135,7 @@ export function renderOperatorConsole(model: OperatorConsoleModel): string {
     "Gana V8 Operator Console",
     `Generated at: ${model.generatedAt}`,
     `Health: ${model.health.status.toUpperCase()}`,
+    `Readiness: ${model.readiness.status.toUpperCase()}`,
     `Alerts: ${model.alerts.length === 0 ? "none" : model.alerts.join("; ")}`,
   ];
 
@@ -1628,6 +1718,19 @@ const formatDateTime = (value) => {
   return Number.isNaN(parsed.valueOf()) ? String(value) : parsed.toLocaleString();
 };
 
+const isSnapshotEmpty = (snapshot) =>
+  Array.isArray(snapshot.fixtures) && snapshot.fixtures.length === 0 &&
+  Array.isArray(snapshot.tasks) && snapshot.tasks.length === 0 &&
+  Array.isArray(snapshot.taskRuns) && snapshot.taskRuns.length === 0 &&
+  Array.isArray(snapshot.aiRuns) && snapshot.aiRuns.length === 0 &&
+  Array.isArray(snapshot.predictions) && snapshot.predictions.length === 0 &&
+  Array.isArray(snapshot.parlays) && snapshot.parlays.length === 0 &&
+  Array.isArray(snapshot.operationalLogs) && snapshot.operationalLogs.length === 0 &&
+  snapshot.operationalSummary &&
+  snapshot.operationalSummary.etl &&
+  snapshot.operationalSummary.etl.rawBatchCount === 0 &&
+  snapshot.operationalSummary.etl.oddsSnapshotCount === 0;
+
 const renderMetricCard = (label, value, detail) =>
   '<article class="metric-card">' +
     '<span class="label">' + escapeHtml(label) + '</span>' +
@@ -1667,7 +1770,7 @@ const renderFixtureActions = (fixtureId) => {
 
 const renderFixturesTable = (snapshot) => {
   if (!snapshot.fixtures || snapshot.fixtures.length === 0) {
-    return '<div class="empty-state">No fixtures available.</div>';
+    return '<div class="empty-state">No fixtures available. Once ingestion lands, readiness, workflow, and narrative data will appear here.</div>';
   }
 
   return '<div class="table-wrap"><table><thead><tr>' +
@@ -1677,7 +1780,7 @@ const renderFixturesTable = (snapshot) => {
       '<tr>' +
         '<td><strong>' + escapeHtml(fixture.homeTeam) + ' vs ' + escapeHtml(fixture.awayTeam) + '</strong><span class="subtle">' + escapeHtml(fixture.competition) + '<br />' + escapeHtml(fixture.id) + '</span></td>' +
         '<td>' + formatBadge(fixture.status) + '</td>' +
-        '<td><strong>' + escapeHtml(fixture.researchRecommendedLean || 'n/a') + '</strong><span class="subtle">Generated: ' + escapeHtml(fixture.researchGeneratedAt || 'n/a') + '</span></td>' +
+        '<td><strong>' + escapeHtml(fixture.researchRecommendedLean || 'n/a') + '</strong><span class="subtle">Readiness: ' + escapeHtml(fixture.featureReadinessStatus || 'unknown') + ' | bundle ' + escapeHtml(fixture.researchBundleStatus || 'n/a') + '</span><br /><span class="subtle">Cycle: ' + escapeHtml(fixture.researchCycle || 'n/a') + ' | Generated: ' + escapeHtml(fixture.researchGeneratedAt || 'n/a') + '</span><br /><span class="subtle">' + escapeHtml(fixture.researchNarrative || 'No persisted narrative') + '</span></td>' +
         '<td><span class="subtle">Manual: ' + escapeHtml(fixture.manualSelectionStatus || 'none') + ' by ' + escapeHtml(fixture.manualSelectionBy || 'n/a') + '</span><br /><span class="subtle">Override: ' + escapeHtml(fixture.selectionOverride || 'none') + '</span></td>' +
         '<td><span class="subtle">' + escapeHtml(fixture.scoringEligibilityReason || 'n/a') + '</span></td>' +
         '<td>' + renderFixtureActions(fixture.id) + '</td>' +
@@ -1923,6 +2026,7 @@ const renderCertificationInspector = () => {
 const renderDashboard = (payload) => {
   const snapshot = payload.snapshot;
   const model = payload.model;
+  const emptySnapshot = isSnapshotEmpty(snapshot);
   const metrics = [
     renderMetricCard('Health', snapshot.health.status, 'Generated ' + snapshot.generatedAt),
     renderMetricCard('Fixtures', snapshot.fixtures.length, 'Tracked in console'),
@@ -1934,6 +2038,9 @@ const renderDashboard = (payload) => {
 
   root.innerHTML =
     '<section class="surface"><div class="surface-body"><div class="metric-grid">' + metrics + '</div></div></section>' +
+    (emptySnapshot
+      ? '<section class="surface"><div class="surface-body"><div class="empty-state"><strong>No operational data yet.</strong><div class="subtle">The console is connected, but public-api returned empty fixtures, tasks, predictions, and ETL snapshots. Start ingestion or inspect upstream runtime/auth settings.</div></div></div></section>'
+      : '') +
     '<section class="surface"><div class="surface-header"><h2>Alerts</h2><div>' + formatBadge(snapshot.health.status) + '</div></div><div class="surface-body">' + renderAlerts(model) + '</div></section>' +
     '<section class="panel-grid">' +
       '<section class="surface"><div class="surface-header"><h2>Fixture Workbench</h2><span class="subtle">Manual selection and scoring gates</span></div><div class="surface-body">' + renderFixturesTable(snapshot) + '</div></section>' +
@@ -2043,7 +2150,7 @@ const loadConsole = async () => {
     state.payload = payload;
     await syncInspectors(payload);
     renderDashboard(payload);
-    setStatus('Live data connected', 'badge-ok');
+    setStatus(isSnapshotEmpty(payload.snapshot) ? 'Connected, waiting for data' : 'Live data connected', isSnapshotEmpty(payload.snapshot) ? 'badge-warn' : 'badge-ok');
   } catch (error) {
     root.innerHTML = '<section class="surface"><div class="surface-body"><div class="empty-state">' + escapeHtml(error.message || 'Unexpected console error') + '</div></div></section>';
     setStatus('Connection degraded', 'badge-error');

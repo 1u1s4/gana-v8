@@ -1,0 +1,38 @@
+{
+  "name": "@gana-v8/control-plane-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared persisted queue runtime and automation cycle coordination for Hermes scheduler, dispatcher, and recovery.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @gana-v8/public-api build && pnpm --filter @gana-v8/queue-adapters build && pnpm --filter @gana-v8/research-worker build && pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && tsc -p tsconfig.build.json",
+    "dev": "node ../../scripts/workspace-dev.mjs control-plane-runtime",
+    "lint": "node ../../scripts/workspace-lint.mjs .",
+    "test": "pnpm run build && tsx --test tests/**/*.test.ts",
+    "typecheck": "pnpm --filter @gana-v8/public-api build && pnpm --filter @gana-v8/queue-adapters build && pnpm --filter @gana-v8/research-worker build && pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && tsc -p tsconfig.json --noEmit",
+    "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
+  },
+  "dependencies": {
+    "@gana-v8/config-runtime": "workspace:*",
+    "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/orchestration-sdk": "workspace:*",
+    "@gana-v8/public-api": "workspace:*",
+    "@gana-v8/publisher-worker": "workspace:*",
+    "@gana-v8/queue-adapters": "workspace:*",
+    "@gana-v8/research-worker": "workspace:*",
+    "@gana-v8/scoring-worker": "workspace:*",
+    "@gana-v8/storage-adapters": "workspace:*",
+    "@gana-v8/validation-worker": "workspace:*"
+  }
+}

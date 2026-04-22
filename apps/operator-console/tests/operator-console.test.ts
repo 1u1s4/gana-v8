@@ -304,6 +304,22 @@ const createOperationLikeSnapshot = (overrides: Record<string, unknown> = {}) =>
     pending: 0,
     completionRate: 1,
   },
+  readiness: {
+    generatedAt: "2026-04-15T01:00:00.000Z",
+    status: "ready",
+    checks: [
+      { name: "health", status: "ready", detail: "Operational health checks are passing." },
+      { name: "sandbox-certification", status: "review", detail: "No sandbox certification evidence loaded." },
+    ],
+    sandboxCertification: {
+      total: 0,
+      passed: 0,
+      failed: 0,
+      missing: 0,
+      profiles: [],
+    },
+  },
+  automationCycles: [],
   health: {
     status: "ok",
     generatedAt: "2026-04-15T01:00:00.000Z",
@@ -318,21 +334,38 @@ const createOperationLikeSnapshot = (overrides: Record<string, unknown> = {}) =>
 });
 
 test("operator console builds panels and alerts from the snapshot", () => {
+  const snapshot = createOperatorConsoleSnapshotFromOperation(createOperationLikeSnapshot() as never);
+  const model = buildOperatorConsoleModel(snapshot);
+
+  assert.equal(model.panels.length, 21);
+  assert.equal(model.health.status, "ok");
+  assert.equal(model.validationSummary.partial, 1);
+  assert.ok(model.alerts.length >= 1);
+  assert.ok(model.alerts.some((alert) => /validations|policy:/i.test(alert)));
+  assert.equal(model.panels[1]?.title, "Readiness");
+  assert.equal(model.panels[2]?.title, "Automation cycles");
+  assert.equal(model.panels[3]?.title, "ETL");
+  assert.equal(model.panels[4]?.title, "Task queue");
+  assert.equal(model.panels[5]?.title, "Operational log");
+  assert.equal(model.panels[6]?.title, "AI & providers");
+  assert.equal(model.panels[7]?.title, "Research trace");
+  assert.equal(model.panels[8]?.title, "Sandbox certification");
+  assert.equal(model.panels[9]?.title, "Observability");
+  assert.equal(model.panels[10]?.title, "Policy");
+  assert.equal(model.panels[11]?.title, "Traceability");
+});
+
+test("operator console defaults to an operational empty state instead of demo data", () => {
   const snapshot = createOperatorConsoleSnapshot();
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 18);
-  assert.equal(model.health.status, "ok");
-  assert.equal(model.validationSummary.partial, 1);
-  assert.equal(model.alerts.length, 0);
-  assert.equal(model.panels[1]?.title, "ETL");
-  assert.equal(model.panels[2]?.title, "Task queue");
-  assert.equal(model.panels[3]?.title, "Operational log");
-  assert.equal(model.panels[4]?.title, "AI & providers");
-  assert.equal(model.panels[5]?.title, "Sandbox certification");
-  assert.equal(model.panels[6]?.title, "Observability");
-  assert.equal(model.panels[7]?.title, "Policy");
-  assert.equal(model.panels[8]?.title, "Traceability");
+  assert.equal(snapshot.fixtures.length, 0);
+  assert.equal(snapshot.tasks.length, 0);
+  assert.equal(snapshot.predictions.length, 0);
+  assert.equal(snapshot.health.status, "degraded");
+  assert.ok(model.alerts.some((alert) => alert.includes("No operational data loaded")));
+  assert.match(renderSnapshotConsole(snapshot), /awaiting first snapshot/i);
+  assert.doesNotMatch(renderSnapshotConsole(snapshot), /Boca Juniors|River Plate|demo/i);
 });
 
 test("operator console derives an ops-focused snapshot from public-api operation data", () => {
@@ -497,19 +530,27 @@ test("operator console surfaces fixture pipeline readiness from persisted resear
   const model = buildOperatorConsoleModel(createOperatorConsoleSnapshotFromOperation(operationSnapshot as never));
   const pipelinePanel = model.panels.find((panel) => panel.title === "Fixture pipeline");
   const fixtureOpsPanel = model.panels.find((panel) => panel.title === "Fixture ops");
+  const researchTracePanel = model.panels.find((panel) => panel.title === "Research trace");
 
   assert.ok(pipelinePanel);
   assert.ok(fixtureOpsPanel);
+  assert.ok(researchTracePanel);
   assert.match(pipelinePanel.lines.join("\n"), /needs-review/);
+  assert.match(pipelinePanel.lines.join("\n"), /bundle degraded/);
+  assert.match(pipelinePanel.lines.join("\n"), /narrative Persisted research bundle needs review/);
   assert.match(pipelinePanel.lines.join("\n"), /researchGeneratedAt/);
   assert.match(pipelinePanel.lines.join("\n"), /Boca Juniors/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /manual selected/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /override force-include/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /eligibility Research bundle status degraded is not publishable/i);
+  assert.match(fixtureOpsPanel.lines.join("\n"), /bundle degraded/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /research dossier has no evidence items/i);
   assert.match(fixtureOpsPanel.lines.join("\n"), /recent ops/);
   assert.match(fixtureOpsPanel.lines.join("\n"), /selection-override.updated.*high conviction/i);
   assert.match(fixtureOpsPanel.lines.join("\n"), /manual-selection.updated.*desk review/i);
+  assert.match(researchTracePanel.lines.join("\n"), /mode deterministic/);
+  assert.match(researchTracePanel.lines.join("\n"), /bundle degraded/);
+  assert.match(researchTracePanel.lines.join("\n"), /narrative Persisted research bundle needs review/);
 });
 
 test("operator console adds coverage and daily scope panels", () => {
@@ -719,11 +760,12 @@ test("operator console raises alerts from operational logs and degraded validati
 });
 
 test("operator console renderer prints a useful CLI view", () => {
-  const snapshot = createOperatorConsoleSnapshot();
+  const snapshot = createOperatorConsoleSnapshotFromOperation(createOperationLikeSnapshot() as never);
   const output = renderOperatorConsole(buildOperatorConsoleModel(snapshot));
 
   assert.match(output, /Gana V8 Operator Console/);
   assert.match(output, /Boca Juniors vs River Plate/);
+  assert.match(output, /Research trace/);
   assert.match(output, /Task queue/);
   assert.match(output, /Operational log/);
   assert.match(output, /ETL/);

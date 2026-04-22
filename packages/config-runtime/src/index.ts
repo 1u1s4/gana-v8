@@ -2,7 +2,7 @@ export const workspaceInfo = {
   packageName: "@gana-v8/config-runtime",
   workspaceName: "config-runtime",
   category: "package",
-  description: "Runtime configuration loading and environment profile scaffolding.",
+  description: "Runtime configuration loading and environment profile guardrails.",
   dependencies: [
     { name: "@gana-v8/domain-core", category: "workspace" },
   ],
@@ -100,7 +100,7 @@ const runtimeProfilePresets: Readonly<Record<RuntimeProfile, RuntimeProfilePrese
     providerBaseUrl: defaultProviderBaseUrls.mock,
     logLevel: "debug",
     dryRun: true,
-    demoMode: true,
+    demoMode: false,
   },
   "ci-smoke": {
     appEnv: "test",
@@ -109,7 +109,7 @@ const runtimeProfilePresets: Readonly<Record<RuntimeProfile, RuntimeProfilePrese
     providerBaseUrl: defaultProviderBaseUrls.mock,
     logLevel: "warn",
     dryRun: true,
-    demoMode: true,
+    demoMode: false,
   },
   "ci-regression": {
     appEnv: "test",
@@ -118,7 +118,7 @@ const runtimeProfilePresets: Readonly<Record<RuntimeProfile, RuntimeProfilePrese
     providerBaseUrl: defaultProviderBaseUrls.replay,
     logLevel: "warn",
     dryRun: true,
-    demoMode: true,
+    demoMode: false,
   },
   "staging-like": {
     appEnv: "staging",

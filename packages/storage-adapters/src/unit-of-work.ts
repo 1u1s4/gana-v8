@@ -1,6 +1,7 @@
 import type {
   AvailabilitySnapshotRepository,
   AiRunRepository,
+  AutomationCycleRepository,
   AuditEventRepository,
   DailyAutomationPolicyRepository,
   FeatureSnapshotRepository,
@@ -27,6 +28,7 @@ import type {
 import {
   InMemoryAvailabilitySnapshotRepository,
   InMemoryAiRunRepository,
+  InMemoryAutomationCycleRepository,
   InMemoryAuditEventRepository,
   InMemoryDailyAutomationPolicyRepository,
   InMemoryFeatureSnapshotRepository,
@@ -52,6 +54,7 @@ import {
 import {
   PrismaAvailabilitySnapshotRepository,
   PrismaAiRunRepository,
+  PrismaAutomationCycleRepository,
   PrismaAuditEventRepository,
   PrismaDailyAutomationPolicyRepository,
   PrismaFeatureSnapshotRepository,
@@ -78,6 +81,7 @@ import {
 
 export interface StorageUnitOfWork {
   fixtures: FixtureRepository;
+  automationCycles: AutomationCycleRepository;
   fixtureWorkflows: FixtureWorkflowRepository;
   tasks: TaskRepository;
   taskRuns: TaskRunRepository;
@@ -110,6 +114,7 @@ export interface PrismaUnitOfWork extends StorageUnitOfWork {
 
 export const createInMemoryUnitOfWork = (): InMemoryUnitOfWork => ({
   fixtures: new InMemoryFixtureRepository(),
+  automationCycles: new InMemoryAutomationCycleRepository(),
   fixtureWorkflows: new InMemoryFixtureWorkflowRepository(),
   tasks: new InMemoryTaskRepository(),
   taskRuns: new InMemoryTaskRunRepository(),
@@ -139,6 +144,7 @@ export const createPrismaUnitOfWork = (
 ): PrismaUnitOfWork => ({
   client,
   fixtures: new PrismaFixtureRepository(client),
+  automationCycles: new PrismaAutomationCycleRepository(client),
   fixtureWorkflows: new PrismaFixtureWorkflowRepository(client),
   tasks: new PrismaTaskRepository(client),
   taskRuns: new PrismaTaskRunRepository(client),

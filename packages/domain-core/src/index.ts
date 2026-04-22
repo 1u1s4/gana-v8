@@ -1,4 +1,5 @@
 export * from './common.js';
+export * from './entities/automation-cycle.js';
 export * from './entities/audit-event.js';
 export * from './entities/ai-run.js';
 export * from './entities/daily-automation-policy.js';

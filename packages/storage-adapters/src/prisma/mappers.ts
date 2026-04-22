@@ -1,6 +1,10 @@
 import type {
   AvailabilitySnapshotEntity,
   AiRunEntity,
+  AutomationCycleEntity,
+  AutomationCycleKind,
+  AutomationCycleStatus,
+  AutomationCycleSummary,
   AuditEventEntity,
   DailyAutomationPolicyEntity,
   FeatureSnapshotEntity,
@@ -40,6 +44,9 @@ import {
   Prisma,
   type AvailabilitySnapshot,
   type AiRun,
+  type AutomationCycle,
+  type AutomationCycleKind as PrismaAutomationCycleKind,
+  type AutomationCycleStatus as PrismaAutomationCycleStatus,
   type AuditEvent,
   type DailyAutomationPolicy,
   type Environment as PrismaEnvironment,
@@ -105,6 +112,22 @@ const taskTriggerKindToDomain = (value: PrismaTaskTriggerKind): TaskTriggerKind 
 
 const taskTriggerKindToPrisma = (value: TaskTriggerKind): PrismaTaskTriggerKind => value;
 
+const automationCycleKindToDomain = (
+  value: PrismaAutomationCycleKind,
+): AutomationCycleKind => value;
+
+const automationCycleKindToPrisma = (
+  value: AutomationCycleKind,
+): PrismaAutomationCycleKind => value;
+
+const automationCycleStatusToDomain = (
+  value: PrismaAutomationCycleStatus,
+): AutomationCycleStatus => value;
+
+const automationCycleStatusToPrisma = (
+  value: AutomationCycleStatus,
+): PrismaAutomationCycleStatus => value;
+
 const predictionMarketToDomain = (
   value: PrismaPredictionMarket,
 ): PredictionEntity["market"] => value.replaceAll("_", "-") as PredictionEntity["market"];
@@ -162,6 +185,9 @@ const environmentToPrisma = (
 
 export const fixtureInclude = Prisma.validator<Prisma.FixtureDefaultArgs>()({});
 export type FixtureRecord = Prisma.FixtureGetPayload<typeof fixtureInclude>;
+
+export const automationCycleInclude = Prisma.validator<Prisma.AutomationCycleDefaultArgs>()({});
+export type AutomationCycleRecord = Prisma.AutomationCycleGetPayload<typeof automationCycleInclude>;
 
 export const fixtureWorkflowInclude = Prisma.validator<Prisma.FixtureWorkflowDefaultArgs>()({});
 export type FixtureWorkflowRecord = Prisma.FixtureWorkflowGetPayload<typeof fixtureWorkflowInclude>;
@@ -301,6 +327,54 @@ export const taskRunDomainToCreateInput = (
   error: entity.error ?? null,
   result: entity.result ? (entity.result as Prisma.InputJsonValue) : Prisma.JsonNull,
   retryScheduledFor: toDate(entity.retryScheduledFor) ?? null,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+const asAutomationCycleSummary = (
+  value: Prisma.JsonValue | null | undefined,
+): AutomationCycleSummary | undefined =>
+  value !== null && value !== undefined ? (asRecord(value) as AutomationCycleSummary) : undefined;
+
+export const automationCycleRecordToDomain = (
+  record: AutomationCycle | AutomationCycleRecord,
+): AutomationCycleEntity => ({
+  id: record.id,
+  kind: automationCycleKindToDomain(record.kind),
+  status: automationCycleStatusToDomain(record.status),
+  leaseOwner: record.leaseOwner,
+  ...(record.summary
+    ? (() => {
+        const summary = asAutomationCycleSummary(record.summary);
+        return summary ? { summary } : {};
+      })()
+    : {}),
+  ...(record.metadata ? { metadata: asRecord(record.metadata) } : {}),
+  ...(record.error ? { error: record.error } : {}),
+  startedAt: record.startedAt.toISOString(),
+  ...(record.finishedAt ? { finishedAt: record.finishedAt.toISOString() } : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const automationCycleDomainToCreateInput = (
+  entity: AutomationCycleEntity,
+): Prisma.AutomationCycleUncheckedCreateInput => ({
+  id: entity.id,
+  kind: automationCycleKindToPrisma(entity.kind),
+  status: automationCycleStatusToPrisma(entity.status),
+  leaseOwner: entity.leaseOwner,
+  summary:
+    entity.summary !== undefined
+      ? (entity.summary as Prisma.InputJsonValue)
+      : Prisma.JsonNull,
+  metadata:
+    entity.metadata !== undefined
+      ? (entity.metadata as Prisma.InputJsonValue)
+      : Prisma.JsonNull,
+  error: entity.error ?? null,
+  startedAt: new Date(entity.startedAt),
+  finishedAt: toDate(entity.finishedAt) ?? null,
   createdAt: new Date(entity.createdAt),
   updatedAt: new Date(entity.updatedAt),
 });

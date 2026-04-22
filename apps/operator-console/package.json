@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Internal operations surface placeholder for dashboards, approvals, and incident review.",
+  "description": "Internal operations surface for readiness, incidents, queue controls, and certification review.",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "exports": {

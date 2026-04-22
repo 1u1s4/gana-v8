@@ -20,7 +20,7 @@ test("loadRuntimeConfig resolves gana-v8 defaults for local development", () => 
   assert.equal(config.provider.baseUrl, "mock://api-football");
   assert.equal(config.logging.level, "debug");
   assert.equal(config.flags.dryRun, true);
-  assert.equal(config.flags.demoMode, true);
+  assert.equal(config.flags.demoMode, false);
   assert.match(describeWorkspace(), /config-runtime/);
 });
 

@@ -8,22 +8,25 @@ Hermes-native sports prediction ops platform.
 
 Versión navegable: `docs/architecture/gana-v8-architecture.html`
 
-## Qué incluye este scaffold
+## Qué incluye la plataforma
 
-Este slice materializa el scaffold inicial del monorepo con:
+El monorepo ya materializa la base operativa de gana-v8 con:
 
 - workspaces reales en `apps/*` y `packages/*`
 - configuración TypeScript compartida para apps y paquetes
 - scripts uniformes de `build`, `lint`, `test`, `typecheck` y `clean`
-- placeholders compilables para los bounded contexts definidos en la arquitectura
+- workers, API interna, consola operativa y runtime persistido de tareas
 - sólo rutas materializadas en git cuando ya existe contenido real
 
-El layout objetivo completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-monorepo-layout.md`. Directorios como `data-contracts/`, `fixtures/`, `infra/`, `notebooks/`, `registry/`, `scripts/`, `tests/` y partes de `docs/` se crean a medida que tengan artefactos concretos, en vez de preservarse con placeholders vacíos.
+El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-monorepo-layout.md`. Directorios como `data-contracts/`, `fixtures/`, `infra/`, `notebooks/`, `registry/`, `scripts/`, `tests/` y partes de `docs/` se crean a medida que tengan artefactos concretos.
 
 ## Workspaces incluidos
 
 ### Apps
 - `apps/hermes-control-plane`
+- `apps/hermes-scheduler`
+- `apps/hermes-dispatcher`
+- `apps/hermes-recovery`
 - `apps/operator-console`
 - `apps/public-api`
 - `apps/scoring-worker`
@@ -51,6 +54,7 @@ El layout objetivo completo vive en `docs/plans/`, especialmente en `docs/plans/
 - `packages/audit-lineage`
 - `packages/observability`
 - `packages/config-runtime`
+- `packages/control-plane-runtime`
 - `packages/storage-adapters`
 - `packages/queue-adapters`
 - `packages/authz`
@@ -118,7 +122,7 @@ Runbook:
 - Para DigitalOcean managed MySQL sin CA local configurada, usá `sslaccept=accept_invalid_certs` en la URL
 - El baseline actual de `prisma/migrations/` ya fue regenerado para MySQL.
 
-## Convenciones del scaffold
+## Convenciones del repo
 
 - Cada workspace expone `src/index.ts` como punto de entrada mínimo.
 - `build` compila a `dist/` con TypeScript.
@@ -128,8 +132,8 @@ Runbook:
 
 ## Próximos pasos naturales
 
-- agregar implementación real por slice sobre cada app/package
-- introducir runtimes específicos por servicio cuando exista código funcional
+- endurecer los loops de operación distribuidos sobre la topología scheduler/dispatcher/recovery
+- ampliar evidencia de promotion readiness y runbooks operativos
 - conectar CI para ejecutar `pnpm install && pnpm verify`
 
 ## Planes clave
@@ -137,6 +141,6 @@ Runbook:
 - `docs/plans/falta/gana-v8-plan-cierre-plataforma-operacion.md`
 - `docs/plans/completado/gana-v8-plan-cierre-data-research.md`
 - `docs/plans/falta/gana-v8-plan-cierre-sandbox-qa.md`
-- `docs/plans/hermes-v8-migracion-v7-a-v8-git-worktrees.md`
+- `docs/plans/completado/hermes-v8-migracion-v7-a-v8-git-worktrees.md`
 - `docs/plans/gana-v8-monorepo-layout.md`
-- `docs/plans/hermes-v8-blueprint-prediccion-partidos.md`
+- `docs/plans/completado/hermes-v8-blueprint-prediccion-partidos.md`

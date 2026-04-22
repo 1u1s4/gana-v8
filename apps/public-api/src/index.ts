@@ -23,6 +23,7 @@ import {
   type OperationalPolicyReport,
 } from "@gana-v8/policy-engine";
 import {
+  type AutomationCycleEntity,
   applyFixtureWorkflowManualSelection as applyFixtureWorkflowManualSelectionTransition,
   applyFixtureWorkflowSelectionOverride as applyFixtureWorkflowSelectionOverrideTransition,
   createAiRun,
@@ -52,6 +53,7 @@ import {
   type TaskStatus,
   type TeamCoveragePolicyEntity,
   type ValidationEntity,
+  type WorkflowStageStatus,
 } from "@gana-v8/domain-core";
 import {
   createAuthorizationActor,
@@ -283,6 +285,73 @@ export interface ParlayDetailReadModel extends Omit<ParlayEntity, "legs"> {
   readonly validation?: ValidationEntity;
 }
 
+export interface FixtureOpsStageNarrativeReadModel {
+  readonly stage: "ingestion" | "odds" | "enrichment" | "candidate" | "prediction" | "parlay" | "validation";
+  readonly status: WorkflowStageStatus;
+  readonly blockingReason?: string;
+  readonly degradationReason?: string;
+  readonly retryCount: number;
+  readonly lastTaskRunId?: string;
+  readonly manualReviewRequired: boolean;
+  readonly dependsOn: readonly string[];
+}
+
+export interface AutomationCycleStageReadModel {
+  readonly stage: "research" | "prediction" | "parlay" | "validation";
+  readonly status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "degraded";
+  readonly taskIds: readonly string[];
+  readonly taskRunIds: readonly string[];
+  readonly retryCount: number;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly error?: string;
+}
+
+export interface AutomationCycleReadModel {
+  readonly id: string;
+  readonly source: string;
+  readonly status: "running" | "succeeded" | "failed" | "degraded";
+  readonly startedAt: string;
+  readonly completedAt?: string;
+  readonly fixtureIds: readonly string[];
+  readonly taskIds: readonly string[];
+  readonly validationTaskId?: string;
+  readonly stages: readonly AutomationCycleStageReadModel[];
+  readonly summary: {
+    readonly researchTaskCount: number;
+    readonly predictionTaskCount: number;
+    readonly parlayCount: number;
+    readonly validationTaskCount: number;
+  };
+  readonly metadata: Record<string, unknown>;
+}
+
+export type PublicApiReadinessStatus = "blocked" | "review" | "ready";
+
+export interface PublicApiReadinessCheckReadModel {
+  readonly name: string;
+  readonly status: PublicApiReadinessStatus;
+  readonly detail: string;
+}
+
+export interface PublicApiReadinessReadModel {
+  readonly generatedAt: string;
+  readonly status: PublicApiReadinessStatus;
+  readonly checks: readonly PublicApiReadinessCheckReadModel[];
+  readonly sandboxCertification: {
+    readonly total: number;
+    readonly passed: number;
+    readonly failed: number;
+    readonly missing: number;
+    readonly profiles: readonly {
+      readonly id: string;
+      readonly status: PublicApiReadinessStatus;
+      readonly sourceStatus: SandboxCertificationReadModel["status"];
+      readonly generatedAt?: string;
+    }[];
+  };
+}
+
 export interface FixtureOpsDetailReadModel {
   readonly fixture: FixtureEntity;
   readonly workflow?: FixtureWorkflowEntity;
@@ -297,12 +366,14 @@ export interface FixtureOpsDetailReadModel {
   readonly parlays: readonly ParlayEntity[];
   readonly validations: readonly ValidationEntity[];
   readonly recentTaskRuns: readonly TaskRunEntity[];
+  readonly stages: readonly FixtureOpsStageNarrativeReadModel[];
 }
 
 export interface CoverageDailyScopeReadModel extends FixtureCoverageScopeDecision {}
 
 export interface OperationSnapshot {
   readonly generatedAt: string;
+  readonly automationCycles: readonly AutomationCycleReadModel[];
   readonly fixtures: readonly FixtureEntity[];
   readonly fixtureResearch: readonly FixtureResearchReadModel[];
   readonly fixtureWorkflows: readonly FixtureWorkflowEntity[];
@@ -321,9 +392,12 @@ export interface OperationSnapshot {
   readonly validations: readonly ValidationEntity[];
   readonly validationSummary: ValidationSummary;
   readonly health: PublicApiHealth;
+  readonly readiness: PublicApiReadinessReadModel;
 }
 
 export interface PublicApiHandlers {
+  readonly automationCycles: () => readonly AutomationCycleReadModel[];
+  readonly automationCycleById: (cycleId: string) => AutomationCycleReadModel | null;
   readonly fixtures: () => readonly FixtureEntity[];
   readonly fixtureById: (fixtureId: string) => FixtureEntity | null;
   readonly fixtureOpsById: (fixtureId: string) => FixtureOpsDetailReadModel | null;
@@ -355,11 +429,13 @@ export interface PublicApiHandlers {
   readonly validationById: (validationId: string) => ValidationEntity | null;
   readonly validationSummary: () => ValidationSummary;
   readonly health: () => PublicApiHealth;
+  readonly readiness: () => PublicApiReadinessReadModel;
   readonly snapshot: () => OperationSnapshot;
 }
 
 export interface PublicApiHttpOptions {
   readonly snapshot?: OperationSnapshot;
+  readonly handlers?: PublicApiHandlers;
   readonly unitOfWork?: StorageUnitOfWork;
   readonly queueAdapter?: TaskQueueAdapter;
   readonly sandboxCertification?: PublicApiSandboxCertificationSourceOptions;
@@ -437,22 +513,6 @@ export interface SandboxCertificationDetailReadModel extends SandboxCertificatio
   readonly diffEntries: readonly SandboxCertificationDiffEntryReadModel[];
 }
 
-export interface FixtureOpsDetailReadModel {
-  readonly fixture: FixtureEntity;
-  readonly workflow?: FixtureWorkflowEntity;
-  readonly research: FixtureResearchReadModel | null;
-  readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
-  readonly scoringEligibility: {
-    readonly eligible: boolean;
-    readonly reason?: string;
-  };
-  readonly recentAuditEvents: readonly AuditEventEntity[];
-  readonly predictions: readonly PredictionEntity[];
-  readonly parlays: readonly ParlayEntity[];
-  readonly validations: readonly ValidationEntity[];
-  readonly recentTaskRuns: readonly TaskRunEntity[];
-}
-
 export interface LiveIngestionRunReadModel {
   readonly taskId: string;
   readonly taskRunId?: string;
@@ -512,6 +572,7 @@ const allowedTaskStatuses = [
 ] as const satisfies readonly TaskStatus[];
 
 export const publicApiEndpointPaths = {
+  automationCycles: "/automation-cycles",
   fixtures: "/fixtures",
   tasks: "/tasks",
   taskRuns: "/task-runs",
@@ -532,6 +593,7 @@ export const publicApiEndpointPaths = {
   validations: "/validations",
   validationSummary: "/validation-summary",
   health: "/health",
+  readiness: "/readiness",
   snapshot: "/snapshot",
 } as const;
 
@@ -576,6 +638,9 @@ const asString = (value: unknown): string | null =>
 
 const asNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const asBoolean = (value: unknown): boolean | null =>
+  typeof value === "boolean" ? value : null;
 
 const asStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) {
@@ -1020,8 +1085,9 @@ export function createHealthReport(input: {
   };
 }
 
-export function createOperationSnapshot(input: {
+export interface CreateOperationSnapshotInput {
   readonly generatedAt?: string;
+  readonly automationCycles?: readonly AutomationCycleReadModel[];
   readonly fixtures?: readonly FixtureEntity[];
   readonly fixtureResearch?: readonly FixtureResearchReadModel[];
   readonly fixtureWorkflows?: readonly FixtureWorkflowEntity[];
@@ -1038,28 +1104,35 @@ export function createOperationSnapshot(input: {
   readonly predictions?: readonly PredictionEntity[];
   readonly parlays?: readonly ParlayEntity[];
   readonly validations?: readonly ValidationEntity[];
-} = {}): OperationSnapshot {
+  readonly readiness?: PublicApiReadinessReadModel;
+}
+
+export function createOperationSnapshot(
+  input: CreateOperationSnapshotInput = {},
+): OperationSnapshot {
   const generatedAt = input.generatedAt ?? "2026-04-15T01:00:00.000Z";
-  const fixtures = [...(input.fixtures ?? createDemoFixtures())];
+  const automationCycles = [...(input.automationCycles ?? [])];
+  const fixtures = [...(input.fixtures ?? [])];
   const fixtureResearch = [...(input.fixtureResearch ?? [])];
-  const fixtureWorkflows = [...(input.fixtureWorkflows ?? createDemoFixtureWorkflows(fixtures))];
+  const fixtureWorkflows = [...(input.fixtureWorkflows ?? [])];
   const leagueCoveragePolicies = [...(input.leagueCoveragePolicies ?? [])];
   const teamCoveragePolicies = [...(input.teamCoveragePolicies ?? [])];
   const dailyAutomationPolicies = [...(input.dailyAutomationPolicies ?? [])];
   const auditEvents = [...(input.auditEvents ?? [])];
-  const tasks = [...(input.tasks ?? createDemoTasks())];
-  const taskRuns = [...(input.taskRuns ?? createDemoTaskRuns(tasks))];
+  const tasks = [...(input.tasks ?? [])];
+  const taskRuns = [...(input.taskRuns ?? [])];
   const rawBatches = [...(input.rawBatches ?? [])];
   const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
-  const aiRuns = [...(input.aiRuns ?? createDemoAiRuns(tasks))];
-  const providerStates = [...(input.providerStates ?? createDemoProviderStates(aiRuns, rawBatches))];
-  const predictions = [...(input.predictions ?? createDemoPredictions(fixtures, aiRuns))];
-  const parlays = [...(input.parlays ?? createDemoParlays(predictions))];
-  const validations = [...(input.validations ?? createDemoValidations(parlays, predictions))];
+  const aiRuns = [...(input.aiRuns ?? [])];
+  const providerStates = [...(input.providerStates ?? [])];
+  const predictions = [...(input.predictions ?? [])];
+  const parlays = [...(input.parlays ?? [])];
+  const validations = [...(input.validations ?? [])];
   const validationSummary = summarizeValidations(validations);
 
   return {
     generatedAt,
+    automationCycles,
     fixtures,
     fixtureResearch,
     fixtureWorkflows,
@@ -1087,13 +1160,388 @@ export function createOperationSnapshot(input: {
       parlays,
       validationSummary,
     }),
+    readiness:
+      input.readiness ??
+      {
+        generatedAt,
+        status: "review",
+        checks: [
+          {
+            name: "operational-policy",
+            status: "review",
+            detail: "Operational readiness has not been evaluated against live evidence yet.",
+          },
+        ],
+        sandboxCertification: {
+          total: 0,
+          passed: 0,
+          failed: 0,
+          missing: 0,
+          profiles: [],
+        },
+      },
   };
 }
 
+export function createDemoOperationSnapshot(
+  input: CreateOperationSnapshotInput = {},
+): OperationSnapshot {
+  const generatedAt = input.generatedAt ?? "2026-04-15T01:00:00.000Z";
+  const automationCycles = [...(input.automationCycles ?? [])];
+  const fixtures = [...(input.fixtures ?? createDemoFixtures())];
+  const fixtureResearch = [...(input.fixtureResearch ?? [])];
+  const fixtureWorkflows = [...(input.fixtureWorkflows ?? createDemoFixtureWorkflows(fixtures))];
+  const leagueCoveragePolicies = [...(input.leagueCoveragePolicies ?? [])];
+  const teamCoveragePolicies = [...(input.teamCoveragePolicies ?? [])];
+  const dailyAutomationPolicies = [...(input.dailyAutomationPolicies ?? [])];
+  const auditEvents = [...(input.auditEvents ?? [])];
+  const tasks = [...(input.tasks ?? createDemoTasks())];
+  const taskRuns = [...(input.taskRuns ?? createDemoTaskRuns(tasks))];
+  const rawBatches = [...(input.rawBatches ?? [])];
+  const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
+  const aiRuns = [...(input.aiRuns ?? createDemoAiRuns(tasks))];
+  const providerStates = [...(input.providerStates ?? createDemoProviderStates(aiRuns, rawBatches))];
+  const predictions = [...(input.predictions ?? createDemoPredictions(fixtures, aiRuns))];
+  const parlays = [...(input.parlays ?? createDemoParlays(predictions))];
+  const validations = [...(input.validations ?? createDemoValidations(parlays, predictions))];
+  const validationSummary = summarizeValidations(validations);
+
+  return {
+    generatedAt,
+    automationCycles,
+    fixtures,
+    fixtureResearch,
+    fixtureWorkflows,
+    leagueCoveragePolicies,
+    teamCoveragePolicies,
+    dailyAutomationPolicies,
+    auditEvents,
+    tasks,
+    taskRuns,
+    aiRuns,
+    providerStates,
+    rawBatches,
+    oddsSnapshots,
+    predictions,
+    parlays,
+    validations,
+    validationSummary,
+    health: createHealthReport({
+      generatedAt,
+      fixtures,
+      tasks,
+      rawBatches,
+      oddsSnapshots,
+      predictions,
+      parlays,
+      validationSummary,
+    }),
+    readiness:
+      input.readiness ??
+      {
+        generatedAt,
+        status: "review",
+        checks: [
+          {
+            name: "operational-policy",
+            status: "review",
+            detail: "Operational readiness has not been evaluated against live evidence yet.",
+          },
+        ],
+        sandboxCertification: {
+          total: 0,
+          passed: 0,
+          failed: 0,
+          missing: 0,
+          profiles: [],
+        },
+      },
+  };
+}
+
+export function createEmptyOperationSnapshot(
+  input: {
+    readonly generatedAt?: string;
+    readonly readiness?: PublicApiReadinessReadModel;
+  } = {},
+): OperationSnapshot {
+  return createOperationSnapshot({
+    ...(input.generatedAt ? { generatedAt: input.generatedAt } : {}),
+    automationCycles: [],
+    fixtures: [],
+    fixtureResearch: [],
+    fixtureWorkflows: [],
+    leagueCoveragePolicies: [],
+    teamCoveragePolicies: [],
+    dailyAutomationPolicies: [],
+    auditEvents: [],
+    tasks: [],
+    taskRuns: [],
+    aiRuns: [],
+    providerStates: [],
+    rawBatches: [],
+    oddsSnapshots: [],
+    predictions: [],
+    parlays: [],
+    validations: [],
+    ...(input.readiness ? { readiness: input.readiness } : {}),
+  });
+}
+
+const stageDependencies: Readonly<Record<FixtureOpsStageNarrativeReadModel["stage"], readonly string[]>> = {
+  ingestion: [],
+  odds: ["ingestion"],
+  enrichment: ["ingestion", "odds"],
+  candidate: ["enrichment"],
+  prediction: ["candidate"],
+  parlay: ["prediction"],
+  validation: ["prediction", "parlay"],
+};
+
+const stageTaskKinds: Readonly<
+  Partial<Record<FixtureOpsStageNarrativeReadModel["stage"], readonly TaskEntity["kind"][]>>
+> = {
+  ingestion: ["fixture-ingestion"],
+  odds: ["odds-ingestion"],
+  prediction: ["prediction"],
+  validation: ["validation"],
+};
+
+const operationalReadinessOrder: Readonly<Record<PublicApiReadinessStatus, number>> = {
+  blocked: 0,
+  review: 1,
+  ready: 2,
+};
+
+const mergeReadinessStatus = (
+  current: PublicApiReadinessStatus,
+  next: PublicApiReadinessStatus,
+): PublicApiReadinessStatus =>
+  operationalReadinessOrder[next] < operationalReadinessOrder[current] ? next : current;
+
+const toReadinessStatusFromPolicy = (
+  policy: OperationalPolicyReport["status"],
+): PublicApiReadinessStatus => {
+  switch (policy) {
+    case "blocked":
+      return "blocked";
+    case "degraded":
+      return "review";
+    default:
+      return "ready";
+  }
+};
+
+const toReadinessStatusFromHealth = (
+  status: PublicApiHealthStatus,
+): PublicApiReadinessStatus => (status === "ok" ? "ready" : "review");
+
+const toReadinessStatusFromCertification = (
+  status: SandboxCertificationReadModel["status"],
+): PublicApiReadinessStatus => {
+  switch (status) {
+    case "passed":
+      return "ready";
+    case "missing":
+      return "review";
+    default:
+      return "blocked";
+  }
+};
+
+const buildFixtureOpsStageNarratives = (
+  snapshot: OperationSnapshot,
+  fixture: FixtureEntity,
+  workflow: FixtureWorkflowEntity | undefined,
+): readonly FixtureOpsStageNarrativeReadModel[] => {
+  const taskRunsByTaskId = new Map<string, readonly TaskRunEntity[]>(
+    snapshot.tasks.map((task) => [task.id, listTaskRunsByTaskId(snapshot, task.id)]),
+  );
+
+  return ([
+    ["ingestion", workflow?.ingestionStatus ?? "pending"],
+    ["odds", workflow?.oddsStatus ?? "pending"],
+    ["enrichment", workflow?.enrichmentStatus ?? "pending"],
+    ["candidate", workflow?.candidateStatus ?? "pending"],
+    ["prediction", workflow?.predictionStatus ?? "pending"],
+    ["parlay", workflow?.parlayStatus ?? "pending"],
+    ["validation", workflow?.validationStatus ?? "pending"],
+  ] as const).map(([stage, status]) => {
+    const stageTasks = snapshot.tasks.filter((task) => {
+      if (task.payload.fixtureId !== fixture.id) {
+        return false;
+      }
+
+      const kinds = stageTaskKinds[stage];
+      return kinds ? kinds.includes(task.kind) : false;
+    });
+    const stageTaskRuns = stageTasks.flatMap((task) => taskRunsByTaskId.get(task.id) ?? []);
+    const failedTaskRun = sortByIsoDescending(
+      stageTaskRuns.filter((taskRun) => taskRun.status === "failed"),
+      (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
+    )[0];
+    const latestTaskRun = sortByIsoDescending(
+      stageTaskRuns,
+      (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
+    )[0];
+    const manualReviewRequired =
+      stage === "candidate"
+        ? workflow?.manualSelectionStatus === "selected"
+        : stage === "prediction" || stage === "parlay"
+          ? workflow?.selectionOverride === "force-include" ||
+            workflow?.selectionOverride === "force-exclude"
+          : false;
+
+    return {
+      stage,
+      status,
+      ...(status === "blocked" || status === "failed"
+        ? { blockingReason: failedTaskRun?.error ?? workflow?.lastErrorMessage ?? "Stage is blocked by upstream failure." }
+        : {}),
+      ...(status === "skipped"
+        ? { degradationReason: workflow?.lastErrorMessage ?? "Stage was skipped by operational policy." }
+        : {}),
+      retryCount: stageTaskRuns.filter((taskRun) => taskRun.status === "failed").length,
+      ...(latestTaskRun ? { lastTaskRunId: latestTaskRun.id } : {}),
+      manualReviewRequired,
+      dependsOn: stageDependencies[stage],
+    };
+  });
+};
+
+const asAutomationCycleSummary = (
+  value: unknown,
+): AutomationCycleEntity["summary"] | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as AutomationCycleEntity["summary"])
+    : null;
+
+const createAutomationCycleReadModel = (
+  cycle: AutomationCycleEntity,
+): AutomationCycleReadModel => {
+  const summary = asAutomationCycleSummary(cycle.summary);
+  const stages = [...(summary?.stages ?? [])].map((stage) => ({
+    stage: stage.stage,
+    status: stage.status,
+    taskIds: [...stage.taskIds],
+    taskRunIds: [...stage.taskRunIds],
+    retryCount: stage.retryCount,
+    ...(stage.startedAt ? { startedAt: stage.startedAt } : {}),
+    ...(stage.completedAt ? { completedAt: stage.completedAt } : {}),
+    ...(stage.error ? { error: stage.error } : {}),
+  }));
+  const readModelStatus =
+    cycle.status === "failed"
+      ? "failed"
+      : stages.some((stage) => stage.status === "blocked" || stage.status === "degraded")
+        ? "degraded"
+        : cycle.status;
+  const counts = summary?.counts ?? {};
+
+  return {
+    id: cycle.id,
+    source: summary?.source ?? cycle.kind,
+    status: readModelStatus,
+    startedAt: cycle.startedAt,
+    ...(cycle.finishedAt ? { completedAt: cycle.finishedAt } : {}),
+    fixtureIds: [...(summary?.fixtureIds ?? [])],
+    taskIds: [...(summary?.taskIds ?? [])],
+    ...(summary?.validationTaskId ? { validationTaskId: summary.validationTaskId } : {}),
+    stages,
+    summary: {
+      researchTaskCount: typeof counts.researchTaskCount === "number" ? counts.researchTaskCount : 0,
+      predictionTaskCount: typeof counts.predictionTaskCount === "number" ? counts.predictionTaskCount : 0,
+      parlayCount: typeof counts.parlayCount === "number" ? counts.parlayCount : 0,
+      validationTaskCount: typeof counts.validationTaskCount === "number" ? counts.validationTaskCount : 0,
+    },
+    metadata: { ...(cycle.metadata ?? {}) },
+  };
+};
+
+const createReadinessReadModel = (
+  snapshot: Pick<OperationSnapshot, "generatedAt" | "health"> & {
+    readonly operationalSummary?: OperationalSummary;
+  },
+  certifications: readonly SandboxCertificationReadModel[] = [],
+): PublicApiReadinessReadModel => {
+  const operationalSummary =
+    snapshot.operationalSummary ??
+    ("tasks" in snapshot
+      ? createOperationalSummary(snapshot as OperationSnapshot)
+      : undefined);
+  const policyStatus = operationalSummary?.policy.status ?? "degraded";
+  const checks: PublicApiReadinessCheckReadModel[] = [
+    {
+      name: "health",
+      status: toReadinessStatusFromHealth(snapshot.health.status),
+      detail: snapshot.health.checks.map((check) => `${check.name}:${check.status}`).join(" | ") || "No health checks reported.",
+    },
+    {
+      name: "operational-policy",
+      status: toReadinessStatusFromPolicy(policyStatus),
+      detail: operationalSummary?.policy.summary ?? "No operational policy summary available.",
+    },
+  ];
+
+  const certificationProfiles = certifications.map((certification) => ({
+    id: certification.id,
+    status: toReadinessStatusFromCertification(certification.status),
+    sourceStatus: certification.status,
+    ...(certification.generatedAt ? { generatedAt: certification.generatedAt } : {}),
+  }));
+  const certificationCheckStatus =
+    certificationProfiles.length === 0
+      ? "review"
+      : certificationProfiles.some((profile) => profile.status === "blocked")
+        ? "blocked"
+        : certificationProfiles.some((profile) => profile.status === "review")
+          ? "review"
+          : "ready";
+
+  checks.push({
+    name: "sandbox-certification",
+    status: certificationCheckStatus,
+    detail:
+      certificationProfiles.length === 0
+        ? "No sandbox certification evidence loaded."
+        : certificationProfiles
+            .map((profile) => `${profile.id}:${profile.sourceStatus}`)
+            .join(" | "),
+  });
+
+  const overallStatus = checks.reduce<PublicApiReadinessStatus>(
+    (status, check) => mergeReadinessStatus(status, check.status),
+    "ready",
+  );
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    status: overallStatus,
+    checks,
+    sandboxCertification: {
+      total: certificationProfiles.length,
+      passed: certifications.filter((certification) => certification.status === "passed").length,
+      failed: certifications.filter((certification) => certification.status === "failed").length,
+      missing: certifications.filter((certification) => certification.status === "missing").length,
+      profiles: certificationProfiles,
+    },
+  };
+};
+
+const withReadiness = (
+  snapshot: OperationSnapshot,
+  certifications: readonly SandboxCertificationReadModel[] = [],
+): OperationSnapshot => ({
+  ...snapshot,
+  readiness: createReadinessReadModel(snapshot, certifications),
+});
+
 export function createPublicApiHandlers(
-  snapshot: OperationSnapshot = createOperationSnapshot(),
+  snapshot: OperationSnapshot = createEmptyOperationSnapshot(),
 ): PublicApiHandlers {
   return {
+    automationCycles: () => listAutomationCycles(snapshot),
+    automationCycleById: (cycleId: string) => findAutomationCycleById(snapshot, cycleId),
     fixtures: () => listFixtures(snapshot),
     fixtureById: (fixtureId: string) => findFixtureById(snapshot, fixtureId),
     fixtureOpsById: (fixtureId: string) => findFixtureOpsById(snapshot, fixtureId),
@@ -1125,6 +1573,7 @@ export function createPublicApiHandlers(
     validationById: (validationId: string) => findValidationById(snapshot, validationId),
     validationSummary: () => getValidationSummary(snapshot),
     health: () => getHealth(snapshot),
+    readiness: () => snapshot.readiness,
     snapshot: () => snapshot,
   };
 }
@@ -1135,6 +1584,16 @@ export function routePublicApiRequest(
 ): PublicApiResponse {
   const normalizedPath = normalizeRequestPath(requestPath);
   const searchParams = getRequestSearchParams(requestPath);
+  const automationCycleDetail = matchAutomationCycleDetailPath(normalizedPath);
+  if (automationCycleDetail) {
+    const automationCycle = handlers.automationCycleById(automationCycleDetail.cycleId);
+    if (!automationCycle) {
+      return createResourceNotFoundResponse("automation-cycle", automationCycleDetail.cycleId);
+    }
+
+    return { status: 200, body: automationCycle };
+  }
+
   const fixtureDetail = matchFixtureDetailPath(normalizedPath);
   const fixtureOpsDetail = matchFixtureOpsDetailPath(normalizedPath);
   const fixtureAuditEventsDetail = matchFixtureAuditEventsPath(normalizedPath);
@@ -1250,6 +1709,8 @@ export function routePublicApiRequest(
   }
 
   switch (normalizedPath) {
+    case publicApiEndpointPaths.automationCycles:
+      return { status: 200, body: handlers.automationCycles() };
     case publicApiEndpointPaths.fixtures:
       return { status: 200, body: handlers.fixtures() };
     case publicApiEndpointPaths.tasks: {
@@ -1312,6 +1773,8 @@ export function routePublicApiRequest(
       return { status: 200, body: handlers.validationSummary() };
     case publicApiEndpointPaths.health:
       return { status: 200, body: handlers.health() };
+    case publicApiEndpointPaths.readiness:
+      return { status: 200, body: handlers.readiness() };
     case publicApiEndpointPaths.snapshot:
       return { status: 200, body: handlers.snapshot() };
     default:
@@ -1770,18 +2233,15 @@ export const authorizePublicApiRequest = (
 export function createPublicApiServer(
   options: PublicApiHttpOptions = {},
 ): Server {
-  const staticHandlers = options.unitOfWork
-    ? null
-    : createPublicApiHandlers(options.snapshot ?? createOperationSnapshot());
   const queueAdapter = resolvePublicApiQueueAdapter(options);
-  const sandboxCertification = options.sandboxCertification;
 
   return createServer((request, response) => {
       void handlePublicApiRequest(request, response, {
-        ...(staticHandlers ? { handlers: staticHandlers } : {}),
+        ...(options.handlers ? { handlers: options.handlers } : {}),
+        ...(options.snapshot ? { snapshot: options.snapshot } : {}),
         ...(options.unitOfWork ? { unitOfWork: options.unitOfWork } : {}),
         ...(queueAdapter ? { queueAdapter } : {}),
-        ...(sandboxCertification ? { sandboxCertification } : {}),
+        ...(options.sandboxCertification ? { sandboxCertification: options.sandboxCertification } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
       }).catch((error: unknown) => {
         writeJsonResponse(response, 500, {
@@ -1796,6 +2256,7 @@ export async function handlePublicApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
   options: {
+    readonly snapshot?: OperationSnapshot;
     readonly handlers?: PublicApiHandlers;
     readonly unitOfWork?: StorageUnitOfWork;
     readonly queueAdapter?: TaskQueueAdapter;
@@ -1843,9 +2304,19 @@ export async function handlePublicApiRequest(
       return;
     }
 
+    const certifications = options.sandboxCertification
+      ? await loadSandboxCertificationReadModels(options.sandboxCertification)
+      : [];
     const handlers = options.unitOfWork
-      ? createPublicApiHandlers(await loadOperationSnapshotFromUnitOfWork(options.unitOfWork))
-      : (options.handlers ?? createPublicApiHandlers());
+      ? createPublicApiHandlers(
+          withReadiness(
+            await loadOperationSnapshotFromUnitOfWork(options.unitOfWork),
+            certifications,
+          ),
+        )
+      : options.snapshot
+        ? createPublicApiHandlers(withReadiness(options.snapshot, certifications))
+        : options.handlers ?? createPublicApiHandlers(createEmptyOperationSnapshot());
     const routedResponse = routePublicApiRequest(handlers, requestPath);
     writeJsonResponse(response, routedResponse.status, routedResponse.body);
     return;
@@ -2275,7 +2746,24 @@ export function findFixtureOpsById(
     parlays,
     validations,
     recentTaskRuns,
+    stages: buildFixtureOpsStageNarratives(snapshot, fixture, workflow),
   };
+}
+
+export function listAutomationCycles(
+  snapshot: OperationSnapshot,
+): readonly AutomationCycleReadModel[] {
+  return sortByIsoDescending(
+    snapshot.automationCycles,
+    (cycle) => cycle.completedAt ?? cycle.startedAt,
+  );
+}
+
+export function findAutomationCycleById(
+  snapshot: OperationSnapshot,
+  cycleId: string,
+): AutomationCycleReadModel | null {
+  return snapshot.automationCycles.find((cycle) => cycle.id === cycleId) ?? null;
 }
 
 export function findFixtureAuditEventsById(
@@ -3157,6 +3645,7 @@ export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): P
 export async function loadOperationSnapshotFromUnitOfWork(
   unitOfWork: Pick<
     StorageUnitOfWork,
+    | "automationCycles"
     | "fixtures"
     | "fixtureWorkflows"
     | "leagueCoveragePolicies"
@@ -3179,6 +3668,7 @@ export async function loadOperationSnapshotFromUnitOfWork(
   } = {},
 ): Promise<OperationSnapshot> {
   const [
+    automationCycles,
     fixtures,
     fixtureWorkflows,
     leagueCoveragePolicies,
@@ -3192,6 +3682,7 @@ export async function loadOperationSnapshotFromUnitOfWork(
     parlays,
     validations,
   ] = await Promise.all([
+    unitOfWork.automationCycles.list(),
     unitOfWork.fixtures.list(),
     unitOfWork.fixtureWorkflows.list(),
     unitOfWork.leagueCoveragePolicies.list(),
@@ -3232,6 +3723,7 @@ export async function loadOperationSnapshotFromUnitOfWork(
   }));
 
   return createOperationSnapshot({
+    automationCycles: automationCycles.map(createAutomationCycleReadModel),
     fixtures,
     fixtureResearch,
     fixtureWorkflows,
@@ -3375,6 +3867,15 @@ function matchFixtureOpsDetailPath(requestPath: string): { fixtureId: string } |
   }
 
   return { fixtureId: decodeURIComponent(match[1]) };
+}
+
+function matchAutomationCycleDetailPath(requestPath: string): { cycleId: string } | null {
+  const match = requestPath.match(/^\/automation-cycles\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { cycleId: decodeURIComponent(match[1]) };
 }
 
 function matchFixtureAuditEventsPath(requestPath: string): { fixtureId: string } | null {

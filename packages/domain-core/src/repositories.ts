@@ -1,4 +1,5 @@
 import type { EntityId, Repository } from './common.js';
+import type { AutomationCycleEntity } from './entities/automation-cycle.js';
 import type { AuditEventEntity } from './entities/audit-event.js';
 import type { AiRunEntity } from './entities/ai-run.js';
 import type { DailyAutomationPolicyEntity } from './entities/daily-automation-policy.js';
@@ -27,6 +28,8 @@ import type { ValidationEntity } from './entities/validation.js';
 export interface FixtureRepository extends Repository<FixtureEntity> {
   findByCompetition(competition: string): Promise<FixtureEntity[]>;
 }
+
+export interface AutomationCycleRepository extends Repository<AutomationCycleEntity> {}
 
 export interface TaskRepository extends Repository<TaskEntity> {
   findByStatus(status: TaskEntity['status']): Promise<TaskEntity[]>;

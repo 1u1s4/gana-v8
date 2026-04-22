@@ -1,6 +1,8 @@
 import type {
   AvailabilitySnapshotEntity,
   AvailabilitySnapshotRepository,
+  AutomationCycleEntity,
+  AutomationCycleRepository,
   AiRunEntity,
   AiRunRepository,
   AuditEventEntity,
@@ -80,6 +82,10 @@ export class InMemoryFixtureRepository
     return items.filter((item) => item.competition === competition);
   }
 }
+
+export class InMemoryAutomationCycleRepository
+  extends InMemoryRepository<AutomationCycleEntity>
+  implements AutomationCycleRepository {}
 
 export class InMemoryTaskRepository
   extends InMemoryRepository<TaskEntity>

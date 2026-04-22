@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Runtime configuration loading and environment profile scaffolding.",
+  "description": "Runtime configuration loading and environment profile guardrails.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

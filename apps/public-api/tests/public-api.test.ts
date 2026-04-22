@@ -1320,9 +1320,20 @@ test("public api server exposes http endpoints for fixtures, predictions, parlay
     assert.equal(healthResponse.status, 200);
     assert.deepEqual(await healthResponse.json(), snapshot.health);
 
+    const readinessResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.readiness}`);
+    assert.equal(readinessResponse.status, 200);
+    const readiness = await readinessResponse.json();
+
+    const automationCyclesResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.automationCycles}`);
+    assert.equal(automationCyclesResponse.status, 200);
+    assert.deepEqual(await automationCyclesResponse.json(), snapshot.automationCycles);
+
     const snapshotResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.snapshot}`);
     assert.equal(snapshotResponse.status, 200);
-    assert.deepEqual(await snapshotResponse.json(), snapshot);
+    assert.deepEqual(await snapshotResponse.json(), {
+      ...snapshot,
+      readiness,
+    });
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

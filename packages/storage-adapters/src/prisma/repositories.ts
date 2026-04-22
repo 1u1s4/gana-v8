@@ -3,6 +3,8 @@ import type {
   AvailabilitySnapshotRepository,
   AiRunEntity,
   AiRunRepository,
+  AutomationCycleEntity,
+  AutomationCycleRepository,
   AuditEventEntity,
   AuditEventRepository,
   DailyAutomationPolicyEntity,
@@ -56,6 +58,9 @@ import {
   aiRunDomainToCreateInput,
   aiRunInclude,
   aiRunRecordToDomain,
+  automationCycleDomainToCreateInput,
+  automationCycleInclude,
+  automationCycleRecordToDomain,
   auditEventDomainToCreateInput,
   auditEventInclude,
   auditEventRecordToDomain,
@@ -125,6 +130,7 @@ import {
 export type PrismaClientLike = Pick<
   PrismaClient,
   | "fixture"
+  | "automationCycle"
   | "fixtureWorkflow"
   | "task"
   | "taskRun"
@@ -190,6 +196,40 @@ export class PrismaFixtureRepository implements FixtureRepository {
       ...fixtureInclude,
     });
     return records.map(fixtureRecordToDomain);
+  }
+}
+
+export class PrismaAutomationCycleRepository implements AutomationCycleRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: AutomationCycleEntity): Promise<AutomationCycleEntity> {
+    const record = await this.client.automationCycle.upsert({
+      where: { id: entity.id },
+      create: automationCycleDomainToCreateInput(entity),
+      update: automationCycleDomainToCreateInput(entity),
+      ...automationCycleInclude,
+    });
+    return automationCycleRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<AutomationCycleEntity | null> {
+    const record = await this.client.automationCycle.findUnique({
+      where: { id },
+      ...automationCycleInclude,
+    });
+    return record ? automationCycleRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<AutomationCycleEntity[]> {
+    const records = await this.client.automationCycle.findMany({
+      orderBy: { startedAt: "desc" },
+      ...automationCycleInclude,
+    });
+    return records.map(automationCycleRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.automationCycle.delete({ where: { id } });
   }
 }
 
