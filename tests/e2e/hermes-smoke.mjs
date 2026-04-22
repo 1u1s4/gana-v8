@@ -11,25 +11,38 @@ const runtimeEnv = {
   GANA_RUNTIME_PROFILE: process.env.GANA_RUNTIME_PROFILE ?? "ci-smoke",
 };
 
-const smokeTargets = [
-  "@gana-v8/control-plane-runtime",
-  "@gana-v8/hermes-scheduler",
-  "@gana-v8/hermes-dispatcher",
-  "@gana-v8/hermes-recovery",
-];
-
-for (const target of smokeTargets) {
+const runPnpm = (...args) => {
   execFileSync(
     pnpmBin,
-    [
-      "--filter",
-      target,
-      "test",
-    ],
+    args,
     {
       cwd: process.cwd(),
       env: runtimeEnv,
       stdio: "inherit",
     },
+  );
+};
+
+runPnpm("--filter", "@gana-v8/control-plane-runtime", "test");
+
+const hermesApps = [
+  ["hermes-scheduler", "@gana-v8/hermes-scheduler"],
+  ["hermes-dispatcher", "@gana-v8/hermes-dispatcher"],
+  ["hermes-recovery", "@gana-v8/hermes-recovery"],
+];
+
+for (const [workspaceName, packageName] of hermesApps) {
+  runPnpm("exec", "tsc", "-p", `apps/${workspaceName}/tsconfig.build.json`);
+  runPnpm(
+    "exec",
+    "tsx",
+    "--tsconfig",
+    "tsconfig.base.json",
+    "--eval",
+    `import('./apps/${workspaceName}/src/index.ts').then((module) => {
+      if (module.workspaceInfo?.packageName !== '${packageName}') throw new Error('workspaceInfo.packageName mismatch');
+      if (!Array.isArray(module.workspaceInfo?.dependencies)) throw new Error('workspaceInfo.dependencies should be an array');
+      console.log('test ok: ${packageName}');
+    })`,
   );
 }
