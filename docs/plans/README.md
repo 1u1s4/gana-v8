@@ -10,10 +10,14 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- No hay planes vigentes en `falta/` en este momento.
+- `gana-v8-harness-runtime-durable.md`
+- `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
+
+La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 
 ## Planes relevantes en `completado/`
 
+- `gana-v8-harness-core-y-claridad-agente.md`
 - `gana-v8-plan-cierre-sandbox-qa.md`
 - `gana-v8-plan-cierre-plataforma-operacion.md`
 
@@ -30,3 +34,22 @@ Un plan quedó en `falta/` cuando el repo ya tiene avance claro, pero todavía f
 Los planes dentro de `falta/` están escritos con enfoque `gap-first`: parten del estado actual confirmado, separan explícitamente lo ya cubierto de lo todavía pendiente y asignan cada gap a un solo plan. Cuando un plan deja de tener gaps centrales abiertos, debe moverse a `completado/`.
 
 Los 7 documentos originales que antes vivían en `falta/` se conservaron sin editar dentro de `archivado/2026-04-21-falta-originales/` para mantener trazabilidad histórica sin dejar múltiples fuentes activas compitiendo entre sí.
+
+## Reglas de lifecycle
+
+- Un frente activo debe tener un solo plan canónico en `falta/`.
+- Un plan pasa a `completado/` cuando su gap central ya existe de forma sustancial en el repo actual.
+- Un plan va a `archivado/` cuando se preserva solo por trazabilidad histórica y ya no compite como fuente activa.
+- Si cambia el estado de un plan, también deben actualizarse `README.md` y este índice en la misma edición.
+
+## Plantilla obligatoria para planes activos
+
+Cada archivo en `docs/plans/falta/` debe incluir como mínimo estas secciones:
+
+- `Estado actual confirmado`
+- `Ya cubierto`
+- `Faltantes exclusivos`
+- `Interfaces/contratos afectados`
+- `Dependencias`
+- `Criterio de done`
+- `Fuentes consolidadas`
