@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 
-import { PrismaClient } from "@prisma/client";
+import { createConnectedVerifiedPrismaClient, isRetryablePrismaConnectionError } from "@gana-v8/storage-adapters";
 
 import { createPersistedTaskQueue, enqueuePersistedTask, maybeClaimNextPersistedTask, runNextPersistedTask } from "../src/index.js";
 
-const createPrismaClient = (databaseUrl: string) => new PrismaClient({ datasourceUrl: databaseUrl });
+const createPrismaClient = (databaseUrl: string) => createConnectedVerifiedPrismaClient({ databaseUrl });
 const databaseUrl = process.env.DATABASE_URL;
 const testWithDatabase = (
   name: string,
@@ -16,12 +17,21 @@ const testWithDatabase = (
   });
 
 const cleanupTaskPrefix = async (databaseUrl: string, prefix: string): Promise<void> => {
-  const prisma = createPrismaClient(databaseUrl);
-  try {
-    await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: prefix } } });
-    await prisma.task.deleteMany({ where: { id: { startsWith: prefix } } });
-  } finally {
-    await prisma.$disconnect();
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const prisma = await createPrismaClient(databaseUrl);
+    try {
+      await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: prefix } } });
+      await prisma.task.deleteMany({ where: { id: { startsWith: prefix } } });
+      return;
+    } catch (error) {
+      if (!isRetryablePrismaConnectionError(error) || attempt >= 5) {
+        throw error;
+      }
+
+      await sleep(250 * attempt);
+    } finally {
+      await prisma.$disconnect();
+    }
   }
 };
 

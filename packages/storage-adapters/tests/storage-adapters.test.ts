@@ -422,8 +422,25 @@ test("prisma mappers preserve long task, task-run, ai-run and validation errors 
     kind: "odds-ingestion",
     status: "failed",
     priority: 80,
-    payload: { fixtureId: "fixture:api-football:1492226" },
+    manifestId: "manifest:bundle:1492226",
+    workflowId: "workflow:odds-ingestion",
+    traceId: "trace:task-long-error",
+    correlationId: "correlation:task-long-error",
+    source: "scheduler",
+    payload: {
+      fixtureId: "fixture:api-football:1492226",
+      manifestId: "manifest:bundle:1492226",
+      workflowId: "workflow:odds-ingestion",
+      traceId: "trace:task-long-error",
+      correlationId: "correlation:task-long-error",
+      source: "scheduler",
+    },
     lastErrorMessage: longError,
+    leaseOwner: "dispatcher:test",
+    leaseExpiresAt: "2026-04-19T18:06:00.000Z",
+    claimedAt: "2026-04-19T18:00:00.000Z",
+    lastHeartbeatAt: "2026-04-19T18:01:00.000Z",
+    activeTaskRunId: "task-long-error:attempt:1",
     createdAt: "2026-04-19T18:00:00.000Z",
     updatedAt: "2026-04-19T18:01:00.000Z",
   });
@@ -495,6 +512,16 @@ test("prisma mappers preserve long task, task-run, ai-run and validation errors 
   } as never);
 
   assert.equal(taskRoundTrip.lastErrorMessage, longError);
+  assert.equal(taskRoundTrip.manifestId, "manifest:bundle:1492226");
+  assert.equal(taskRoundTrip.workflowId, "workflow:odds-ingestion");
+  assert.equal(taskRoundTrip.traceId, "trace:task-long-error");
+  assert.equal(taskRoundTrip.correlationId, "correlation:task-long-error");
+  assert.equal(taskRoundTrip.source, "scheduler");
+  assert.equal(taskRoundTrip.leaseOwner, "dispatcher:test");
+  assert.equal(taskRoundTrip.leaseExpiresAt, "2026-04-19T18:06:00.000Z");
+  assert.equal(taskRoundTrip.claimedAt, "2026-04-19T18:00:00.000Z");
+  assert.equal(taskRoundTrip.lastHeartbeatAt, "2026-04-19T18:01:00.000Z");
+  assert.equal(taskRoundTrip.activeTaskRunId, "task-long-error:attempt:1");
   assert.equal(taskRunRoundTrip.error, longError);
   assert.equal(aiRunRoundTrip.error, longError);
   assert.equal(aiRunRoundTrip.fallbackReason, longError);
@@ -656,14 +683,7 @@ test("prisma task repository rehydrates attempts from taskRuns", async () => {
       const next = taskStore.has(where.id) ? update : create;
       const taskRunsCreate = next.taskRuns?.create ?? [];
       const record = {
-        id: next.id,
-        kind: next.kind,
-        status: next.status,
-        priority: next.priority,
-        payload: next.payload,
-        scheduledFor: next.scheduledFor ?? null,
-        createdAt: next.createdAt,
-        updatedAt: next.updatedAt,
+        ...next,
         taskRuns: taskRunsCreate.map((taskRun: Record<string, any>) => ({
           ...taskRun,
           taskId: where.id,
@@ -686,7 +706,19 @@ test("prisma task repository rehydrates attempts from taskRuns", async () => {
     status: "succeeded",
     triggerKind: "system",
     priority: 7,
-    payload: { fixtureId: "fx-99" },
+    manifestId: "manifest:fx-99",
+    workflowId: "workflow:prediction",
+    traceId: "trace:prediction:fx-99",
+    correlationId: "correlation:fx-99",
+    source: "scheduler",
+    payload: {
+      fixtureId: "fx-99",
+      manifestId: "manifest:fx-99",
+      workflowId: "workflow:prediction",
+      traceId: "trace:prediction:fx-99",
+      correlationId: "correlation:fx-99",
+      source: "scheduler",
+    },
     maxAttempts: 3,
     attempts: [
       {
@@ -694,6 +726,8 @@ test("prisma task repository rehydrates attempts from taskRuns", async () => {
         finishedAt: "2026-04-20T10:02:00.000Z",
       },
     ],
+    claimedAt: "2026-04-20T10:00:00.000Z",
+    lastHeartbeatAt: "2026-04-20T10:02:00.000Z",
     createdAt: "2026-04-20T09:59:00.000Z",
     updatedAt: "2026-04-20T10:02:00.000Z",
   });

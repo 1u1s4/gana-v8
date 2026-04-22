@@ -298,17 +298,33 @@ model Task {
   triggerKind      TaskTriggerKind @default(system)
   priority         Int
   dedupeKey        String?
+  manifestId       String?
+  workflowId       String?
+  traceId          String?
+  correlationId    String?
+  source           String?
   payload          Json
   scheduledFor     DateTime?
   maxAttempts      Int             @default(3)
   lastErrorMessage String?         @db.Text
+  leaseOwner       String?
+  leaseExpiresAt   DateTime?
+  claimedAt        DateTime?
+  lastHeartbeatAt  DateTime?
+  activeTaskRunId  String?
   taskRuns         TaskRun[]
   aiRuns           AiRun[]
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
   @@index([status, createdAt])
+  @@index([status, leaseExpiresAt])
   @@index([dedupeKey])
+  @@index([manifestId, createdAt])
+  @@index([workflowId, createdAt])
+  @@index([traceId])
+  @@index([correlationId])
+  @@index([activeTaskRunId])
 }
 
 model TaskRun {
@@ -346,6 +362,17 @@ model AutomationCycle {
   @@index([kind, startedAt])
   @@index([status, startedAt])
   @@index([leaseOwner, startedAt])
+}
+
+model SchedulerCursor {
+  id              String   @id
+  specId          String   @unique
+  lastTriggeredAt DateTime?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([lastTriggeredAt])
 }
 
 model AiRun {
@@ -523,9 +550,9 @@ model AvailabilitySnapshot {
   fixture          Fixture?          @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
   providerFixtureId String
   providerCode     String
-  teamSide         String?
-  subjectType      String
-  subjectName      String
+  teamSide         String?           @db.VarChar(32)
+  subjectType      String            @db.VarChar(32)
+  subjectName      String            @db.VarChar(128)
   status           String
   capturedAt       DateTime
   sourceUpdatedAt  DateTime?
@@ -546,8 +573,8 @@ model LineupSnapshot {
   fixture          Fixture?           @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
   providerFixtureId String
   providerCode     String
-  teamSide         String
-  lineupStatus     String
+  teamSide         String             @db.VarChar(32)
+  lineupStatus     String             @db.VarChar(64)
   formation        String?
   capturedAt       DateTime
   sourceUpdatedAt  DateTime?

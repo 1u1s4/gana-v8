@@ -41,6 +41,8 @@ import type {
   ResearchSourceRepository,
   SandboxNamespace,
   SandboxNamespaceRepository,
+  SchedulerCursorEntity,
+  SchedulerCursorRepository,
   TaskEntity,
   TaskRepository,
   TaskRunEntity,
@@ -86,6 +88,10 @@ export class InMemoryFixtureRepository
 export class InMemoryAutomationCycleRepository
   extends InMemoryRepository<AutomationCycleEntity>
   implements AutomationCycleRepository {}
+
+export class InMemorySchedulerCursorRepository
+  extends InMemoryRepository<SchedulerCursorEntity>
+  implements SchedulerCursorRepository {}
 
 export class InMemoryTaskRepository
   extends InMemoryRepository<TaskEntity>

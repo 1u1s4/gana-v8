@@ -26,6 +26,7 @@ import type {
   ResearchGateReason,
   ResearchSourceEntity,
   SandboxNamespace,
+  SchedulerCursorEntity,
   TaskAttempt,
   TaskEntity,
   TaskKind,
@@ -69,6 +70,7 @@ import {
   type ResearchConflict,
   type ResearchSource,
   type SandboxNamespace as PrismaSandboxNamespace,
+  type SchedulerCursor,
   type Task,
   type TaskKind as PrismaTaskKind,
   type TaskTriggerKind as PrismaTaskTriggerKind,
@@ -183,90 +185,93 @@ const environmentToPrisma = (
   value: SandboxNamespace["environment"],
 ): PrismaEnvironment => value as PrismaEnvironment;
 
-export const fixtureInclude = Prisma.validator<Prisma.FixtureDefaultArgs>()({});
+export const fixtureInclude = {} as const satisfies Prisma.FixtureDefaultArgs;
 export type FixtureRecord = Prisma.FixtureGetPayload<typeof fixtureInclude>;
 
-export const automationCycleInclude = Prisma.validator<Prisma.AutomationCycleDefaultArgs>()({});
+export const automationCycleInclude = {} as const satisfies Prisma.AutomationCycleDefaultArgs;
 export type AutomationCycleRecord = Prisma.AutomationCycleGetPayload<typeof automationCycleInclude>;
 
-export const fixtureWorkflowInclude = Prisma.validator<Prisma.FixtureWorkflowDefaultArgs>()({});
+export const fixtureWorkflowInclude = {} as const satisfies Prisma.FixtureWorkflowDefaultArgs;
 export type FixtureWorkflowRecord = Prisma.FixtureWorkflowGetPayload<typeof fixtureWorkflowInclude>;
 
-export const taskInclude = Prisma.validator<Prisma.TaskDefaultArgs>()({
+export const schedulerCursorInclude = {} as const satisfies Prisma.SchedulerCursorDefaultArgs;
+export type SchedulerCursorRecord = Prisma.SchedulerCursorGetPayload<typeof schedulerCursorInclude>;
+
+export const taskInclude = {
   include: { taskRuns: { orderBy: { attemptNumber: "asc" } } },
-});
+} as const satisfies Prisma.TaskDefaultArgs;
 export type TaskRecord = Prisma.TaskGetPayload<typeof taskInclude>;
 
-export const taskRunInclude = Prisma.validator<Prisma.TaskRunDefaultArgs>()({});
+export const taskRunInclude = {} as const satisfies Prisma.TaskRunDefaultArgs;
 export type TaskRunRecord = Prisma.TaskRunGetPayload<typeof taskRunInclude>;
 
-export const aiRunInclude = Prisma.validator<Prisma.AiRunDefaultArgs>()({});
+export const aiRunInclude = {} as const satisfies Prisma.AiRunDefaultArgs;
 export type AiRunRecord = Prisma.AiRunGetPayload<typeof aiRunInclude>;
 
-export const predictionInclude = Prisma.validator<Prisma.PredictionDefaultArgs>()({});
+export const predictionInclude = {} as const satisfies Prisma.PredictionDefaultArgs;
 export type PredictionRecord = Prisma.PredictionGetPayload<typeof predictionInclude>;
 
-export const parlayInclude = Prisma.validator<Prisma.ParlayDefaultArgs>()({
+export const parlayInclude = {
   include: { legs: { orderBy: { index: "asc" } } },
-});
+} as const satisfies Prisma.ParlayDefaultArgs;
 export type ParlayRecord = Prisma.ParlayGetPayload<typeof parlayInclude>;
 
-export const validationInclude = Prisma.validator<Prisma.ValidationDefaultArgs>()({});
+export const validationInclude = {} as const satisfies Prisma.ValidationDefaultArgs;
 export type ValidationRecord = Prisma.ValidationGetPayload<typeof validationInclude>;
 
-export const auditEventInclude = Prisma.validator<Prisma.AuditEventDefaultArgs>()({});
+export const auditEventInclude = {} as const satisfies Prisma.AuditEventDefaultArgs;
 export type AuditEventRecord = Prisma.AuditEventGetPayload<typeof auditEventInclude>;
 
-export const leagueCoveragePolicyInclude = Prisma.validator<Prisma.LeagueCoveragePolicyDefaultArgs>()({});
+export const leagueCoveragePolicyInclude = {} as const satisfies Prisma.LeagueCoveragePolicyDefaultArgs;
 export type LeagueCoveragePolicyRecord = Prisma.LeagueCoveragePolicyGetPayload<
   typeof leagueCoveragePolicyInclude
 >;
 
-export const teamCoveragePolicyInclude = Prisma.validator<Prisma.TeamCoveragePolicyDefaultArgs>()({});
+export const teamCoveragePolicyInclude = {} as const satisfies Prisma.TeamCoveragePolicyDefaultArgs;
 export type TeamCoveragePolicyRecord = Prisma.TeamCoveragePolicyGetPayload<typeof teamCoveragePolicyInclude>;
 
-export const dailyAutomationPolicyInclude = Prisma.validator<Prisma.DailyAutomationPolicyDefaultArgs>()({});
+export const dailyAutomationPolicyInclude = {} as const satisfies Prisma.DailyAutomationPolicyDefaultArgs;
 export type DailyAutomationPolicyRecord = Prisma.DailyAutomationPolicyGetPayload<
   typeof dailyAutomationPolicyInclude
 >;
 
-export const sandboxNamespaceInclude = Prisma.validator<Prisma.SandboxNamespaceDefaultArgs>()({});
+export const sandboxNamespaceInclude = {} as const satisfies Prisma.SandboxNamespaceDefaultArgs;
 export type SandboxNamespaceRecord = Prisma.SandboxNamespaceGetPayload<
   typeof sandboxNamespaceInclude
 >;
 
-export const researchBundleInclude = Prisma.validator<Prisma.ResearchBundleDefaultArgs>()({});
+export const researchBundleInclude = {} as const satisfies Prisma.ResearchBundleDefaultArgs;
 export type ResearchBundleRecord = Prisma.ResearchBundleGetPayload<typeof researchBundleInclude>;
 
-export const researchSourceInclude = Prisma.validator<Prisma.ResearchSourceDefaultArgs>()({});
+export const researchSourceInclude = {} as const satisfies Prisma.ResearchSourceDefaultArgs;
 export type ResearchSourceRecord = Prisma.ResearchSourceGetPayload<typeof researchSourceInclude>;
 
-export const researchClaimInclude = Prisma.validator<Prisma.ResearchClaimDefaultArgs>()({});
+export const researchClaimInclude = {} as const satisfies Prisma.ResearchClaimDefaultArgs;
 export type ResearchClaimRecord = Prisma.ResearchClaimGetPayload<typeof researchClaimInclude>;
 
-export const researchClaimSourceInclude = Prisma.validator<Prisma.ResearchClaimSourceDefaultArgs>()({});
+export const researchClaimSourceInclude = {} as const satisfies Prisma.ResearchClaimSourceDefaultArgs;
 export type ResearchClaimSourceRecord = Prisma.ResearchClaimSourceGetPayload<
   typeof researchClaimSourceInclude
 >;
 
-export const researchConflictInclude = Prisma.validator<Prisma.ResearchConflictDefaultArgs>()({});
+export const researchConflictInclude = {} as const satisfies Prisma.ResearchConflictDefaultArgs;
 export type ResearchConflictRecord = Prisma.ResearchConflictGetPayload<typeof researchConflictInclude>;
 
-export const featureSnapshotInclude = Prisma.validator<Prisma.FeatureSnapshotDefaultArgs>()({});
+export const featureSnapshotInclude = {} as const satisfies Prisma.FeatureSnapshotDefaultArgs;
 export type FeatureSnapshotRecord = Prisma.FeatureSnapshotGetPayload<typeof featureSnapshotInclude>;
 
-export const availabilitySnapshotInclude = Prisma.validator<Prisma.AvailabilitySnapshotDefaultArgs>()({});
+export const availabilitySnapshotInclude = {} as const satisfies Prisma.AvailabilitySnapshotDefaultArgs;
 export type AvailabilitySnapshotRecord = Prisma.AvailabilitySnapshotGetPayload<
   typeof availabilitySnapshotInclude
 >;
 
-export const lineupSnapshotInclude = Prisma.validator<Prisma.LineupSnapshotDefaultArgs>()({});
+export const lineupSnapshotInclude = {} as const satisfies Prisma.LineupSnapshotDefaultArgs;
 export type LineupSnapshotRecord = Prisma.LineupSnapshotGetPayload<typeof lineupSnapshotInclude>;
 
-export const lineupParticipantInclude = Prisma.validator<Prisma.LineupParticipantDefaultArgs>()({});
+export const lineupParticipantInclude = {} as const satisfies Prisma.LineupParticipantDefaultArgs;
 export type LineupParticipantRecord = Prisma.LineupParticipantGetPayload<typeof lineupParticipantInclude>;
 
-export const researchAssignmentInclude = Prisma.validator<Prisma.ResearchAssignmentDefaultArgs>()({});
+export const researchAssignmentInclude = {} as const satisfies Prisma.ResearchAssignmentDefaultArgs;
 export type ResearchAssignmentRecord = Prisma.ResearchAssignmentGetPayload<
   typeof researchAssignmentInclude
 >;
@@ -447,6 +452,28 @@ export const fixtureWorkflowRecordToDomain = (
   updatedAt: record.updatedAt.toISOString(),
 });
 
+export const schedulerCursorRecordToDomain = (
+  record: SchedulerCursor | SchedulerCursorRecord,
+): SchedulerCursorEntity => ({
+  id: record.id,
+  specId: record.specId,
+  ...(record.lastTriggeredAt ? { lastTriggeredAt: record.lastTriggeredAt.toISOString() } : {}),
+  ...(record.metadata ? { metadata: asRecord(record.metadata) } : {}),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const schedulerCursorDomainToCreateInput = (
+  entity: SchedulerCursorEntity,
+): Prisma.SchedulerCursorUncheckedCreateInput => ({
+  id: entity.id,
+  specId: entity.specId,
+  lastTriggeredAt: toDate(entity.lastTriggeredAt) ?? null,
+  metadata: entity.metadata ? (entity.metadata as Prisma.InputJsonValue) : Prisma.JsonNull,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
 export const fixtureWorkflowDomainToCreateInput = (
   entity: FixtureWorkflowEntity,
 ): Prisma.FixtureWorkflowUncheckedCreateInput => ({
@@ -494,11 +521,21 @@ export const taskRecordToDomain = (record: TaskRecord | Task): TaskEntity => {
     triggerKind: taskTriggerKindToDomain(record.triggerKind ?? "system"),
     priority: record.priority,
     ...(record.dedupeKey ? { dedupeKey: record.dedupeKey } : {}),
+    ...(record.manifestId ? { manifestId: record.manifestId } : {}),
+    ...(record.workflowId ? { workflowId: record.workflowId } : {}),
+    ...(record.traceId ? { traceId: record.traceId } : {}),
+    ...(record.correlationId ? { correlationId: record.correlationId } : {}),
+    ...(record.source ? { source: record.source } : {}),
     payload: asRecord(record.payload),
     attempts: taskRuns.map(taskRunToTaskAttempt),
     ...(record.scheduledFor ? { scheduledFor: record.scheduledFor.toISOString() } : {}),
     maxAttempts: record.maxAttempts ?? 3,
     ...(record.lastErrorMessage ? { lastErrorMessage: record.lastErrorMessage } : {}),
+    ...(record.leaseOwner ? { leaseOwner: record.leaseOwner } : {}),
+    ...(record.leaseExpiresAt ? { leaseExpiresAt: record.leaseExpiresAt.toISOString() } : {}),
+    ...(record.claimedAt ? { claimedAt: record.claimedAt.toISOString() } : {}),
+    ...(record.lastHeartbeatAt ? { lastHeartbeatAt: record.lastHeartbeatAt.toISOString() } : {}),
+    ...(record.activeTaskRunId ? { activeTaskRunId: record.activeTaskRunId } : {}),
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
@@ -513,10 +550,20 @@ export const taskDomainToCreateInput = (
   triggerKind: taskTriggerKindToPrisma(entity.triggerKind),
   priority: entity.priority,
   dedupeKey: entity.dedupeKey ?? null,
+  manifestId: entity.manifestId ?? null,
+  workflowId: entity.workflowId ?? null,
+  traceId: entity.traceId ?? null,
+  correlationId: entity.correlationId ?? null,
+  source: entity.source ?? null,
   payload: entity.payload as Prisma.InputJsonValue,
   scheduledFor: toDate(entity.scheduledFor) ?? null,
   maxAttempts: entity.maxAttempts,
   lastErrorMessage: entity.lastErrorMessage ?? null,
+  leaseOwner: entity.leaseOwner ?? null,
+  leaseExpiresAt: toDate(entity.leaseExpiresAt) ?? null,
+  claimedAt: toDate(entity.claimedAt) ?? null,
+  lastHeartbeatAt: toDate(entity.lastHeartbeatAt) ?? null,
+  activeTaskRunId: entity.activeTaskRunId ?? null,
   createdAt: new Date(entity.createdAt),
   updatedAt: new Date(entity.updatedAt),
 });

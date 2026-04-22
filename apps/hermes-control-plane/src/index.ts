@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   SimpleCronScheduler,
@@ -37,7 +38,15 @@ import {
   createPrismaTaskQueueAdapter,
   type TaskQueueAdapter,
 } from "@gana-v8/queue-adapters";
-import { createPrismaClient, createPrismaUnitOfWork, createVerifiedPrismaClient } from "@gana-v8/storage-adapters";
+import {
+  createConnectedVerifiedPrismaClient,
+  isRetryablePrismaConnectionError,
+  retryPrismaReadOperation,
+  connectPrismaClientWithRetry,
+  createPrismaClient,
+  createPrismaUnitOfWork,
+  createVerifiedPrismaClient,
+} from "@gana-v8/storage-adapters";
 import { type TaskEntity, type TaskKind, type TaskRunEntity } from "@gana-v8/domain-core";
 import {
   FakeFootballApiClient,
@@ -343,17 +352,18 @@ const loadCoverageScopedEligibleFixtures = async (
   databaseUrl: string,
   options: EnqueuePredictionForEligibleFixturesOptions = {},
 ): Promise<CoverageScopedEligibleFixture[]> => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createConnectedVerifiedPrismaClient({ databaseUrl });
   const unitOfWork = createPrismaUnitOfWork(prisma);
 
   try {
-    const fixtures = await prisma.fixture.findMany({
-      where: {
-        status: "scheduled",
-        ...(options.fixtureIds ? { id: { in: Array.from(options.fixtureIds) } } : {}),
-      },
-      orderBy: { scheduledAt: "asc" },
-    });
+    const fixtures = await retryPrismaReadOperation(() =>
+      prisma.fixture.findMany({
+        where: {
+          status: "scheduled",
+          ...(options.fixtureIds ? { id: { in: Array.from(options.fixtureIds) } } : {}),
+        },
+        orderBy: { scheduledAt: "asc" },
+      }));
     const limitedFixtures = fixtures.slice(0, options.maxFixtures ?? fixtures.length);
 
     const eligibleFixtures = await Promise.all(
@@ -361,17 +371,18 @@ const loadCoverageScopedEligibleFixtures = async (
         const providerFixtureId = typeof fixture.metadata === "object" && fixture.metadata !== null
           ? String((fixture.metadata as Record<string, unknown>).providerFixtureId ?? "")
           : "";
-        const latestOddsSnapshot = await prisma.oddsSnapshot.findFirst({
-          where: {
-            marketKey: "h2h",
-            OR: [
-              { fixtureId: fixture.id },
-              ...(providerFixtureId ? [{ providerFixtureId }] : []),
-            ],
-          },
-          include: { selections: true },
-          orderBy: [{ capturedAt: "desc" }],
-        });
+        const latestOddsSnapshot = await retryPrismaReadOperation(() =>
+          prisma.oddsSnapshot.findFirst({
+            where: {
+              marketKey: "h2h",
+              OR: [
+                { fixtureId: fixture.id },
+                ...(providerFixtureId ? [{ providerFixtureId }] : []),
+              ],
+            },
+            include: { selections: true },
+            orderBy: [{ capturedAt: "desc" }],
+          }));
 
         if (!latestOddsSnapshot) {
           return {
@@ -402,9 +413,9 @@ const loadCoverageScopedEligibleFixtures = async (
     );
 
     const [leaguePolicies, teamPolicies, dailyPolicies] = await Promise.all([
-      unitOfWork.leagueCoveragePolicies.findEnabled(),
-      unitOfWork.teamCoveragePolicies.findEnabled(),
-      unitOfWork.dailyAutomationPolicies.findEnabled(),
+      retryPrismaReadOperation(() => unitOfWork.leagueCoveragePolicies.findEnabled()),
+      retryPrismaReadOperation(() => unitOfWork.teamCoveragePolicies.findEnabled()),
+      retryPrismaReadOperation(() => unitOfWork.dailyAutomationPolicies.findEnabled()),
     ]);
     const dailyPolicy = dailyPolicies[0] ?? {
       id: "default-daily-policy",
@@ -584,13 +595,25 @@ const loadPersistedTaskById = async (
   databaseUrl: string,
   taskId: string,
 ): Promise<TaskEntity | null> => {
-  const client = createVerifiedPrismaClient({ databaseUrl });
+  let lastError: unknown;
 
-  try {
-    return createPrismaUnitOfWork(client).tasks.getById(taskId);
-  } finally {
-    await client.$disconnect();
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const client = await createConnectedVerifiedPrismaClient({ databaseUrl });
+
+    try {
+      return await retryPrismaReadOperation(() => createPrismaUnitOfWork(client).tasks.getById(taskId));
+    } catch (error) {
+      lastError = error;
+      if (!isRetryablePrismaConnectionError(error) || attempt >= 5) {
+        throw error;
+      }
+      await sleep(100 * attempt);
+    } finally {
+      await client.$disconnect();
+    }
   }
+
+  throw lastError instanceof Error ? lastError : new Error(`Persisted task ${taskId} could not be loaded.`);
 };
 
 const ensurePersistedTask = (task: TaskEntity | null, taskId: string): TaskEntity => {
@@ -646,10 +669,59 @@ export const createPersistedTaskQueue = (databaseUrl: string): PersistedTaskQueu
   const adapter = createPrismaTaskQueueAdapter(client, unitOfWork, {
     createTransactionalUnitOfWork: (transactionClient) => createPrismaUnitOfWork(transactionClient as never),
   });
+  let connectionPromise: Promise<typeof client> | null = null;
+
+  const ensureConnected = async (): Promise<void> => {
+    if (!connectionPromise) {
+      connectionPromise = connectPrismaClientWithRetry(client);
+    }
+
+    await connectionPromise;
+  };
 
   return {
-    ...adapter,
+    async enqueue(input) {
+      await ensureConnected();
+      return adapter.enqueue(input);
+    },
+    async claim(taskId, now) {
+      await ensureConnected();
+      return adapter.claim(taskId, now);
+    },
+    async claimNext(kind, now) {
+      await ensureConnected();
+      return adapter.claimNext(kind, now);
+    },
+    async renewLease(taskId, taskRunId, now, leaseMs) {
+      await ensureConnected();
+      return adapter.renewLease(taskId, taskRunId, now, leaseMs);
+    },
+    async complete(taskId, taskRunId, now) {
+      await ensureConnected();
+      return adapter.complete(taskId, taskRunId, now);
+    },
+    async fail(taskId, taskRunId, error, now) {
+      await ensureConnected();
+      return adapter.fail(taskId, taskRunId, error, now);
+    },
+    async quarantine(taskId, taskRunId, reason, now) {
+      await ensureConnected();
+      return adapter.quarantine(taskId, taskRunId, reason, now);
+    },
+    async requeue(taskId, now) {
+      await ensureConnected();
+      return adapter.requeue(taskId, now);
+    },
+    async summary() {
+      await ensureConnected();
+      return adapter.summary();
+    },
+    async getTaskById(taskId) {
+      await ensureConnected();
+      return adapter.getTaskById(taskId);
+    },
     async close() {
+      connectionPromise = null;
       await client.$disconnect();
     },
   };
@@ -717,7 +789,7 @@ export const runNextPersistedTask = async (
       return null;
     }
 
-    return executePersistedTaskClaim(queue, claim, handlers, options.now);
+    return await executePersistedTaskClaim(queue, claim, handlers, options.now);
   } finally {
     await queue.close();
   }
@@ -738,7 +810,7 @@ export const runPersistedTaskById = async (
       return null;
     }
 
-    return executePersistedTaskClaim(queue, claim, handlers, options.now);
+    return await executePersistedTaskClaim(queue, claim, handlers, options.now);
   } finally {
     await queue.close();
   }
@@ -929,57 +1001,68 @@ export const runAutomationCycle = async (
       }
 
       const fixtureId = requirePayloadString(task, "fixtureId");
-      const client = createVerifiedPrismaClient({ databaseUrl });
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const client = await createConnectedVerifiedPrismaClient({ databaseUrl });
 
-      try {
-        const unitOfWork = createPrismaUnitOfWork(client);
-        const fixture = await unitOfWork.fixtures.getById(fixtureId);
-        if (!fixture) {
-          throw new Error(`Fixture not found: ${fixtureId}`);
+        try {
+          const unitOfWork = createPrismaUnitOfWork(client);
+          const fixture = await retryPrismaReadOperation(() => unitOfWork.fixtures.getById(fixtureId));
+          if (!fixture) {
+            throw new Error(`Fixture not found: ${fixtureId}`);
+          }
+
+          const result = await runResearchTask({
+            fixture,
+            generatedAt: researchGeneratedAt,
+            ai: resolveResearchAiConfig(runtimeEnv),
+            persistence: {
+              fixtures: unitOfWork.fixtures,
+              fixtureWorkflows: unitOfWork.fixtureWorkflows,
+              tasks: unitOfWork.tasks,
+              aiRuns: unitOfWork.aiRuns,
+              researchBundles: unitOfWork.researchBundles,
+              researchClaims: unitOfWork.researchClaims,
+              researchSources: unitOfWork.researchSources,
+              researchClaimSources: unitOfWork.researchClaimSources,
+              researchConflicts: unitOfWork.researchConflicts,
+              featureSnapshots: unitOfWork.featureSnapshots,
+              availabilitySnapshots: unitOfWork.availabilitySnapshots,
+              lineupSnapshots: unitOfWork.lineupSnapshots,
+              lineupParticipants: unitOfWork.lineupParticipants,
+              researchAssignments: unitOfWork.researchAssignments,
+              auditEvents: unitOfWork.auditEvents,
+            },
+          });
+
+          return {
+            fixtureId,
+            generatedAt: researchGeneratedAt,
+            bundleStatus: result.persistableResearchBundle.gateResult.status,
+            gateReasons: result.persistableResearchBundle.gateResult.reasons,
+            featureReadinessStatus: result.persistableFeatureSnapshot.readiness.status,
+            featureReadinessReasons: result.persistableFeatureSnapshot.readiness.reasons,
+            recommendedLean: result.persistableResearchBundle.recommendedLean,
+            latestBundle: result.persistableResearchBundle,
+            latestSnapshot: result.persistableFeatureSnapshot,
+            researchTrace:
+              result.persistableFeatureSnapshot.researchTrace ??
+              result.persistableResearchBundle.trace ??
+              null,
+            ...(result.aiRun ? { aiRunId: result.aiRun.id } : {}),
+          };
+        } catch (error) {
+          lastError = error;
+          if (!isRetryablePrismaConnectionError(error) || attempt >= 5) {
+            throw error;
+          }
+          await sleep(100 * attempt);
+        } finally {
+          await client.$disconnect();
         }
-
-        const result = await runResearchTask({
-          fixture,
-          generatedAt: researchGeneratedAt,
-          ai: resolveResearchAiConfig(runtimeEnv),
-          persistence: {
-            fixtures: unitOfWork.fixtures,
-            fixtureWorkflows: unitOfWork.fixtureWorkflows,
-            tasks: unitOfWork.tasks,
-            aiRuns: unitOfWork.aiRuns,
-            researchBundles: unitOfWork.researchBundles,
-            researchClaims: unitOfWork.researchClaims,
-            researchSources: unitOfWork.researchSources,
-            researchClaimSources: unitOfWork.researchClaimSources,
-            researchConflicts: unitOfWork.researchConflicts,
-            featureSnapshots: unitOfWork.featureSnapshots,
-            availabilitySnapshots: unitOfWork.availabilitySnapshots,
-            lineupSnapshots: unitOfWork.lineupSnapshots,
-            lineupParticipants: unitOfWork.lineupParticipants,
-            researchAssignments: unitOfWork.researchAssignments,
-            auditEvents: unitOfWork.auditEvents,
-          },
-        });
-
-        return {
-          fixtureId,
-          generatedAt: researchGeneratedAt,
-          bundleStatus: result.persistableResearchBundle.gateResult.status,
-          gateReasons: result.persistableResearchBundle.gateResult.reasons,
-          featureReadinessStatus: result.persistableFeatureSnapshot.readiness.status,
-          featureReadinessReasons: result.persistableFeatureSnapshot.readiness.reasons,
-          recommendedLean: result.persistableResearchBundle.recommendedLean,
-          latestBundle: result.persistableResearchBundle,
-          latestSnapshot: result.persistableFeatureSnapshot,
-          researchTrace:
-            result.persistableFeatureSnapshot.researchTrace ??
-            result.persistableResearchBundle.trace ??
-            null,
-          ...(result.aiRun ? { aiRunId: result.aiRun.id } : {}),
-        };
-      } finally {
-        await client.$disconnect();
       }
+
+      throw lastError instanceof Error ? lastError : new Error(`Research task ${task.id} failed.`);
     },
     prediction: async (task) => {
       const step = requirePayloadString(task, "step");
@@ -987,19 +1070,32 @@ export const runAutomationCycle = async (
         throw new Error(`Unsupported prediction automation step ${step}`);
       }
 
-      const result = await scoreFixturePrediction(
-        databaseUrl,
-        requirePayloadString(task, "fixtureId"),
-        task.id,
-        {
-          env: runtimeEnv,
-          generatedAt: scoringGeneratedAt,
-        },
-      );
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        try {
+          const result = await scoreFixturePrediction(
+            databaseUrl,
+            requirePayloadString(task, "fixtureId"),
+            task.id,
+            {
+              env: runtimeEnv,
+              generatedAt: scoringGeneratedAt,
+            },
+          );
 
-      return {
-        ...result,
-      };
+          return {
+            ...result,
+          };
+        } catch (error) {
+          lastError = error;
+          if (!isRetryablePrismaConnectionError(error) || attempt >= 5) {
+            throw error;
+          }
+          await sleep(100 * attempt);
+        }
+      }
+
+      throw lastError instanceof Error ? lastError : new Error(`Prediction task ${task.id} failed.`);
     },
     validation: async () => {
       const result = await runValidationWorker(databaseUrl, {
@@ -1048,13 +1144,29 @@ export const runAutomationCycle = async (
     predictionExecutions.push(execution);
   }
 
-  const parlayResult = await runPublisherWorker(databaseUrl, {
-    env: runtimeEnv,
-    generatedAt: parlayGeneratedAt,
-    predictionTaskIds: predictionExecutions
-      .filter((execution) => execution.task.status === "succeeded")
-      .map((execution) => execution.task.id),
-  });
+  let parlayResult: PublishParlayMvpResult | undefined;
+  let publisherError: unknown;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      parlayResult = await runPublisherWorker(databaseUrl, {
+        env: runtimeEnv,
+        generatedAt: parlayGeneratedAt,
+        predictionTaskIds: predictionExecutions
+          .filter((execution) => execution.task.status === "succeeded")
+          .map((execution) => execution.task.id),
+      });
+      break;
+    } catch (error) {
+      publisherError = error;
+      if (!isRetryablePrismaConnectionError(error) || attempt >= 5) {
+        throw error;
+      }
+      await sleep(100 * attempt);
+    }
+  }
+  if (!parlayResult) {
+    throw publisherError instanceof Error ? publisherError : new Error("Publisher worker failed.");
+  }
   const validationTask =
     (await loadPersistedTaskById(databaseUrl, validationTaskId)) ??
     (await enqueuePersistedTask(databaseUrl, {

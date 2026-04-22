@@ -28,7 +28,9 @@ import {
   type ResearchDossierLike,
 } from "@gana-v8/prediction-engine";
 import {
+  connectPrismaClientWithRetry,
   createPrismaUnitOfWork,
+  retryPrismaReadOperation,
   createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
@@ -249,6 +251,26 @@ const createManagedRuntime = (
     unitOfWork,
     disconnect,
   };
+};
+
+const ensureConnectedClient = async (
+  client: ScoringWorkerPrismaClientLike,
+): Promise<void> => {
+  const maybeConnectable = client as {
+    $connect?: (() => Promise<void>) | undefined;
+    $disconnect?: (() => Promise<void>) | undefined;
+  };
+  if (
+    typeof maybeConnectable.$connect !== "function" ||
+    typeof maybeConnectable.$disconnect !== "function"
+  ) {
+    return;
+  }
+
+  await connectPrismaClientWithRetry(maybeConnectable as {
+    $connect: () => Promise<void>;
+    $disconnect: () => Promise<void>;
+  });
 };
 
 const createScoringTaskId = (fixtureId: string): string =>
@@ -770,14 +792,16 @@ const findLatestH2hSnapshot = async (
   client: ScoringWorkerPrismaClientLike,
   fixture: FixtureEntity,
 ): Promise<OddsSnapshotLike | null> => {
-  const byFixtureId = await client.oddsSnapshot.findFirst({
-    where: {
-      marketKey: "h2h",
-      OR: [{ fixtureId: fixture.id }],
-    },
-    include: { selections: true },
-    orderBy: [{ capturedAt: "desc" }],
-  });
+  const byFixtureId = await retryPrismaReadOperation(() =>
+    client.oddsSnapshot.findFirst({
+      where: {
+        marketKey: "h2h",
+        OR: [{ fixtureId: fixture.id }],
+      },
+      include: { selections: true },
+      orderBy: [{ capturedAt: "desc" }],
+    }),
+  );
 
   if (byFixtureId) {
     return byFixtureId;
@@ -788,14 +812,16 @@ const findLatestH2hSnapshot = async (
     return null;
   }
 
-  return client.oddsSnapshot.findFirst({
-    where: {
-      marketKey: "h2h",
-      OR: [{ providerFixtureId }],
-    },
-    include: { selections: true },
-    orderBy: [{ capturedAt: "desc" }],
-  });
+  return retryPrismaReadOperation(() =>
+    client.oddsSnapshot.findFirst({
+      where: {
+        marketKey: "h2h",
+        OR: [{ providerFixtureId }],
+      },
+      include: { selections: true },
+      orderBy: [{ capturedAt: "desc" }],
+    }),
+  );
 };
 
 export const loadEligibleFixturesForScoring = async (
@@ -808,12 +834,16 @@ export const loadEligibleFixturesForScoring = async (
   );
 
   try {
-    const fixtures = await runtime.client.fixture.findMany({
-      where: {
-        status: "scheduled",
-        ...(options.fixtureIds ? { id: { in: Array.from(options.fixtureIds) } } : {}),
-      },
-    });
+    await ensureConnectedClient(runtime.client);
+
+    const fixtures = await retryPrismaReadOperation(() =>
+      runtime.client.fixture.findMany({
+        where: {
+          status: "scheduled",
+          ...(options.fixtureIds ? { id: { in: Array.from(options.fixtureIds) } } : {}),
+        },
+      }),
+    );
 
     const limitedFixtures = [...fixtures]
       .sort(
@@ -923,8 +953,12 @@ export const scoreFixturePrediction = async (
     : loadRuntimeConfig({ appName: "scoring-worker" });
 
   try {
+    await ensureConnectedClient(runtime.client);
+
     const fixture = (await runtime.unitOfWork.fixtures.getById(fixtureId)) ??
-      (await runtime.client.fixture.findUnique({ where: { id: fixtureId } }));
+      (await retryPrismaReadOperation(() =>
+        runtime.client.fixture.findUnique({ where: { id: fixtureId } }),
+      ));
 
     if (!fixture) {
       return {

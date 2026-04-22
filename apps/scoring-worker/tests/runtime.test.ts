@@ -388,8 +388,8 @@ test("scoreFixturePrediction persists completed AiRun and published prediction f
     environment: "test",
     profile: "ci-smoke",
     providerSource: "mock",
-    demoMode: true,
-    cohort: "demo:ci-smoke",
+    demoMode: false,
+    cohort: "live:ci-smoke",
     source: "scoring-worker",
   });
 });

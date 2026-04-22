@@ -10,13 +10,13 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-harness-runtime-durable.md`
 - `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 
 ## Planes relevantes en `completado/`
 
+- `gana-v8-harness-runtime-durable.md`
 - `gana-v8-harness-core-y-claridad-agente.md`
 - `gana-v8-plan-cierre-sandbox-qa.md`
 - `gana-v8-plan-cierre-plataforma-operacion.md`

@@ -113,6 +113,11 @@ const createClient = (
   },
 });
 
+const previewEnv = {
+  NODE_ENV: "test",
+  GANA_RUNTIME_PROFILE: "human-qa-demo",
+} as const;
+
 const seedPublishableResearch = async (
   unitOfWork: ReturnType<typeof createInMemoryUnitOfWork>,
   fixtureIds: readonly string[],
@@ -227,6 +232,7 @@ test("publishParlayMvp persists a two-leg parlay from published moneyline predic
     generatedAt: "2026-04-16T12:30:00.000Z",
     stake: 10,
     unitOfWork,
+    env: previewEnv,
   });
 
   const parlays = await unitOfWork.parlays.list();
@@ -330,6 +336,7 @@ test("publishParlayMvp respects workflow overrides when selecting parlay legs", 
     stake: 10,
     unitOfWork,
     maxLegs: 2,
+    env: previewEnv,
   });
 
   assert.equal(result.status, "persisted");
@@ -450,6 +457,7 @@ test("publishParlayMvp excludes predictions blocked by coverage policy and recor
     stake: 10,
     unitOfWork,
     maxLegs: 2,
+    env: previewEnv,
   });
 
   const blockedWorkflow = await unitOfWork.fixtureWorkflows.findByFixtureId("fx-blocked");
@@ -585,6 +593,7 @@ test("publishParlayMvp scopes parlay selection to the current prediction task id
     unitOfWork,
     predictionTaskIds: ["task:pred-current-1", "task:current-2"],
     maxLegs: 2,
+    env: previewEnv,
   });
 
   assert.equal(result.status, "persisted");
@@ -652,6 +661,7 @@ test("publishParlayMvp excludes far-future demo predictions when live candidates
     stake: 10,
     unitOfWork,
     maxLegs: 2,
+    env: previewEnv,
   });
 
   assert.equal(result.status, "persisted");
@@ -713,6 +723,7 @@ test("publishParlayMvp generates a persisted parlay id that fits the database co
     stake: 10,
     unitOfWork,
     maxLegs: 2,
+    env: previewEnv,
   });
 
   assert.equal(result.status, "persisted");

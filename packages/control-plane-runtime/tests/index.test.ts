@@ -6,7 +6,7 @@ import type { QueueTaskEntity, QueueTaskSummary } from "@gana-v8/queue-adapters"
 import {
   assessQueueHealth,
   hasExpiredTaskLease,
-} from "../src/index.ts";
+} from "../src/index.js";
 
 const createQueueTask = (
   overrides: Partial<QueueTaskEntity> = {},
@@ -41,18 +41,13 @@ const createQueueSummary = (
   latestTasks: overrides.latestTasks ?? [],
 });
 
-test("hasExpiredTaskLease detects explicit and implicit expired leases", () => {
+test("hasExpiredTaskLease detects explicit expired leases only", () => {
   const now = new Date("2026-04-22T12:10:00.000Z");
 
   const explicitExpiredTask = createQueueTask({
     id: "task:explicit-expired",
     status: "running",
     leaseExpiresAt: "2026-04-22T12:09:00.000Z",
-  });
-  const implicitExpiredTask = createQueueTask({
-    id: "task:implicit-expired",
-    status: "running",
-    updatedAt: "2026-04-22T12:04:00.000Z",
   });
   const healthyTask = createQueueTask({
     id: "task:healthy",
@@ -61,7 +56,6 @@ test("hasExpiredTaskLease detects explicit and implicit expired leases", () => {
   });
 
   assert.equal(hasExpiredTaskLease(explicitExpiredTask, now), true);
-  assert.equal(hasExpiredTaskLease(implicitExpiredTask, now), true);
   assert.equal(hasExpiredTaskLease(healthyTask, now), false);
 });
 

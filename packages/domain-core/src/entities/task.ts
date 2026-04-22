@@ -31,23 +31,59 @@ export interface TaskEntity extends AuditableEntity {
   readonly triggerKind: TaskTriggerKind;
   readonly priority: number;
   readonly dedupeKey?: string;
+  readonly manifestId?: string;
+  readonly workflowId?: string;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly source?: string;
   readonly payload: Record<string, unknown>;
   readonly attempts: readonly TaskAttempt[];
   readonly scheduledFor?: ISODateString;
   readonly maxAttempts: number;
   readonly lastErrorMessage?: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiresAt?: ISODateString;
+  readonly claimedAt?: ISODateString;
+  readonly lastHeartbeatAt?: ISODateString;
+  readonly activeTaskRunId?: string;
 }
+
+const asOptionalString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length > 0 ? value : undefined;
 
 export const createTask = (
   input: Omit<TaskEntity, "createdAt" | "updatedAt" | "attempts" | "triggerKind" | "maxAttempts"> &
     Partial<Pick<TaskEntity, "createdAt" | "updatedAt" | "attempts" | "triggerKind" | "maxAttempts" | "dedupeKey" | "lastErrorMessage">>,
 ): TaskEntity => {
   const timestamp = input.createdAt ?? nowIso();
+  const payload = { ...input.payload };
+  const manifestId = input.manifestId ?? asOptionalString(payload.manifestId);
+  const workflowId = input.workflowId ?? asOptionalString(payload.workflowId);
+  const traceId = input.traceId ?? asOptionalString(payload.traceId);
+  const correlationId = input.correlationId ?? asOptionalString(payload.correlationId);
+  const source = input.source ?? asOptionalString(payload.source);
   return {
-    ...input,
+    id: input.id,
+    kind: input.kind,
+    status: input.status,
+    priority: input.priority,
+    ...(input.dedupeKey ? { dedupeKey: input.dedupeKey } : {}),
+    ...(manifestId ? { manifestId } : {}),
+    ...(workflowId ? { workflowId } : {}),
+    ...(traceId ? { traceId } : {}),
+    ...(correlationId ? { correlationId } : {}),
+    ...(source ? { source } : {}),
+    payload,
+    ...(input.scheduledFor ? { scheduledFor: input.scheduledFor } : {}),
     triggerKind: input.triggerKind ?? "system",
-    attempts: input.attempts ?? [],
+    attempts: input.attempts?.map((attempt) => ({ ...attempt })) ?? [],
     maxAttempts: input.maxAttempts ?? 3,
+    ...(input.lastErrorMessage ? { lastErrorMessage: input.lastErrorMessage } : {}),
+    ...(input.leaseOwner ? { leaseOwner: input.leaseOwner } : {}),
+    ...(input.leaseExpiresAt ? { leaseExpiresAt: input.leaseExpiresAt } : {}),
+    ...(input.claimedAt ? { claimedAt: input.claimedAt } : {}),
+    ...(input.lastHeartbeatAt ? { lastHeartbeatAt: input.lastHeartbeatAt } : {}),
+    ...(input.activeTaskRunId ? { activeTaskRunId: input.activeTaskRunId } : {}),
     createdAt: timestamp,
     updatedAt: input.updatedAt ?? timestamp,
   };

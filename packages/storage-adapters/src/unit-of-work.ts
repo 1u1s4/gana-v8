@@ -19,6 +19,7 @@ import type {
   ResearchConflictRepository,
   ResearchSourceRepository,
   SandboxNamespaceRepository,
+  SchedulerCursorRepository,
   TaskRepository,
   TaskRunRepository,
   TeamCoveragePolicyRepository,
@@ -46,6 +47,7 @@ import {
   InMemoryResearchConflictRepository,
   InMemoryResearchSourceRepository,
   InMemorySandboxNamespaceRepository,
+  InMemorySchedulerCursorRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryTeamCoveragePolicyRepository,
@@ -72,6 +74,7 @@ import {
   PrismaResearchConflictRepository,
   PrismaResearchSourceRepository,
   PrismaSandboxNamespaceRepository,
+  PrismaSchedulerCursorRepository,
   PrismaTaskRepository,
   PrismaTaskRunRepository,
   PrismaTeamCoveragePolicyRepository,
@@ -83,6 +86,7 @@ export interface StorageUnitOfWork {
   fixtures: FixtureRepository;
   automationCycles: AutomationCycleRepository;
   fixtureWorkflows: FixtureWorkflowRepository;
+  schedulerCursors: SchedulerCursorRepository;
   tasks: TaskRepository;
   taskRuns: TaskRunRepository;
   aiRuns: AiRunRepository;
@@ -116,6 +120,7 @@ export const createInMemoryUnitOfWork = (): InMemoryUnitOfWork => ({
   fixtures: new InMemoryFixtureRepository(),
   automationCycles: new InMemoryAutomationCycleRepository(),
   fixtureWorkflows: new InMemoryFixtureWorkflowRepository(),
+  schedulerCursors: new InMemorySchedulerCursorRepository(),
   tasks: new InMemoryTaskRepository(),
   taskRuns: new InMemoryTaskRunRepository(),
   aiRuns: new InMemoryAiRunRepository(),
@@ -146,6 +151,7 @@ export const createPrismaUnitOfWork = (
   fixtures: new PrismaFixtureRepository(client),
   automationCycles: new PrismaAutomationCycleRepository(client),
   fixtureWorkflows: new PrismaFixtureWorkflowRepository(client),
+  schedulerCursors: new PrismaSchedulerCursorRepository(client),
   tasks: new PrismaTaskRepository(client),
   taskRuns: new PrismaTaskRunRepository(client),
   aiRuns: new PrismaAiRunRepository(client),

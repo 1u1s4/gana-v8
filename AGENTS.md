@@ -50,5 +50,4 @@ pnpm test:sandbox:certification
 
 ## Planes activos
 
-- `docs/plans/falta/gana-v8-harness-runtime-durable.md`
 - `docs/plans/falta/gana-v8-harness-verificacion-release-ops-y-runbooks.md`

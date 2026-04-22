@@ -75,7 +75,7 @@ El faltante exclusivo de este frente es convertir verificación y operación en 
 
 ## Dependencias
 
-- Depende del plan `gana-v8-harness-runtime-durable.md` para obtener señales correctas de scheduler, dispatcher, recovery y ownership por corrida.
+- Reutiliza como base ya completada `docs/plans/completado/gana-v8-harness-runtime-durable.md`, especialmente las señales de scheduler, dispatcher, recovery y ownership por corrida.
 - Debe quedar indexado y gobernado por el future knowledge map de `gana-v8-harness-core-y-claridad-agente.md`.
 - Debe reutilizar lo ya cubierto por `sandbox-runner`, `testing-fixtures`, `public-api`, `operator-console` y CI, sin reescribir su scope funcional existente.
 

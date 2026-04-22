@@ -23,7 +23,9 @@ import {
   type ParlayScorecard,
 } from "@gana-v8/parlay-engine";
 import {
+  connectPrismaClientWithRetry,
   createPrismaUnitOfWork,
+  retryPrismaReadOperation,
   createVerifiedPrismaClient,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
@@ -242,6 +244,26 @@ const createManagedRuntime = (
           await client.$disconnect?.();
         },
   };
+};
+
+const ensureConnectedClient = async (
+  client: PublisherWorkerPrismaClientLike,
+): Promise<void> => {
+  const maybeConnectable = client as {
+    $connect?: (() => Promise<void>) | undefined;
+    $disconnect?: (() => Promise<void>) | undefined;
+  };
+  if (
+    typeof maybeConnectable.$connect !== "function" ||
+    typeof maybeConnectable.$disconnect !== "function"
+  ) {
+    return;
+  }
+
+  await connectPrismaClientWithRetry(maybeConnectable as {
+    $connect: () => Promise<void>;
+    $disconnect: () => Promise<void>;
+  });
 };
 
 const normalizeTeamKey = (team: string): string =>
@@ -622,12 +644,16 @@ export const loadPublishedPredictionCandidates = async (
   const generatedAt = options.generatedAt ?? new Date().toISOString();
 
   try {
-    const predictions = await client.prediction.findMany({
-      where: { status: "published" },
-      include: { fixture: true, aiRun: { include: { task: true } } },
-      orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }, { confidence: "desc" }],
-      ...(options.maxPredictions !== undefined ? { take: options.maxPredictions } : {}),
-    });
+    await ensureConnectedClient(client);
+
+    const predictions = await retryPrismaReadOperation(() =>
+      client.prediction.findMany({
+        where: { status: "published" },
+        include: { fixture: true, aiRun: { include: { task: true } } },
+        orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }, { confidence: "desc" }],
+        ...(options.maxPredictions !== undefined ? { take: options.maxPredictions } : {}),
+      }),
+    );
 
     const candidates: AtomicCandidate[] = [];
     const skipReasons: PublisherWorkerSkipReason[] = [];
@@ -777,12 +803,16 @@ export const publishParlayMvp = async (
     : loadRuntimeConfig({ appName: "publisher-worker" });
 
   try {
-    const loaded = await runtime.client.prediction.findMany({
-      where: { status: "published" },
-      include: { fixture: true, aiRun: { include: { task: true } } },
-      orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }, { confidence: "desc" }],
-      ...(options.maxPredictions !== undefined ? { take: options.maxPredictions } : {}),
-    });
+    await ensureConnectedClient(runtime.client);
+
+    const loaded = await retryPrismaReadOperation(() =>
+      runtime.client.prediction.findMany({
+        where: { status: "published" },
+        include: { fixture: true, aiRun: { include: { task: true } } },
+        orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }, { confidence: "desc" }],
+        ...(options.maxPredictions !== undefined ? { take: options.maxPredictions } : {}),
+      }),
+    );
     const scopedLoaded = options.predictionTaskIds
       ? loaded.filter((prediction) =>
           prediction.aiRun?.taskId !== undefined && options.predictionTaskIds?.includes(prediction.aiRun.taskId),

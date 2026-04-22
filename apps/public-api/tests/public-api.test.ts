@@ -1631,6 +1631,7 @@ test("public api server can quarantine running tasks and requeue them through qu
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         reason: "Manual operator stop",
+        occurredAt: "2026-04-22T00:32:00.000Z",
       }),
     });
     assert.equal(quarantineResponse.status, 200);
@@ -1646,7 +1647,9 @@ test("public api server can quarantine running tasks and requeue them through qu
     const requeueResponse = await fetch(`${baseUrl}/tasks/${task.id}/requeue`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        occurredAt: "2026-04-22T00:33:00.000Z",
+      }),
     });
     assert.equal(requeueResponse.status, 200);
     assert.equal(((await requeueResponse.json()) as { status: string }).status, "queued");

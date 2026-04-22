@@ -13,6 +13,7 @@ export * from './entities/feature-snapshot.js';
 export * from './entities/availability-snapshot.js';
 export * from './entities/lineup-snapshot.js';
 export * from './entities/sandbox.js';
+export * from './entities/scheduler-cursor.js';
 export * from './entities/task.js';
 export * from './entities/task-run.js';
 export * from './entities/team-coverage-policy.js';

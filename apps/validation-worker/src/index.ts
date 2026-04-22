@@ -14,6 +14,7 @@ import {
 } from "@gana-v8/domain-core";
 import { settleParlayTicket, type AtomicLegSettlement } from "@gana-v8/parlay-engine";
 import {
+  connectPrismaClientWithRetry,
   createPrismaClient,
   createPrismaUnitOfWork,
   createVerifiedPrismaClient,
@@ -76,7 +77,7 @@ export interface ValidationWorkerRunResult {
 const createManagedRuntime = (
   databaseUrl?: string,
   options: ValidationWorkerOptions = {},
-): { unitOfWork: StorageUnitOfWork; disconnect: () => Promise<void> } => {
+): { client?: ReturnType<typeof createPrismaClient> | undefined; unitOfWork: StorageUnitOfWork; disconnect: () => Promise<void> } => {
   if (options.unitOfWork) {
     return {
       unitOfWork: options.unitOfWork,
@@ -86,6 +87,7 @@ const createManagedRuntime = (
 
   const client = createVerifiedPrismaClient({ databaseUrl });
   return {
+    client,
     unitOfWork: createPrismaUnitOfWork(client),
     disconnect: async () => {
       await client.$disconnect();
@@ -423,6 +425,10 @@ export const runValidationWorker = async (
   const executedAt = options.executedAt ?? new Date().toISOString();
 
   try {
+    if (runtime.client) {
+      await connectPrismaClientWithRetry(runtime.client);
+    }
+
     const fixtures = await runtime.unitOfWork.fixtures.list();
     const fixtureById = new Map(fixtures.map((fixture) => [fixture.id, fixture] as const));
     const predictions = await runtime.unitOfWork.predictions.list();

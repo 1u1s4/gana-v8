@@ -14,9 +14,8 @@ import {
   createTeamCoveragePolicy,
 } from "@gana-v8/domain-core";
 import { runLiveIngestion } from "@gana-v8/ingestion-worker";
-import { PrismaClient } from "@prisma/client";
 import type { RawFixtureRecord, RawOddsMarketRecord } from "@gana-v8/source-connectors";
-import { createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
+import { createConnectedVerifiedPrismaClient, createPrismaUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
   buildHermesCronSpecs,
@@ -34,13 +33,19 @@ import {
   runAutomationCycle,
   runDemoControlPlane,
   runNextPersistedTask,
+  runPersistedTaskById,
 } from "../src/index.js";
 
 const TEST_RUNTIME_ENV = {
   NODE_ENV: "test",
 } as const;
 
-const createPrismaClient = (databaseUrl: string) => new PrismaClient({ datasourceUrl: databaseUrl });
+const PREVIEW_RUNTIME_ENV = {
+  ...TEST_RUNTIME_ENV,
+  GANA_RUNTIME_PROFILE: "human-qa-demo",
+} as const;
+
+const createPrismaClient = (databaseUrl: string) => createConnectedVerifiedPrismaClient({ databaseUrl });
 const databaseUrl = process.env.DATABASE_URL;
 const testWithDatabase = (
   name: string,
@@ -66,7 +71,7 @@ const createAutomationFixtureWithOdds = async (
     readonly awayPrice?: number;
   } = {},
 ): Promise<{ fixtureId: string }> => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
   const fixtureId = `${prefix}-fixture-${suffix}`;
   const providerFixtureId = `${prefix}-provider-${suffix}`;
@@ -173,7 +178,7 @@ const createAutomationFixtureWorkflowOps = async (
     readonly overrideReason?: string;
   } = {},
 ): Promise<void> => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
 
   try {
@@ -249,7 +254,7 @@ const createAutomationCoveragePolicies = async (
     readonly season?: number;
   } = {},
 ): Promise<void> => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
   const coverageKeys = createAutomationCoverageKeys(prefix);
 
@@ -301,7 +306,7 @@ const createAutomationCoveragePolicies = async (
 };
 
 const cleanupAutomationArtifacts = async (databaseUrl: string, prefix: string): Promise<void> => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
 
   try {
     const fixtureIds = (
@@ -387,7 +392,7 @@ const cleanupAutomationArtifactsByResourceIds = async (
     readonly policyPrefix?: string;
   },
 ): Promise<void> => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const fixtureIds = [...new Set(input.fixtureIds ?? [])];
   const batchIds = [...new Set(input.batchIds ?? [])];
 
@@ -522,7 +527,7 @@ test("runDemoControlPlane dispatches fixture and odds demo jobs", async () => {
   assert.equal(summary.runtime.providerSource, "mock");
   assert.equal(summary.runtime.providerBaseUrl, "mock://api-football");
   assert.equal(summary.runtime.dryRun, true);
-  assert.equal(summary.runtime.demoMode, true);
+  assert.equal(summary.runtime.demoMode, false);
   assert.equal(summary.results.every((result) => result.status === "succeeded"), true);
   assert.equal(summary.results.some((result) => result.intent === "ingest-fixtures" && result.observedRecords > 0), true);
   assert.equal(summary.results.some((result) => result.intent === "ingest-odds" && result.observedRecords > 0), true);
@@ -561,7 +566,7 @@ testWithDatabase("loadPersistedTaskSummary reads persisted task status buckets",
 });
 
 testWithDatabase("createPersistedTaskQueue runs a persisted task lifecycle through the shared queue adapter", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-queue-adapter-${Date.now()}`;
   const queue = createPersistedTaskQueue(databaseUrl);
 
@@ -573,7 +578,7 @@ testWithDatabase("createPersistedTaskQueue runs a persisted task lifecycle throu
       now: new Date("2026-04-16T11:00:00.000Z"),
     });
 
-    const claim = await queue.claimNext(undefined, new Date("2026-04-16T11:01:00.000Z"));
+    const claim = await queue.claimNext("validation", new Date("2026-04-16T11:01:00.000Z"));
     assert.ok(claim);
     assert.equal(claim.task.kind, "validation");
     assert.equal(claim.taskRun.attemptNumber, 1);
@@ -604,60 +609,61 @@ testWithDatabase("createPersistedTaskQueue runs a persisted task lifecycle throu
 });
 
 testWithDatabase("maybeClaimNextPersistedTask orders ready queued tasks by scheduledFor, priority, and createdAt", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-enqueue-${Date.now()}`;
 
   try {
     const immediateLowPriority = await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-immediate-low`,
-      kind: "research",
-      payload: { fixtureId: "fx-123", prompt: "immediate low" },
+      kind: "validation",
+      payload: { target: "immediate-low" },
       now: new Date("2026-04-16T10:00:00.000Z"),
     });
     const immediateHighPriority = await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-immediate-high`,
-      kind: "prediction",
-      payload: { fixtureId: "fx-123", market: "moneyline" },
+      kind: "validation",
+      payload: { target: "immediate-high" },
       now: new Date("2026-04-16T10:01:00.000Z"),
       priority: 10,
     });
     const scheduledLowPriority = await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-scheduled-low`,
       kind: "validation",
-      payload: { target: "low-priority" },
+      payload: { target: "scheduled-low" },
       now: new Date("2026-04-16T10:02:00.000Z"),
       scheduledFor: new Date("2026-04-16T10:04:00.000Z"),
       priority: 1,
     });
     const scheduledHighPriority = await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-scheduled-high`,
-      kind: "prediction",
-      payload: { fixtureId: "fx-123", market: "moneyline" },
+      kind: "validation",
+      payload: { target: "scheduled-high" },
       now: new Date("2026-04-16T10:03:00.000Z"),
       scheduledFor: new Date("2026-04-16T10:04:00.000Z"),
       priority: 5,
     });
     await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-future`,
-      kind: "research",
-      payload: { fixtureId: "fx-123", prompt: "future task" },
+      kind: "validation",
+      payload: { target: "future" },
       now: new Date("2026-04-16T10:04:00.000Z"),
       scheduledFor: new Date("2026-04-16T10:10:00.000Z"),
       priority: 100,
     });
 
     const claimNow = new Date("2026-04-16T10:05:00.000Z");
-    const firstClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
-    const secondClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
-    const thirdClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
-    const fourthClaim = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
-    const exhausted = await maybeClaimNextPersistedTask(databaseUrl, undefined, claimNow);
+    const firstClaim = await maybeClaimNextPersistedTask(databaseUrl, "validation", claimNow);
+    const secondClaim = await maybeClaimNextPersistedTask(databaseUrl, "validation", claimNow);
+    const thirdClaim = await maybeClaimNextPersistedTask(databaseUrl, "validation", claimNow);
+    const fourthClaim = await maybeClaimNextPersistedTask(databaseUrl, "validation", claimNow);
+    const futureTask = await prisma.task.findUnique({
+      where: { id: `${taskPrefix}-future` },
+    });
 
     assert.ok(firstClaim);
     assert.ok(secondClaim);
     assert.ok(thirdClaim);
     assert.ok(fourthClaim);
-    assert.equal(exhausted, null);
     assert.deepEqual(
       [firstClaim.task.id, secondClaim.task.id, thirdClaim.task.id, fourthClaim.task.id],
       [
@@ -676,6 +682,7 @@ testWithDatabase("maybeClaimNextPersistedTask orders ready queued tasks by sched
       ],
       [1, 1, 1, 1],
     );
+    assert.equal(futureTask?.status, "queued");
   } finally {
     await prisma.taskRun.deleteMany({ where: { taskId: { startsWith: taskPrefix } } });
     await prisma.task.deleteMany({ where: { id: { startsWith: taskPrefix } } });
@@ -684,15 +691,15 @@ testWithDatabase("maybeClaimNextPersistedTask orders ready queued tasks by sched
 });
 
 testWithDatabase("maybeClaimNextPersistedTask increments attempt number from existing task runs", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
   const taskPrefix = `hermes-test-attempt-${Date.now()}`;
 
   try {
     const queuedTask = await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-prediction`,
-      kind: "prediction",
-      payload: { fixtureId: "fx-999", market: "totals" },
+      kind: "validation",
+      payload: { target: "attempt-tracking" },
       now: new Date("2026-04-16T12:00:00.000Z"),
     });
 
@@ -712,7 +719,7 @@ testWithDatabase("maybeClaimNextPersistedTask increments attempt number from exi
 
     const claimedTask = await maybeClaimNextPersistedTask(
       databaseUrl,
-      undefined,
+      "validation",
       new Date("2026-04-16T12:03:00.000Z"),
     );
 
@@ -728,26 +735,26 @@ testWithDatabase("maybeClaimNextPersistedTask increments attempt number from exi
 });
 
 testWithDatabase("maybeClaimNextPersistedTask recovers expired running tasks whose lease window elapsed", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-expired-lease-${Date.now()}`;
   const queue = createPersistedTaskQueue(databaseUrl);
 
   try {
     const queuedTask = await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-prediction`,
-      kind: "prediction",
-      payload: { fixtureId: "fx-expired-lease", market: "moneyline" },
+      kind: "validation",
+      payload: { target: "expired-lease" },
       now: new Date("2026-04-16T12:00:00.000Z"),
     });
 
-    const firstClaim = await queue.claimNext(undefined, new Date("2026-04-16T12:01:00.000Z"));
+    const firstClaim = await queue.claimNext("validation", new Date("2026-04-16T12:01:00.000Z"));
     assert.ok(firstClaim);
     assert.equal(firstClaim.task.id, queuedTask.id);
     assert.equal(firstClaim.taskRun.attemptNumber, 1);
 
     const reclaimed = await maybeClaimNextPersistedTask(
       databaseUrl,
-      undefined,
+      "validation",
       new Date("2026-04-16T12:06:01.000Z"),
     );
 
@@ -764,7 +771,7 @@ testWithDatabase("maybeClaimNextPersistedTask recovers expired running tasks who
 });
 
 testWithDatabase("requeuePersistedTask requeues failed and cancelled tasks without deleting task run history", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
   const taskPrefix = `hermes-test-requeue-${Date.now()}`;
 
@@ -867,7 +874,7 @@ testWithDatabase("requeuePersistedTask requeues failed and cancelled tasks witho
 });
 
 testWithDatabase("requeuePersistedTask rejects succeeded tasks and missing task ids with clear errors", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-requeue-errors-${Date.now()}`;
 
   try {
@@ -901,7 +908,7 @@ testWithDatabase("requeuePersistedTask rejects succeeded tasks and missing task 
 });
 
 testWithDatabase("runNextPersistedTask processes prediction and validation tasks deterministically", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-run-${Date.now()}`;
 
   try {
@@ -909,18 +916,21 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
       id: `${taskPrefix}-research`,
       kind: "research",
       payload: { fixtureId: "fx-001", prompt: "collect context" },
+      priority: 1_000,
       now: new Date("2026-04-16T11:00:00.000Z"),
     });
     await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-prediction`,
       kind: "prediction",
       payload: { fixtureId: "fx-001", market: "totals" },
+      priority: 1_000,
       now: new Date("2026-04-16T11:01:00.000Z"),
     });
     await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-validation`,
       kind: "validation",
       payload: { target: "cycle" },
+      priority: 1_000,
       now: new Date("2026-04-16T11:02:00.000Z"),
     });
 
@@ -931,6 +941,9 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
       prediction: async () => {
         throw new Error("prediction handler should not run first");
       },
+    }, {
+      kind: "research",
+      now: new Date("2026-04-16T11:02:30.000Z"),
     });
 
     assert.ok(firstResult);
@@ -945,6 +958,7 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
         throw new Error("model unavailable");
       },
     }, {
+      kind: "prediction",
       now: new Date("2026-04-16T11:03:00.000Z"),
     });
 
@@ -961,6 +975,7 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
       prediction: async () => ({ summary: "unexpected" }),
       validation: async () => ({ settledPredictionCount: 3 }),
     }, {
+      kind: "validation",
       now: new Date("2026-04-16T11:03:30.000Z"),
     });
 
@@ -970,8 +985,9 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
     assert.equal(validationResult.taskRun.status, "succeeded");
     assert.equal(validationResult.output.settledPredictionCount, 3);
 
-    const exhausted = await runNextPersistedTask(
+    const exhausted = await runPersistedTaskById(
       databaseUrl,
+      `${taskPrefix}-prediction`,
       {
         research: async () => ({}),
         prediction: async () => ({}),
@@ -989,14 +1005,19 @@ testWithDatabase("runNextPersistedTask processes prediction and validation tasks
 });
 
 testWithDatabase("runNextPersistedTask supports sandbox replay persisted tasks", async (databaseUrl) => {
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const taskPrefix = `hermes-test-sandbox-${Date.now()}`;
 
   try {
     const sandboxTask = await enqueuePersistedTask(databaseUrl, {
       id: `${taskPrefix}-sandbox-replay`,
       kind: "sandbox-replay",
-      payload: { fixtureId: "fx-sandbox-001", replayId: `${taskPrefix}-replay` },
+      payload: {
+        fixtureId: "fx-sandbox-001",
+        profileName: "human-qa-demo",
+        packId: `${taskPrefix}-replay`,
+        gitSha: "vwx9012",
+      },
       now: new Date("2026-04-16T11:10:00.000Z"),
     });
 
@@ -1006,6 +1027,8 @@ testWithDatabase("runNextPersistedTask supports sandbox replay persisted tasks",
       "sandbox-replay": async (task) => ({
         replayedFixtureId: String(task.payload.fixtureId),
       }),
+    }, {
+      kind: "sandbox-replay",
     });
 
     assert.ok(result);
@@ -1135,7 +1158,7 @@ testWithDatabase("enqueuePredictionForEligibleFixtures applies coverage watchlis
   }
 });
 
-testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persists predictions, publishes a parlay, and executes validation", async (databaseUrl) => {
+testWithDatabase("runAutomationCycle executes research and blocks scoring/publication when deterministic research remains on hold", async (databaseUrl) => {
   const prefix = `har${Date.now().toString(36)}`;
   const coverageKeys = createAutomationCoverageKeys(prefix);
 
@@ -1162,7 +1185,7 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
     });
 
     const summary = await runAutomationCycle(databaseUrl, {
-      env: TEST_RUNTIME_ENV,
+      env: PREVIEW_RUNTIME_ENV,
       now: new Date("2099-01-01T10:00:00.000Z"),
       fixtureIds: [fixtureOne.fixtureId, fixtureTwo.fixtureId],
       maxFixtures: 2,
@@ -1173,7 +1196,7 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
       validationTaskId: `${prefix}-validation-task`,
     });
 
-    const prisma = createPrismaClient(databaseUrl);
+    const prisma = await createPrismaClient(databaseUrl);
     try {
       const predictions = await prisma.prediction.findMany({
         where: { fixtureId: { startsWith: `${prefix}-fixture-` } },
@@ -1208,17 +1231,26 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
         summary.researchExecutions.every((execution) =>
           execution.output.latestBundle && execution.output.latestSnapshot &&
           execution.output.fixtureId &&
-          execution.output.generatedAt === "2099-01-01T10:04:00.000Z"
+          execution.output.generatedAt === "2099-01-01T10:04:00.000Z" &&
+          execution.output.bundleStatus === "hold" &&
+          execution.output.featureReadinessStatus === "needs-review"
         ),
         true,
       );
       assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
       assert.equal(summary.processedPredictionCount, 2);
       assert.equal(summary.predictionExecutions.every((execution) => execution.task.status === "succeeded"), true);
-      assert.equal(predictions.length, 2);
-      assert.equal(predictions.every((prediction) => prediction.status === "published"), true);
+      assert.equal(
+        summary.predictionExecutions.every((execution) =>
+          execution.output.status === "skipped" &&
+          /not publishable/i.test(String(execution.output.reason))
+        ),
+        true,
+      );
+      assert.equal(predictions.length, 0);
       assert.equal(researchBundles.length, 2);
       assert.equal(featureSnapshots.length, 2);
+      assert.equal(researchBundles.every((bundle) => bundle.status === "hold"), true);
       assert.equal(
         researchBundles.every((bundle) => bundle.generatedAt.toISOString() === "2099-01-01T10:04:00.000Z"),
         true,
@@ -1232,8 +1264,8 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
         workflows.every(
           (workflow) =>
             workflow.enrichmentStatus === "succeeded" &&
-            workflow.candidateStatus === "succeeded" &&
-            workflow.predictionStatus === "succeeded",
+            workflow.candidateStatus === "blocked" &&
+            workflow.predictionStatus === "blocked",
         ),
         true,
       );
@@ -1249,13 +1281,10 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
         }),
         true,
       );
-      assert.equal(summary.parlayResult.status, "persisted");
-      assert.equal(parlays.length, 1);
-      assert.equal(parlays[0]?.legs.length, 2);
+      assert.equal(summary.parlayResult.status, "skipped");
+      assert.equal(parlays.length, 0);
       assert.equal(summary.validationTask.kind, "validation");
       assert.equal(summary.validationExecution.task.status, "succeeded");
-      assert.equal(summary.validationResult.skippedPredictionCount >= 2, true);
-      assert.equal(summary.validationResult.pendingParlayCount >= 1, true);
     } finally {
       await prisma.$disconnect();
     }
@@ -1264,7 +1293,7 @@ testWithDatabase("runAutomationCycle enqueues research and scoring tasks, persis
   }
 });
 
-testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end without manual fixture seeding", async (databaseUrl) => {
+testWithDatabase("runAutomationCycle processes live-ingested fixtures and blocks scoring/publication when research remains on hold", async (databaseUrl) => {
   const prefix = `hail${Date.now().toString(36)}`;
   const coverageKeys = createAutomationCoverageKeys(prefix);
   const providerFixtureIds = [`${prefix}-fixture-1`, `${prefix}-fixture-2`] as const;
@@ -1344,7 +1373,7 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
   let batchIds: string[] = [];
 
@@ -1371,7 +1400,7 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
     );
 
     const summary = await runAutomationCycle(databaseUrl, {
-      env: TEST_RUNTIME_ENV,
+      env: PREVIEW_RUNTIME_ENV,
       now: new Date("2099-01-01T10:10:00.000Z"),
       fixtureIds,
       maxFixtures: 2,
@@ -1417,16 +1446,26 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
     assert.equal(
       summary.researchExecutions.every((execution) =>
         execution.output.latestBundle && execution.output.latestSnapshot &&
-        execution.output.generatedAt === "2099-01-01T10:11:00.000Z"
+        execution.output.generatedAt === "2099-01-01T10:11:00.000Z" &&
+        execution.output.bundleStatus === "hold" &&
+        execution.output.featureReadinessStatus === "needs-review"
       ),
       true,
     );
     assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
     assert.equal(summary.processedPredictionCount, 2);
     assert.equal(summary.predictionExecutions.every((execution) => execution.task.status === "succeeded"), true);
+    assert.equal(
+      summary.predictionExecutions.every((execution) =>
+        execution.output.status === "skipped" &&
+        /not publishable/i.test(String(execution.output.reason))
+      ),
+      true,
+    );
     assert.equal(persistedFixtures.length, 2);
     assert.equal(researchBundles.length, 2);
     assert.equal(featureSnapshots.length, 2);
+    assert.equal(researchBundles.every((bundle) => bundle.status === "hold"), true);
     assert.equal(
       persistedFixtures.every((fixture) => {
         const metadata = fixture.metadata as Record<string, unknown>;
@@ -1444,15 +1483,14 @@ testWithDatabase("runAutomationCycle processes live-ingested fixtures end-to-end
       workflows.every(
         (workflow) =>
           workflow.enrichmentStatus === "succeeded" &&
-          workflow.candidateStatus === "succeeded" &&
-          workflow.predictionStatus === "succeeded",
+          workflow.candidateStatus === "blocked" &&
+          workflow.predictionStatus === "blocked",
       ),
       true,
     );
-    assert.equal(predictions.length, 2);
-    assert.equal(predictions.every((prediction) => prediction.status === "published"), true);
-    assert.equal(summary.parlayResult.status, "persisted");
-    assert.equal(parlays.length, 1);
+    assert.equal(predictions.length, 0);
+    assert.equal(summary.parlayResult.status, "skipped");
+    assert.equal(parlays.length, 0);
     assert.equal(summary.validationExecution.task.status, "succeeded");
   } finally {
     await prisma.$disconnect();
@@ -1554,7 +1592,7 @@ testWithDatabase("runAutomationCycle executes only manifest-owned persisted task
   }
 });
 
-testWithDatabase("runAutomationCycle scopes publisher selection to predictions from the current automation cycle only", async (databaseUrl) => {
+testWithDatabase("runAutomationCycle scopes publisher selection to the current automation cycle even when deterministic research blocks publication", async (databaseUrl) => {
   const prefix = `hars${Date.now().toString(36)}`;
   const historicalPrefix = `${prefix}old`;
   const coverageKeys = createAutomationCoverageKeys(prefix);
@@ -1594,7 +1632,7 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
       awayPrice: 2.8,
     });
 
-    const prisma = createPrismaClient(databaseUrl);
+    const prisma = await createPrismaClient(databaseUrl);
     const unitOfWork = createPrismaUnitOfWork(prisma);
     try {
       await unitOfWork.leagueCoveragePolicies.save(
@@ -1686,7 +1724,7 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
       );
 
       const summary = await runAutomationCycle(databaseUrl, {
-        env: TEST_RUNTIME_ENV,
+        env: PREVIEW_RUNTIME_ENV,
         now: new Date("2099-01-01T10:00:00.000Z"),
         fixtureIds: [fixtureOne.fixtureId, fixtureTwo.fixtureId, blockedFixture.fixtureId],
         maxFixtures: 3,
@@ -1701,15 +1739,9 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
       assert.equal(summary.enqueuedResearch.skippedFixtures[0]?.fixtureId, blockedFixture.fixtureId);
       assert.equal(summary.enqueuedPredictions.enqueuedCount, 2);
       assert.equal(summary.enqueuedPredictions.skippedCount, 0);
-      assert.equal(summary.parlayResult.status, "persisted");
-      assert.deepEqual(
-        summary.parlayResult.parlay?.legs.map((leg) => leg.fixtureId).sort(),
-        [fixtureOne.fixtureId, fixtureTwo.fixtureId].sort(),
-      );
-      assert.equal(
-        summary.parlayResult.parlay?.legs.some((leg) => leg.fixtureId === historicalFixture.fixtureId),
-        false,
-      );
+      assert.equal(summary.parlayResult.status, "skipped");
+      assert.equal(summary.parlayResult.loadedPredictionCount, 0);
+      assert.equal(summary.parlayResult.selectedCandidates.length, 0);
     } finally {
       await prisma.$disconnect();
     }
@@ -1719,14 +1751,21 @@ testWithDatabase("runAutomationCycle scopes publisher selection to predictions f
   }
 });
 
-testWithDatabase("loadAutomationOpsSummary exposes scoring eligibility and recent workflow audit trail via public-api exports", async (databaseUrl) => {
+testWithDatabase("loadAutomationOpsSummary exposes blocked scoring eligibility and recent workflow audit trail via public-api exports", async (databaseUrl) => {
   const prefix = `haos${Date.now().toString(36)}`;
+  const coverageKeys = createAutomationCoverageKeys(prefix);
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
   try {
-    const includedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1");
-    const excludedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2");
+    await createAutomationCoveragePolicies(databaseUrl, prefix, coverageKeys);
+    const includedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "1", {
+      providerLeagueId: coverageKeys.leagueKey,
+      providerHomeTeamId: coverageKeys.teamKey,
+    });
+    const excludedFixture = await createAutomationFixtureWithOdds(databaseUrl, prefix, "2", {
+      providerLeagueId: coverageKeys.leagueKey,
+    });
 
     await createAutomationFixtureWorkflowOps(databaseUrl, includedFixture.fixtureId, {
       manualSelectionStatus: "selected",
@@ -1749,8 +1788,8 @@ testWithDatabase("loadAutomationOpsSummary exposes scoring eligibility and recen
     assert.equal(summary.fixtures.length, 2);
     assert.ok(included);
     assert.ok(excluded);
-    assert.equal(included?.scoringEligibility.eligible, true);
-    assert.match(included?.scoringEligibility.reason ?? "", /force-included/i);
+    assert.equal(included?.scoringEligibility.eligible, false);
+    assert.match(included?.scoringEligibility.reason ?? "", /no persisted research bundle found/i);
     assert.equal(included?.recentAuditEvents.length, 2);
     assert.deepEqual(
       [...(included?.recentAuditEvents.map((event) => event.eventType) ?? [])].sort(),
@@ -1771,7 +1810,7 @@ testWithDatabase("loadLiveIngestionOpsSummary exposes persisted live ingestion r
 
   await cleanupAutomationArtifacts(databaseUrl, prefix);
 
-  const prisma = createPrismaClient(databaseUrl);
+  const prisma = await createPrismaClient(databaseUrl);
   const unitOfWork = createPrismaUnitOfWork(prisma);
 
   try {

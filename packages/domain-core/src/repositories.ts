@@ -11,6 +11,7 @@ import type { LeagueCoveragePolicyEntity } from './entities/league-coverage-poli
 import type { LineupParticipantEntity, LineupSnapshotEntity } from './entities/lineup-snapshot.js';
 import type { ParlayEntity } from './entities/parlay.js';
 import type { PredictionEntity } from './entities/prediction.js';
+import type { SchedulerCursorEntity } from './entities/scheduler-cursor.js';
 import type {
   ResearchAssignmentEntity,
   ResearchBundleEntity,
@@ -30,6 +31,8 @@ export interface FixtureRepository extends Repository<FixtureEntity> {
 }
 
 export interface AutomationCycleRepository extends Repository<AutomationCycleEntity> {}
+
+export interface SchedulerCursorRepository extends Repository<SchedulerCursorEntity> {}
 
 export interface TaskRepository extends Repository<TaskEntity> {
   findByStatus(status: TaskEntity['status']): Promise<TaskEntity[]>;

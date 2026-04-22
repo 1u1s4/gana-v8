@@ -40,6 +40,8 @@ import type {
   ResearchSourceRepository,
   SandboxNamespace,
   SandboxNamespaceRepository,
+  SchedulerCursorEntity,
+  SchedulerCursorRepository,
   TaskEntity,
   TaskRepository,
   TaskRunEntity,
@@ -122,16 +124,21 @@ import {
   sandboxNamespaceDomainToCreateInput,
   sandboxNamespaceInclude,
   sandboxNamespaceRecordToDomain,
+  schedulerCursorDomainToCreateInput,
+  schedulerCursorInclude,
+  schedulerCursorRecordToDomain,
   teamCoveragePolicyDomainToCreateInput,
   teamCoveragePolicyInclude,
   teamCoveragePolicyRecordToDomain,
 } from "./mappers.js";
+import { retryPrismaReadOperation } from "./client.js";
 
 export type PrismaClientLike = Pick<
   PrismaClient,
   | "fixture"
   | "automationCycle"
   | "fixtureWorkflow"
+  | "schedulerCursor"
   | "task"
   | "taskRun"
   | "aiRun"
@@ -170,18 +177,22 @@ export class PrismaFixtureRepository implements FixtureRepository {
   }
 
   async getById(id: EntityId): Promise<FixtureEntity | null> {
-    const record = await this.client.fixture.findUnique({
-      where: { id },
-      ...fixtureInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.fixture.findUnique({
+        where: { id },
+        ...fixtureInclude,
+      }),
+    );
     return record ? fixtureRecordToDomain(record) : null;
   }
 
   async list(): Promise<FixtureEntity[]> {
-    const records = await this.client.fixture.findMany({
-      orderBy: { scheduledAt: "asc" },
-      ...fixtureInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.fixture.findMany({
+        orderBy: { scheduledAt: "asc" },
+        ...fixtureInclude,
+      }),
+    );
     return records.map(fixtureRecordToDomain);
   }
 
@@ -190,11 +201,13 @@ export class PrismaFixtureRepository implements FixtureRepository {
   }
 
   async findByCompetition(competition: string): Promise<FixtureEntity[]> {
-    const records = await this.client.fixture.findMany({
-      where: { competition },
-      orderBy: { scheduledAt: "asc" },
-      ...fixtureInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.fixture.findMany({
+        where: { competition },
+        orderBy: { scheduledAt: "asc" },
+        ...fixtureInclude,
+      }),
+    );
     return records.map(fixtureRecordToDomain);
   }
 }
@@ -213,23 +226,65 @@ export class PrismaAutomationCycleRepository implements AutomationCycleRepositor
   }
 
   async getById(id: EntityId): Promise<AutomationCycleEntity | null> {
-    const record = await this.client.automationCycle.findUnique({
-      where: { id },
-      ...automationCycleInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.automationCycle.findUnique({
+        where: { id },
+        ...automationCycleInclude,
+      }),
+    );
     return record ? automationCycleRecordToDomain(record) : null;
   }
 
   async list(): Promise<AutomationCycleEntity[]> {
-    const records = await this.client.automationCycle.findMany({
-      orderBy: { startedAt: "desc" },
-      ...automationCycleInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.automationCycle.findMany({
+        orderBy: { startedAt: "desc" },
+        ...automationCycleInclude,
+      }),
+    );
     return records.map(automationCycleRecordToDomain);
   }
 
   async delete(id: EntityId): Promise<void> {
     await this.client.automationCycle.delete({ where: { id } });
+  }
+}
+
+export class PrismaSchedulerCursorRepository implements SchedulerCursorRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: SchedulerCursorEntity): Promise<SchedulerCursorEntity> {
+    const record = await this.client.schedulerCursor.upsert({
+      where: { id: entity.id },
+      create: schedulerCursorDomainToCreateInput(entity),
+      update: schedulerCursorDomainToCreateInput(entity),
+      ...schedulerCursorInclude,
+    });
+    return schedulerCursorRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<SchedulerCursorEntity | null> {
+    const record = await retryPrismaReadOperation(() =>
+      this.client.schedulerCursor.findUnique({
+        where: { id },
+        ...schedulerCursorInclude,
+      }),
+    );
+    return record ? schedulerCursorRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<SchedulerCursorEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.schedulerCursor.findMany({
+        orderBy: { updatedAt: "asc" },
+        ...schedulerCursorInclude,
+      }),
+    );
+    return records.map(schedulerCursorRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.schedulerCursor.delete({ where: { id } });
   }
 }
 
@@ -256,18 +311,22 @@ export class PrismaTaskRepository implements TaskRepository {
   }
 
   async getById(id: EntityId): Promise<TaskEntity | null> {
-    const record = await this.client.task.findUnique({
-      where: { id },
-      ...taskInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.task.findUnique({
+        where: { id },
+        ...taskInclude,
+      }),
+    );
     return record ? taskRecordToDomain(record) : null;
   }
 
   async list(): Promise<TaskEntity[]> {
-    const records = await this.client.task.findMany({
-      orderBy: { createdAt: "asc" },
-      ...taskInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.task.findMany({
+        orderBy: { createdAt: "asc" },
+        ...taskInclude,
+      }),
+    );
     return records.map(taskRecordToDomain);
   }
 
@@ -276,11 +335,13 @@ export class PrismaTaskRepository implements TaskRepository {
   }
 
   async findByStatus(status: TaskEntity["status"]): Promise<TaskEntity[]> {
-    const records = await this.client.task.findMany({
-      where: { status },
-      orderBy: { createdAt: "asc" },
-      ...taskInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.task.findMany({
+        where: { status },
+        orderBy: { createdAt: "asc" },
+        ...taskInclude,
+      }),
+    );
     return records.map(taskRecordToDomain);
   }
 }
@@ -299,18 +360,22 @@ export class PrismaFixtureWorkflowRepository implements FixtureWorkflowRepositor
   }
 
   async getById(id: EntityId): Promise<FixtureWorkflowEntity | null> {
-    const record = await this.client.fixtureWorkflow.findUnique({
-      where: { id },
-      ...fixtureWorkflowInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.fixtureWorkflow.findUnique({
+        where: { id },
+        ...fixtureWorkflowInclude,
+      }),
+    );
     return record ? fixtureWorkflowRecordToDomain(record) : null;
   }
 
   async list(): Promise<FixtureWorkflowEntity[]> {
-    const records = await this.client.fixtureWorkflow.findMany({
-      orderBy: { updatedAt: "asc" },
-      ...fixtureWorkflowInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.fixtureWorkflow.findMany({
+        orderBy: { updatedAt: "asc" },
+        ...fixtureWorkflowInclude,
+      }),
+    );
     return records.map(fixtureWorkflowRecordToDomain);
   }
 
@@ -319,10 +384,12 @@ export class PrismaFixtureWorkflowRepository implements FixtureWorkflowRepositor
   }
 
   async findByFixtureId(fixtureId: EntityId): Promise<FixtureWorkflowEntity | null> {
-    const record = await this.client.fixtureWorkflow.findUnique({
-      where: { fixtureId },
-      ...fixtureWorkflowInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.fixtureWorkflow.findUnique({
+        where: { fixtureId },
+        ...fixtureWorkflowInclude,
+      }),
+    );
     return record ? fixtureWorkflowRecordToDomain(record) : null;
   }
 }
@@ -341,18 +408,22 @@ export class PrismaTaskRunRepository implements TaskRunRepository {
   }
 
   async getById(id: EntityId): Promise<TaskRunEntity | null> {
-    const record = await this.client.taskRun.findUnique({
-      where: { id },
-      ...taskRunInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.taskRun.findUnique({
+        where: { id },
+        ...taskRunInclude,
+      }),
+    );
     return record ? taskRunRecordToDomain(record) : null;
   }
 
   async list(): Promise<TaskRunEntity[]> {
-    const records = await this.client.taskRun.findMany({
-      orderBy: [{ taskId: "asc" }, { attemptNumber: "asc" }],
-      ...taskRunInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.taskRun.findMany({
+        orderBy: [{ taskId: "asc" }, { attemptNumber: "asc" }],
+        ...taskRunInclude,
+      }),
+    );
     return records.map(taskRunRecordToDomain);
   }
 
@@ -361,11 +432,13 @@ export class PrismaTaskRunRepository implements TaskRunRepository {
   }
 
   async findByTaskId(taskId: EntityId): Promise<TaskRunEntity[]> {
-    const records = await this.client.taskRun.findMany({
-      where: { taskId },
-      orderBy: { attemptNumber: "asc" },
-      ...taskRunInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.taskRun.findMany({
+        where: { taskId },
+        orderBy: { attemptNumber: "asc" },
+        ...taskRunInclude,
+      }),
+    );
     return records.map(taskRunRecordToDomain);
   }
 }
@@ -384,18 +457,22 @@ export class PrismaAiRunRepository implements AiRunRepository {
   }
 
   async getById(id: EntityId): Promise<AiRunEntity | null> {
-    const record = await this.client.aiRun.findUnique({
-      where: { id },
-      ...aiRunInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.aiRun.findUnique({
+        where: { id },
+        ...aiRunInclude,
+      }),
+    );
     return record ? aiRunRecordToDomain(record) : null;
   }
 
   async list(): Promise<AiRunEntity[]> {
-    const records = await this.client.aiRun.findMany({
-      orderBy: { createdAt: "asc" },
-      ...aiRunInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.aiRun.findMany({
+        orderBy: { createdAt: "asc" },
+        ...aiRunInclude,
+      }),
+    );
     return records.map(aiRunRecordToDomain);
   }
 
@@ -404,11 +481,13 @@ export class PrismaAiRunRepository implements AiRunRepository {
   }
 
   async findByTaskId(taskId: EntityId): Promise<AiRunEntity[]> {
-    const records = await this.client.aiRun.findMany({
-      where: { taskId },
-      orderBy: { createdAt: "asc" },
-      ...aiRunInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.aiRun.findMany({
+        where: { taskId },
+        orderBy: { createdAt: "asc" },
+        ...aiRunInclude,
+      }),
+    );
     return records.map(aiRunRecordToDomain);
   }
 }
@@ -427,18 +506,22 @@ export class PrismaResearchBundleRepository implements ResearchBundleRepository 
   }
 
   async getById(id: EntityId): Promise<ResearchBundleEntity | null> {
-    const record = await this.client.researchBundle.findUnique({
-      where: { id },
-      ...researchBundleInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.researchBundle.findUnique({
+        where: { id },
+        ...researchBundleInclude,
+      }),
+    );
     return record ? researchBundleRecordToDomain(record) : null;
   }
 
   async list(): Promise<ResearchBundleEntity[]> {
-    const records = await this.client.researchBundle.findMany({
-      orderBy: { generatedAt: "asc" },
-      ...researchBundleInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.researchBundle.findMany({
+        orderBy: { generatedAt: "asc" },
+        ...researchBundleInclude,
+      }),
+    );
     return records.map(researchBundleRecordToDomain);
   }
 
@@ -447,20 +530,24 @@ export class PrismaResearchBundleRepository implements ResearchBundleRepository 
   }
 
   async findByFixtureId(fixtureId: EntityId): Promise<ResearchBundleEntity[]> {
-    const records = await this.client.researchBundle.findMany({
-      where: { fixtureId },
-      orderBy: { generatedAt: "asc" },
-      ...researchBundleInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.researchBundle.findMany({
+        where: { fixtureId },
+        orderBy: { generatedAt: "asc" },
+        ...researchBundleInclude,
+      }),
+    );
     return records.map(researchBundleRecordToDomain);
   }
 
   async findLatestByFixtureId(fixtureId: EntityId): Promise<ResearchBundleEntity | null> {
-    const record = await this.client.researchBundle.findFirst({
-      where: { fixtureId },
-      orderBy: { generatedAt: "desc" },
-      ...researchBundleInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.researchBundle.findFirst({
+        where: { fixtureId },
+        orderBy: { generatedAt: "desc" },
+        ...researchBundleInclude,
+      }),
+    );
     return record ? researchBundleRecordToDomain(record) : null;
   }
 }
@@ -938,18 +1025,22 @@ export class PrismaPredictionRepository implements PredictionRepository {
   }
 
   async getById(id: EntityId): Promise<PredictionEntity | null> {
-    const record = await this.client.prediction.findUnique({
-      where: { id },
-      ...predictionInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.prediction.findUnique({
+        where: { id },
+        ...predictionInclude,
+      }),
+    );
     return record ? predictionRecordToDomain(record) : null;
   }
 
   async list(): Promise<PredictionEntity[]> {
-    const records = await this.client.prediction.findMany({
-      orderBy: { createdAt: "asc" },
-      ...predictionInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.prediction.findMany({
+        orderBy: { createdAt: "asc" },
+        ...predictionInclude,
+      }),
+    );
     return records.map(predictionRecordToDomain);
   }
 
@@ -958,11 +1049,13 @@ export class PrismaPredictionRepository implements PredictionRepository {
   }
 
   async findByFixtureId(fixtureId: EntityId): Promise<PredictionEntity[]> {
-    const records = await this.client.prediction.findMany({
-      where: { fixtureId },
-      orderBy: { createdAt: "asc" },
-      ...predictionInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.prediction.findMany({
+        where: { fixtureId },
+        orderBy: { createdAt: "asc" },
+        ...predictionInclude,
+      }),
+    );
     return records.map(predictionRecordToDomain);
   }
 }
@@ -1010,18 +1103,22 @@ export class PrismaParlayRepository implements ParlayRepository {
   }
 
   async getById(id: EntityId): Promise<ParlayEntity | null> {
-    const record = await this.client.parlay.findUnique({
-      where: { id },
-      ...parlayInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.parlay.findUnique({
+        where: { id },
+        ...parlayInclude,
+      }),
+    );
     return record ? parlayRecordToDomain(record) : null;
   }
 
   async list(): Promise<ParlayEntity[]> {
-    const records = await this.client.parlay.findMany({
-      orderBy: { createdAt: "asc" },
-      ...parlayInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.parlay.findMany({
+        orderBy: { createdAt: "asc" },
+        ...parlayInclude,
+      }),
+    );
     return records.map(parlayRecordToDomain);
   }
 
@@ -1030,11 +1127,13 @@ export class PrismaParlayRepository implements ParlayRepository {
   }
 
   async findByPredictionId(predictionId: EntityId): Promise<ParlayEntity[]> {
-    const records = await this.client.parlay.findMany({
-      where: { legs: { some: { predictionId } } },
-      orderBy: { createdAt: "asc" },
-      ...parlayInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.parlay.findMany({
+        where: { legs: { some: { predictionId } } },
+        orderBy: { createdAt: "asc" },
+        ...parlayInclude,
+      }),
+    );
     return records.map(parlayRecordToDomain);
   }
 }
@@ -1053,18 +1152,22 @@ export class PrismaValidationRepository implements ValidationRepository {
   }
 
   async getById(id: EntityId): Promise<ValidationEntity | null> {
-    const record = await this.client.validation.findUnique({
-      where: { id },
-      ...validationInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.validation.findUnique({
+        where: { id },
+        ...validationInclude,
+      }),
+    );
     return record ? validationRecordToDomain(record) : null;
   }
 
   async list(): Promise<ValidationEntity[]> {
-    const records = await this.client.validation.findMany({
-      orderBy: { createdAt: "asc" },
-      ...validationInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.validation.findMany({
+        orderBy: { createdAt: "asc" },
+        ...validationInclude,
+      }),
+    );
     return records.map(validationRecordToDomain);
   }
 
@@ -1073,11 +1176,13 @@ export class PrismaValidationRepository implements ValidationRepository {
   }
 
   async findByTargetId(targetId: EntityId): Promise<ValidationEntity[]> {
-    const records = await this.client.validation.findMany({
-      where: { targetId },
-      orderBy: { createdAt: "asc" },
-      ...validationInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.validation.findMany({
+        where: { targetId },
+        orderBy: { createdAt: "asc" },
+        ...validationInclude,
+      }),
+    );
     return records.map(validationRecordToDomain);
   }
 }
@@ -1096,18 +1201,22 @@ export class PrismaAuditEventRepository implements AuditEventRepository {
   }
 
   async getById(id: EntityId): Promise<AuditEventEntity | null> {
-    const record = await this.client.auditEvent.findUnique({
-      where: { id },
-      ...auditEventInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.auditEvent.findUnique({
+        where: { id },
+        ...auditEventInclude,
+      }),
+    );
     return record ? auditEventRecordToDomain(record) : null;
   }
 
   async list(): Promise<AuditEventEntity[]> {
-    const records = await this.client.auditEvent.findMany({
-      orderBy: { occurredAt: "asc" },
-      ...auditEventInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.auditEvent.findMany({
+        orderBy: { occurredAt: "asc" },
+        ...auditEventInclude,
+      }),
+    );
     return records.map(auditEventRecordToDomain);
   }
 
@@ -1119,11 +1228,13 @@ export class PrismaAuditEventRepository implements AuditEventRepository {
     aggregateType: string,
     aggregateId: EntityId,
   ): Promise<AuditEventEntity[]> {
-    const records = await this.client.auditEvent.findMany({
-      where: { aggregateType, aggregateId },
-      orderBy: { occurredAt: "asc" },
-      ...auditEventInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.auditEvent.findMany({
+        where: { aggregateType, aggregateId },
+        orderBy: { occurredAt: "asc" },
+        ...auditEventInclude,
+      }),
+    );
     return records.map(auditEventRecordToDomain);
   }
 }
@@ -1142,18 +1253,20 @@ export class PrismaLeagueCoveragePolicyRepository implements LeagueCoveragePolic
   }
 
   async getById(id: EntityId): Promise<LeagueCoveragePolicyEntity | null> {
-    const record = await this.client.leagueCoveragePolicy.findUnique({
-      where: { id },
-      ...leagueCoveragePolicyInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.leagueCoveragePolicy.findUnique({
+        where: { id },
+        ...leagueCoveragePolicyInclude,
+      }));
     return record ? leagueCoveragePolicyRecordToDomain(record) : null;
   }
 
   async list(): Promise<LeagueCoveragePolicyEntity[]> {
-    const records = await this.client.leagueCoveragePolicy.findMany({
-      orderBy: [{ priority: "desc" }, { leagueName: "asc" }],
-      ...leagueCoveragePolicyInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.leagueCoveragePolicy.findMany({
+        orderBy: [{ priority: "desc" }, { leagueName: "asc" }],
+        ...leagueCoveragePolicyInclude,
+      }));
     return records.map(leagueCoveragePolicyRecordToDomain);
   }
 
@@ -1162,11 +1275,12 @@ export class PrismaLeagueCoveragePolicyRepository implements LeagueCoveragePolic
   }
 
   async findEnabled(): Promise<LeagueCoveragePolicyEntity[]> {
-    const records = await this.client.leagueCoveragePolicy.findMany({
-      where: { enabled: true },
-      orderBy: [{ priority: "desc" }, { leagueName: "asc" }],
-      ...leagueCoveragePolicyInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.leagueCoveragePolicy.findMany({
+        where: { enabled: true },
+        orderBy: [{ priority: "desc" }, { leagueName: "asc" }],
+        ...leagueCoveragePolicyInclude,
+      }));
     return records.map(leagueCoveragePolicyRecordToDomain);
   }
 }
@@ -1185,18 +1299,20 @@ export class PrismaTeamCoveragePolicyRepository implements TeamCoveragePolicyRep
   }
 
   async getById(id: EntityId): Promise<TeamCoveragePolicyEntity | null> {
-    const record = await this.client.teamCoveragePolicy.findUnique({
-      where: { id },
-      ...teamCoveragePolicyInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.teamCoveragePolicy.findUnique({
+        where: { id },
+        ...teamCoveragePolicyInclude,
+      }));
     return record ? teamCoveragePolicyRecordToDomain(record) : null;
   }
 
   async list(): Promise<TeamCoveragePolicyEntity[]> {
-    const records = await this.client.teamCoveragePolicy.findMany({
-      orderBy: [{ priority: "desc" }, { teamName: "asc" }],
-      ...teamCoveragePolicyInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.teamCoveragePolicy.findMany({
+        orderBy: [{ priority: "desc" }, { teamName: "asc" }],
+        ...teamCoveragePolicyInclude,
+      }));
     return records.map(teamCoveragePolicyRecordToDomain);
   }
 
@@ -1205,11 +1321,12 @@ export class PrismaTeamCoveragePolicyRepository implements TeamCoveragePolicyRep
   }
 
   async findEnabled(): Promise<TeamCoveragePolicyEntity[]> {
-    const records = await this.client.teamCoveragePolicy.findMany({
-      where: { enabled: true },
-      orderBy: [{ priority: "desc" }, { teamName: "asc" }],
-      ...teamCoveragePolicyInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.teamCoveragePolicy.findMany({
+        where: { enabled: true },
+        orderBy: [{ priority: "desc" }, { teamName: "asc" }],
+        ...teamCoveragePolicyInclude,
+      }));
     return records.map(teamCoveragePolicyRecordToDomain);
   }
 }
@@ -1228,18 +1345,20 @@ export class PrismaDailyAutomationPolicyRepository implements DailyAutomationPol
   }
 
   async getById(id: EntityId): Promise<DailyAutomationPolicyEntity | null> {
-    const record = await this.client.dailyAutomationPolicy.findUnique({
-      where: { id },
-      ...dailyAutomationPolicyInclude,
-    });
+    const record = await retryPrismaReadOperation(() =>
+      this.client.dailyAutomationPolicy.findUnique({
+        where: { id },
+        ...dailyAutomationPolicyInclude,
+      }));
     return record ? dailyAutomationPolicyRecordToDomain(record) : null;
   }
 
   async list(): Promise<DailyAutomationPolicyEntity[]> {
-    const records = await this.client.dailyAutomationPolicy.findMany({
-      orderBy: { policyName: "asc" },
-      ...dailyAutomationPolicyInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.dailyAutomationPolicy.findMany({
+        orderBy: { policyName: "asc" },
+        ...dailyAutomationPolicyInclude,
+      }));
     return records.map(dailyAutomationPolicyRecordToDomain);
   }
 
@@ -1248,11 +1367,12 @@ export class PrismaDailyAutomationPolicyRepository implements DailyAutomationPol
   }
 
   async findEnabled(): Promise<DailyAutomationPolicyEntity[]> {
-    const records = await this.client.dailyAutomationPolicy.findMany({
-      where: { enabled: true },
-      orderBy: { policyName: "asc" },
-      ...dailyAutomationPolicyInclude,
-    });
+    const records = await retryPrismaReadOperation(() =>
+      this.client.dailyAutomationPolicy.findMany({
+        where: { enabled: true },
+        orderBy: { policyName: "asc" },
+        ...dailyAutomationPolicyInclude,
+      }));
     return records.map(dailyAutomationPolicyRecordToDomain);
   }
 }

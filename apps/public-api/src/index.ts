@@ -70,7 +70,9 @@ import {
 import {
   createPrismaClient,
   createPrismaUnitOfWork,
+  createConnectedVerifiedPrismaClient,
   createVerifiedPrismaClient,
+  retryPrismaReadOperation,
   type PrismaClientLike,
   type StorageUnitOfWork,
 } from "@gana-v8/storage-adapters";
@@ -309,6 +311,7 @@ export interface AutomationCycleStageReadModel {
 
 export interface AutomationCycleReadModel {
   readonly id: string;
+  readonly leaseOwner: string;
   readonly source: string;
   readonly status: "running" | "succeeded" | "failed" | "degraded";
   readonly startedAt: string;
@@ -393,7 +396,7 @@ export interface OperationSnapshot {
   readonly teamCoveragePolicies: readonly TeamCoveragePolicyEntity[];
   readonly dailyAutomationPolicies: readonly DailyAutomationPolicyEntity[];
   readonly auditEvents: readonly AuditEventEntity[];
-  readonly tasks: readonly TaskEntity[];
+  readonly tasks: readonly TaskReadModel[];
   readonly taskRuns: readonly TaskRunEntity[];
   readonly aiRuns: readonly AiRunReadModel[];
   readonly providerStates: readonly ProviderStateReadModel[];
@@ -418,8 +421,8 @@ export interface PublicApiHandlers {
   readonly teamCoveragePolicies: () => readonly TeamCoveragePolicyEntity[];
   readonly dailyAutomationPolicy: () => DailyAutomationPolicyEntity | null;
   readonly coverageDailyScope: () => readonly CoverageDailyScopeReadModel[];
-  readonly tasks: () => readonly TaskEntity[];
-  readonly taskById: (taskId: string) => TaskEntity | null;
+  readonly tasks: () => readonly TaskReadModel[];
+  readonly taskById: (taskId: string) => TaskReadModel | null;
   readonly taskRuns: () => readonly TaskRunEntity[];
   readonly taskRunById: (taskRunId: string) => TaskRunEntity | null;
   readonly taskRunsByTaskId: (taskId: string) => readonly TaskRunEntity[];
@@ -583,8 +586,16 @@ export interface LiveIngestionRunReadModel {
   readonly scheduledFor?: string;
   readonly startedAt?: string;
   readonly finishedAt?: string;
+  readonly manifestId?: string;
   readonly workflowId?: string;
   readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly source?: string;
+  readonly activeTaskRunId?: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiresAt?: string;
+  readonly claimedAt?: string;
+  readonly lastHeartbeatAt?: string;
   readonly provider: {
     readonly endpointFamily: "fixtures" | "odds";
     readonly providerSource?: string;
@@ -621,6 +632,19 @@ export interface LiveIngestionRunReadModel {
     readonly providerErrors?: Record<string, unknown> | readonly unknown[];
     readonly message?: string;
   };
+}
+
+export interface TaskReadModel extends TaskEntity {
+  readonly manifestId?: string;
+  readonly workflowId?: string;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly source?: string;
+  readonly activeTaskRunId?: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiresAt?: string;
+  readonly claimedAt?: string;
+  readonly lastHeartbeatAt?: string;
 }
 
 const allowedTaskStatuses = [
@@ -932,6 +956,29 @@ const findLatestByGeneratedAt = <T extends { readonly fixtureId: string; readonl
     (record) => record.generatedAt,
   )[0] ?? null;
 
+const isMissingDatabaseRelationError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : "";
+  return message.includes("does not exist in the current database");
+};
+
+const loadOptionalRepositoryEntities = async <T>(
+  list?: () => Promise<readonly T[]>,
+): Promise<readonly T[]> => {
+  if (!list) {
+    return [];
+  }
+
+  try {
+    return await list();
+  } catch (error) {
+    if (isMissingDatabaseRelationError(error)) {
+      return [];
+    }
+
+    throw error;
+  }
+};
+
 const loadFixtureResearchFromRepositories = async (
   fixtures: readonly FixtureEntity[],
   repositories: FixtureResearchRepositoryCollectionLike,
@@ -942,8 +989,16 @@ const loadFixtureResearchFromRepositories = async (
   }
 
   const [bundles, snapshots] = await Promise.all([
-    repositories.researchBundles?.list() ?? Promise.resolve([]),
-    repositories.featureSnapshots?.list() ?? Promise.resolve([]),
+    loadOptionalRepositoryEntities(
+      repositories.researchBundles
+        ? () => repositories.researchBundles!.list()
+        : undefined,
+    ),
+    loadOptionalRepositoryEntities(
+      repositories.featureSnapshots
+        ? () => repositories.featureSnapshots!.list()
+        : undefined,
+    ),
   ]);
   const aiRunsById = new Map(aiRuns.map((aiRun) => [aiRun.id, aiRun]));
 
@@ -958,23 +1013,6 @@ const loadFixtureResearchFromRepositories = async (
     );
     return research ? [research] : [];
   });
-};
-
-const loadOptionalClientReadModels = async (
-  client: Record<string, unknown>,
-  modelName: string,
-): Promise<unknown[]> => {
-  const model = asRecord(Reflect.get(client, modelName));
-  const findMany = model?.findMany;
-  if (typeof findMany !== "function") {
-    return [];
-  }
-
-  const result = await (findMany as (args: Record<string, unknown>) => Promise<unknown[]> )({
-    orderBy: { generatedAt: "desc" },
-    take: 200,
-  });
-  return Array.isArray(result) ? result : [];
 };
 
 const loadFixtureResearchReadModels = async (input: {
@@ -1180,7 +1218,7 @@ export function createOperationSnapshot(
   const teamCoveragePolicies = [...(input.teamCoveragePolicies ?? [])];
   const dailyAutomationPolicies = [...(input.dailyAutomationPolicies ?? [])];
   const auditEvents = [...(input.auditEvents ?? [])];
-  const tasks = [...(input.tasks ?? [])];
+  const tasks = [...(input.tasks ?? [])].map(createTaskReadModel);
   const taskRuns = [...(input.taskRuns ?? [])];
   const rawBatches = [...(input.rawBatches ?? [])];
   const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
@@ -1421,6 +1459,39 @@ const asAutomationCycleSummary = (
     ? (value as AutomationCycleEntity["summary"])
     : null;
 
+const createTaskReadModel = (
+  task: TaskEntity,
+): TaskReadModel => {
+  const optionalString = (value: unknown): string | undefined => asString(value) ?? undefined;
+  const payload = asRecord(task.payload);
+  const payloadMetadata = asRecord(payload?.metadata);
+  const manifestId = optionalString(task.manifestId) ?? optionalString(payload?.manifestId);
+  const workflowId = optionalString(task.workflowId) ?? optionalString(payload?.workflowId);
+  const traceId = optionalString(task.traceId) ?? optionalString(payload?.traceId);
+  const correlationId =
+    optionalString(task.correlationId) ??
+    optionalString(payload?.correlationId) ??
+    optionalString(payloadMetadata?.correlationId);
+  const source =
+    optionalString(task.source) ??
+    optionalString(payload?.source) ??
+    optionalString(payloadMetadata?.source);
+
+  return {
+    ...task,
+    ...(manifestId ? { manifestId } : {}),
+    ...(workflowId ? { workflowId } : {}),
+    ...(traceId ? { traceId } : {}),
+    ...(correlationId ? { correlationId } : {}),
+    ...(source ? { source } : {}),
+    ...(task.activeTaskRunId ? { activeTaskRunId: task.activeTaskRunId } : {}),
+    ...(task.leaseOwner ? { leaseOwner: task.leaseOwner } : {}),
+    ...(task.leaseExpiresAt ? { leaseExpiresAt: task.leaseExpiresAt } : {}),
+    ...(task.claimedAt ? { claimedAt: task.claimedAt } : {}),
+    ...(task.lastHeartbeatAt ? { lastHeartbeatAt: task.lastHeartbeatAt } : {}),
+  };
+};
+
 const createAutomationCycleReadModel = (
   cycle: AutomationCycleEntity,
 ): AutomationCycleReadModel => {
@@ -1445,6 +1516,7 @@ const createAutomationCycleReadModel = (
 
   return {
     id: cycle.id,
+    leaseOwner: cycle.leaseOwner,
     source: summary?.source ?? cycle.kind,
     status: readModelStatus,
     startedAt: cycle.startedAt,
@@ -2930,14 +3002,14 @@ export function findFixtureAuditEventsById(
   ).slice(0, 5);
 }
 
-export function listTasks(snapshot: OperationSnapshot): readonly TaskEntity[] {
+export function listTasks(snapshot: OperationSnapshot): readonly TaskReadModel[] {
   return snapshot.tasks;
 }
 
 export function findTaskById(
   snapshot: OperationSnapshot,
   taskId: string,
-): TaskEntity | null {
+): TaskReadModel | null {
   return snapshot.tasks.find((task) => task.id === taskId) ?? null;
 }
 
@@ -3146,6 +3218,7 @@ const toLiveIngestionRun = (
   snapshot: OperationSnapshot,
   task: TaskEntity & { kind: LiveIngestionRunReadModel["taskKind"] },
 ): LiveIngestionRunReadModel => {
+  const taskReadModel = createTaskReadModel(task);
   const auditEvent = findLatestTaskAuditEvent(snapshot, task);
   const auditPayload = isRecord(auditEvent?.payload) ? auditEvent.payload : undefined;
   const taskRunId = typeof auditPayload?.taskRunId === "string" ? auditPayload.taskRunId : undefined;
@@ -3198,10 +3271,20 @@ const toLiveIngestionRun = (
     taskId: task.id,
     ...(taskRun?.id ? { taskRunId: taskRun.id } : {}),
     taskKind: task.kind,
-    ...(typeof (auditPayload?.workflowId ?? task.payload.workflowId) === "string"
-      ? { workflowId: String(auditPayload?.workflowId ?? task.payload.workflowId) }
-      : {}),
-    ...(typeof task.payload.traceId === "string" ? { traceId: task.payload.traceId } : {}),
+    ...(taskReadModel.manifestId ? { manifestId: taskReadModel.manifestId } : {}),
+    ...(taskReadModel.workflowId
+      ? { workflowId: taskReadModel.workflowId }
+      : typeof auditPayload?.workflowId === "string"
+        ? { workflowId: auditPayload.workflowId }
+        : {}),
+    ...(taskReadModel.traceId ? { traceId: taskReadModel.traceId } : {}),
+    ...(taskReadModel.correlationId ? { correlationId: taskReadModel.correlationId } : {}),
+    ...(taskReadModel.source ? { source: taskReadModel.source } : {}),
+    ...(taskReadModel.activeTaskRunId ? { activeTaskRunId: taskReadModel.activeTaskRunId } : {}),
+    ...(taskReadModel.leaseOwner ? { leaseOwner: taskReadModel.leaseOwner } : {}),
+    ...(taskReadModel.leaseExpiresAt ? { leaseExpiresAt: taskReadModel.leaseExpiresAt } : {}),
+    ...(taskReadModel.claimedAt ? { claimedAt: taskReadModel.claimedAt } : {}),
+    ...(taskReadModel.lastHeartbeatAt ? { lastHeartbeatAt: taskReadModel.lastHeartbeatAt } : {}),
   };
 };
 
@@ -3507,69 +3590,64 @@ const createDerivedProviderStates = (
 };
 
 export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): Promise<OperationSnapshot> {
-  const client = createVerifiedPrismaClient({ databaseUrl });
+  return retryPrismaReadOperation(async () => {
+    const client = await createConnectedVerifiedPrismaClient({ databaseUrl });
 
-  try {
-    const unitOfWork = createPrismaUnitOfWork(client);
-    const rawBatches = await client.rawIngestionBatch.findMany({
-      orderBy: { extractionTime: "desc" },
-      take: 100,
-    });
-    const oddsSnapshots = await client.$queryRawUnsafe<Array<{
-      id: string;
-      fixtureId: string | null;
-      providerFixtureId: string;
-      bookmakerKey: string;
-      marketKey: string;
-      capturedAt: Date;
-      selectionCount: bigint | number;
-    }>>(`
-      SELECT
-        os.id,
-        os.fixtureId,
-        os.providerFixtureId,
-        os.bookmakerKey,
-        os.marketKey,
-        os.capturedAt,
-        COUNT(oss.id) AS selectionCount
-      FROM OddsSnapshot os
-      LEFT JOIN OddsSelectionSnapshot oss ON oss.oddsSnapshotId = os.id
-      GROUP BY os.id, os.fixtureId, os.providerFixtureId, os.bookmakerKey, os.marketKey, os.capturedAt
-      ORDER BY os.capturedAt DESC
-      LIMIT 100
-    `);
-    const [researchBundles, featureSnapshots] = await Promise.all([
-      loadOptionalClientReadModels(client as unknown as Record<string, unknown>, "researchBundle"),
-      loadOptionalClientReadModels(client as unknown as Record<string, unknown>, "featureSnapshot"),
-    ]);
+    try {
+      const unitOfWork = createPrismaUnitOfWork(client);
+      const rawBatches = await client.rawIngestionBatch.findMany({
+        orderBy: { extractionTime: "desc" },
+        take: 100,
+      });
+      const oddsSnapshots = await client.$queryRawUnsafe<Array<{
+        id: string;
+        fixtureId: string | null;
+        providerFixtureId: string;
+        bookmakerKey: string;
+        marketKey: string;
+        capturedAt: Date;
+        selectionCount: bigint | number;
+      }>>(`
+        SELECT
+          os.id,
+          os.fixtureId,
+          os.providerFixtureId,
+          os.bookmakerKey,
+          os.marketKey,
+          os.capturedAt,
+          COUNT(oss.id) AS selectionCount
+        FROM OddsSnapshot os
+        LEFT JOIN OddsSelectionSnapshot oss ON oss.oddsSnapshotId = os.id
+        GROUP BY os.id, os.fixtureId, os.providerFixtureId, os.bookmakerKey, os.marketKey, os.capturedAt
+        ORDER BY os.capturedAt DESC
+        LIMIT 100
+      `);
+      const snapshot = await loadOperationSnapshotFromUnitOfWork(unitOfWork, {
+        generatedAt: new Date().toISOString(),
+        rawBatches: rawBatches.map((batch) => ({
+          endpointFamily: batch.endpointFamily,
+          extractionStatus: batch.extractionStatus,
+          extractionTime: batch.extractionTime.toISOString(),
+          id: batch.id,
+          providerCode: batch.providerCode,
+          recordCount: batch.recordCount,
+        })),
+        oddsSnapshots: oddsSnapshots.map((snapshot) => ({
+          bookmakerKey: snapshot.bookmakerKey,
+          capturedAt: snapshot.capturedAt.toISOString(),
+          ...(snapshot.fixtureId ? { fixtureId: snapshot.fixtureId } : {}),
+          id: snapshot.id,
+          marketKey: snapshot.marketKey,
+          providerFixtureId: snapshot.providerFixtureId,
+          selectionCount: Number(snapshot.selectionCount),
+        })),
+      });
 
-    const snapshot = await loadOperationSnapshotFromUnitOfWork(unitOfWork, {
-      generatedAt: new Date().toISOString(),
-      rawBatches: rawBatches.map((batch) => ({
-        endpointFamily: batch.endpointFamily,
-        extractionStatus: batch.extractionStatus,
-        extractionTime: batch.extractionTime.toISOString(),
-        id: batch.id,
-        providerCode: batch.providerCode,
-        recordCount: batch.recordCount,
-      })),
-      oddsSnapshots: oddsSnapshots.map((snapshot) => ({
-        bookmakerKey: snapshot.bookmakerKey,
-        capturedAt: snapshot.capturedAt.toISOString(),
-        ...(snapshot.fixtureId ? { fixtureId: snapshot.fixtureId } : {}),
-        id: snapshot.id,
-        marketKey: snapshot.marketKey,
-        providerFixtureId: snapshot.providerFixtureId,
-        selectionCount: Number(snapshot.selectionCount),
-      })),
-      researchBundles: researchBundles as ResearchBundleEntity[],
-      featureSnapshots: featureSnapshots as FeatureSnapshotEntity[],
-    });
-
-    return snapshot;
-  } finally {
-    await client.$disconnect();
-  }
+      return snapshot;
+    } finally {
+      await client.$disconnect();
+    }
+  });
 }
 
 export async function loadOperationSnapshotFromUnitOfWork(

@@ -16,21 +16,24 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm --filter @gana-v8/public-api build && pnpm --filter @gana-v8/queue-adapters build && pnpm --filter @gana-v8/research-worker build && pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/public-api build && pnpm --filter @gana-v8/queue-adapters build && pnpm --filter @gana-v8/policy-engine build && pnpm --filter @gana-v8/ingestion-worker build && pnpm --filter @gana-v8/research-worker build && pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && pnpm --filter @gana-v8/sandbox-runner build && tsc -p tsconfig.build.json",
     "dev": "node ../../scripts/workspace-dev.mjs control-plane-runtime",
     "lint": "node ../../scripts/workspace-lint.mjs .",
     "test": "pnpm run build && tsx --tsconfig ../../tsconfig.base.json --test tests/**/*.test.ts",
-    "typecheck": "pnpm --filter @gana-v8/public-api build && pnpm --filter @gana-v8/queue-adapters build && pnpm --filter @gana-v8/research-worker build && pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @gana-v8/public-api build && pnpm --filter @gana-v8/queue-adapters build && pnpm --filter @gana-v8/policy-engine build && pnpm --filter @gana-v8/ingestion-worker build && pnpm --filter @gana-v8/research-worker build && pnpm --filter @gana-v8/scoring-worker build && pnpm --filter @gana-v8/publisher-worker build && pnpm --filter @gana-v8/validation-worker build && pnpm --filter @gana-v8/sandbox-runner build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {
     "@gana-v8/config-runtime": "workspace:*",
     "@gana-v8/domain-core": "workspace:*",
+    "@gana-v8/ingestion-worker": "workspace:*",
     "@gana-v8/orchestration-sdk": "workspace:*",
+    "@gana-v8/policy-engine": "workspace:*",
     "@gana-v8/public-api": "workspace:*",
     "@gana-v8/publisher-worker": "workspace:*",
     "@gana-v8/queue-adapters": "workspace:*",
     "@gana-v8/research-worker": "workspace:*",
+    "@gana-v8/sandbox-runner": "workspace:*",
     "@gana-v8/scoring-worker": "workspace:*",
     "@gana-v8/storage-adapters": "workspace:*",
     "@gana-v8/validation-worker": "workspace:*"

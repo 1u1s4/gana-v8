@@ -167,10 +167,10 @@ Runbook:
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-harness-runtime-durable.md`
 - `docs/plans/falta/gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-harness-runtime-durable.md`
 - `docs/plans/completado/gana-v8-harness-core-y-claridad-agente.md`
 - `docs/plans/completado/gana-v8-plan-cierre-plataforma-operacion.md`
 - `docs/plans/completado/gana-v8-plan-cierre-data-research.md`
