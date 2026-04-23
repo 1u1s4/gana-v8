@@ -22,6 +22,8 @@ import { createOperationalSummary, type
   type RawIngestionBatchReadModel,
   type SandboxCertificationDetailReadModel,
   type SandboxCertificationReadModel,
+  type RuntimeReleaseCoverageSummaryReadModel,
+  type RuntimeReleaseSnapshotReadModel,
   type SandboxCertificationRunReadModel,
   type RecoveryReadModel,
   type TelemetryEventReadModel,
@@ -441,6 +443,88 @@ const readOptionalStringArray = (
   }
 
   return [];
+};
+
+const readRuntimeReleaseSnapshotFromRun = (
+  run: SandboxCertificationRunReadModel,
+  role: "baseline" | "candidate",
+): RuntimeReleaseSnapshotReadModel | null => {
+  const detailSnapshot = asRecord(
+    (run as SandboxCertificationRunReadModel & {
+      readonly baselineSnapshot?: unknown;
+      readonly candidateSnapshot?: unknown;
+    })[role === "baseline" ? "baselineSnapshot" : "candidateSnapshot"],
+  );
+  const summarySnapshot = asRecord(run.summary[role === "baseline" ? "baselineSnapshot" : "candidateSnapshot"]);
+  const runtimeSignalSnapshot = asRecord(
+    run.runtimeSignals[role === "baseline" ? "baselineSnapshot" : "candidateSnapshot"],
+  );
+  const record = detailSnapshot ?? summarySnapshot ?? runtimeSignalSnapshot;
+  if (!record) {
+    return null;
+  }
+
+  const ref =
+    readOptionalString(record, "ref", "gitRef", "sourceRef", "runtimeRef") ??
+    (role === "baseline" ? run.baselineRef : run.candidateRef) ??
+    run.gitSha;
+  const fingerprint = readOptionalString(record, "fingerprint", "snapshotFingerprint", "hash", "checksum");
+
+  return {
+    id: readOptionalString(record, "id", "snapshotId") ?? `${run.id}:${role}`,
+    role,
+    ref,
+    source: "summary",
+    runId: run.id,
+    profileName: readOptionalString(record, "profileName", "profile", "evidenceProfile") ?? run.profileName,
+    ...(fingerprint ? { fingerprint } : {}),
+    metadata: {},
+  };
+};
+
+const readRuntimeReleaseCoverageFromRun = (
+  run: SandboxCertificationRunReadModel,
+): RuntimeReleaseCoverageSummaryReadModel | null => {
+  const detailCoverage = asRecord(
+    (run as SandboxCertificationRunReadModel & { readonly coverageSummary?: unknown }).coverageSummary,
+  );
+  const coverage = detailCoverage ?? asRecord(run.summary.coverageSummary) ?? asRecord(run.runtimeSignals.coverageSummary);
+  if (!coverage) {
+    return null;
+  }
+
+  const status = readOptionalString(coverage, "status") ?? "unknown";
+  const truncated = typeof coverage.truncated === "boolean" ? coverage.truncated : null;
+  return {
+    status:
+      status === "complete" || status === "partial" || status === "truncated" || status === "unknown"
+        ? status
+        : "unknown",
+    truncated,
+    sections: [],
+    notes: readOptionalStringArray(coverage, "notes"),
+  };
+};
+
+const formatRuntimeReleaseSnapshotSummary = (
+  run: SandboxCertificationRunReadModel,
+): string => {
+  const baseline = readRuntimeReleaseSnapshotFromRun(run, "baseline");
+  const candidate = readRuntimeReleaseSnapshotFromRun(run, "candidate");
+  return `snapshots baseline ${baseline?.fingerprint ?? baseline?.ref ?? run.baselineRef ?? "n/a"} -> candidate ${candidate?.fingerprint ?? candidate?.ref ?? run.candidateRef ?? run.gitSha}`;
+};
+
+const formatRuntimeReleaseCoverageSummary = (
+  run: SandboxCertificationRunReadModel,
+): string => {
+  const coverage = readRuntimeReleaseCoverageFromRun(run);
+  if (!coverage) {
+    return "coverage unknown | truncation unknown";
+  }
+
+  return `coverage ${coverage.status} | truncation ${
+    coverage.truncated === null ? "unknown" : coverage.truncated ? "yes" : "no"
+  }`;
 };
 
 const summarizeFixtureResearchCycle = (
@@ -1081,7 +1165,7 @@ export function buildOperatorConsoleModel(
           ? ["No runtime-release approval runs loaded."]
           : snapshot.certificationRuns.map(
               (run) =>
-                `${run.profileName}/${run.packId} | ${run.status}${run.promotionStatus ? ` | ${run.promotionStatus}` : ""} | baseline ${run.baselineRef ?? "main"} -> candidate ${run.candidateRef ?? run.gitSha} | generated ${run.generatedAt ?? "missing"}`,
+                `${run.profileName}/${run.packId} | ${run.status}${run.promotionStatus ? ` | ${run.promotionStatus}` : ""} | baseline ${run.baselineRef ?? "main"} -> candidate ${run.candidateRef ?? run.gitSha} | ${formatRuntimeReleaseSnapshotSummary(run)} | ${formatRuntimeReleaseCoverageSummary(run)} | generated ${run.generatedAt ?? "missing"}`,
             ),
     },
     {
@@ -1932,6 +2016,40 @@ const formatDateTime = (value) => {
   return Number.isNaN(parsed.valueOf()) ? String(value) : parsed.toLocaleString();
 };
 
+const formatRuntimeReleaseSnapshot = (snapshot, fallbackRef) => {
+  if (!snapshot) {
+    return 'ref ' + (fallbackRef || 'n/a') + ' | fingerprint n/a | profile n/a';
+  }
+
+  return 'ref ' + (snapshot.ref || fallbackRef || 'n/a') +
+    ' | fingerprint ' + (snapshot.fingerprint || 'n/a') +
+    ' | profile ' + (snapshot.profileName || 'n/a');
+};
+
+const formatRuntimeReleaseCoverage = (coverage) => {
+  if (!coverage) {
+    return 'coverage unknown | truncation unknown';
+  }
+
+  return 'coverage ' + (coverage.status || 'unknown') +
+    ' | truncation ' + (coverage.truncated === null || coverage.truncated === undefined ? 'unknown' : coverage.truncated ? 'yes' : 'no');
+};
+
+const renderRuntimeReleaseCoverageSections = (coverage) => {
+  const sections = coverage && Array.isArray(coverage.sections) ? coverage.sections : [];
+  if (sections.length === 0) {
+    return '<div class="panel-line">Sections: not reported</div>';
+  }
+
+  return sections.map((section) =>
+    '<div class="panel-line">' + escapeHtml(section.name || 'unknown') +
+      ' | observed ' + escapeHtml(section.observedCount ?? 'n/a') +
+      ' | limit ' + escapeHtml(section.limit ?? 'n/a') +
+      ' | truncated ' + escapeHtml(section.truncated === undefined ? 'unknown' : section.truncated ? 'yes' : 'no') +
+    '</div>'
+  ).join('');
+};
+
 const isSnapshotEmpty = (snapshot) =>
   Array.isArray(snapshot.fixtures) && snapshot.fixtures.length === 0 &&
   Array.isArray(snapshot.tasks) && snapshot.tasks.length === 0 &&
@@ -2311,6 +2429,9 @@ const renderRuntimeReleaseInspector = () => {
   const latestDecision = run.latestPromotionDecision || null;
   const decisionHistory = Array.isArray(run.promotionDecisionHistory) ? run.promotionDecisionHistory : [];
   const diffEntries = Array.isArray(run.diffEntries) ? run.diffEntries : [];
+  const baselineSnapshot = run.baselineSnapshot || null;
+  const candidateSnapshot = run.candidateSnapshot || null;
+  const coverageSummary = run.coverageSummary || null;
 
   return '<div class="list">' +
     '<article class="list-item is-selected">' +
@@ -2320,7 +2441,15 @@ const renderRuntimeReleaseInspector = () => {
       '<div class="subtle">Generated ' + escapeHtml(formatDateTime(run.generatedAt)) + ' | git ' + escapeHtml(run.gitSha) + '</div>' +
       '<div class="subtle">Baseline ' + escapeHtml(run.baselineRef || 'main') + ' | candidate ' + escapeHtml(run.candidateRef || run.gitSha) + '</div>' +
       '<div class="subtle">Verification ' + escapeHtml(run.verificationKind) + ' | diff entries ' + escapeHtml(diffEntries.length) + '</div>' +
+      '<div class="subtle">Snapshot diff ' + escapeHtml(run.snapshotDiffFingerprint || 'n/a') + '</div>' +
       renderRuntimeReleaseActions(run) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Runtime snapshots</strong>' +
+      '<div class="panel-line">Baseline: ' + escapeHtml(formatRuntimeReleaseSnapshot(baselineSnapshot, run.baselineRef || 'main')) + '</div>' +
+      '<div class="panel-line">Candidate: ' + escapeHtml(formatRuntimeReleaseSnapshot(candidateSnapshot, run.candidateRef || run.gitSha)) + '</div>' +
+      '<div class="panel-line">' + escapeHtml(formatRuntimeReleaseCoverage(coverageSummary)) + '</div>' +
+      renderRuntimeReleaseCoverageSections(coverageSummary) +
     '</article>' +
     '<article class="list-item">' +
       '<strong>Latest decision</strong>' +

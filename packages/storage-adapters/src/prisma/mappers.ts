@@ -37,6 +37,8 @@ import type {
   SandboxCertificationRunStatus,
   SandboxCertificationVerificationKind,
   SandboxPromotionStatus,
+  RuntimeReleaseSnapshotEntity,
+  RuntimeReleaseSnapshotRefRole,
   SchedulerCursorEntity,
   TaskAttempt,
   TaskEntity,
@@ -90,6 +92,8 @@ import {
   type SandboxCertificationRunStatus as PrismaSandboxCertificationRunStatus,
   type SandboxCertificationVerificationKind as PrismaSandboxCertificationVerificationKind,
   type SandboxPromotionStatus as PrismaSandboxPromotionStatus,
+  type RuntimeReleaseSnapshot,
+  type RuntimeReleaseSnapshotRefRole as PrismaRuntimeReleaseSnapshotRefRole,
   type SchedulerCursor,
   type Task,
   type TaskKind as PrismaTaskKind,
@@ -234,6 +238,14 @@ const sandboxPromotionStatusToPrisma = (
   value: SandboxPromotionStatus,
 ): PrismaSandboxPromotionStatus => value.replaceAll("-", "_") as PrismaSandboxPromotionStatus;
 
+const runtimeReleaseSnapshotRefRoleToDomain = (
+  value: PrismaRuntimeReleaseSnapshotRefRole,
+): RuntimeReleaseSnapshotRefRole => value;
+
+const runtimeReleaseSnapshotRefRoleToPrisma = (
+  value: RuntimeReleaseSnapshotRefRole,
+): PrismaRuntimeReleaseSnapshotRefRole => value;
+
 const operationalTelemetryKindToDomain = (
   value: PrismaOperationalTelemetryKind,
 ): OperationalTelemetryKind => value;
@@ -297,6 +309,9 @@ export type AuditEventRecord = Prisma.AuditEventGetPayload<typeof auditEventIncl
 
 export const sandboxCertificationRunInclude = {} as const satisfies Prisma.SandboxCertificationRunDefaultArgs;
 export type SandboxCertificationRunRecord = Prisma.SandboxCertificationRunGetPayload<typeof sandboxCertificationRunInclude>;
+
+export const runtimeReleaseSnapshotInclude = {} as const satisfies Prisma.RuntimeReleaseSnapshotDefaultArgs;
+export type RuntimeReleaseSnapshotRecord = Prisma.RuntimeReleaseSnapshotGetPayload<typeof runtimeReleaseSnapshotInclude>;
 
 export const operationalTelemetryEventInclude = {} as const satisfies Prisma.OperationalTelemetryEventDefaultArgs;
 export type OperationalTelemetryEventRecord =
@@ -904,6 +919,46 @@ export const sandboxCertificationRunDomainToCreateInput = (
   diffEntries: entity.diffEntries as unknown as Prisma.InputJsonValue,
   summary: entity.summary as Prisma.InputJsonValue,
   generatedAt: new Date(entity.generatedAt),
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const runtimeReleaseSnapshotRecordToDomain = (
+  record: RuntimeReleaseSnapshot | RuntimeReleaseSnapshotRecord,
+): RuntimeReleaseSnapshotEntity => ({
+  id: record.id,
+  refName: record.refName,
+  refRole: runtimeReleaseSnapshotRefRoleToDomain(record.refRole),
+  evidenceProfile: record.evidenceProfile,
+  gitSha: record.gitSha,
+  ...(record.baselineRef ? { baselineRef: record.baselineRef } : {}),
+  ...(record.candidateRef ? { candidateRef: record.candidateRef } : {}),
+  lookbackHours: record.lookbackHours,
+  lookbackStart: record.lookbackStart.toISOString(),
+  lookbackEnd: record.lookbackEnd.toISOString(),
+  fingerprint: record.fingerprint,
+  runtimeSignals: asRecord(record.runtimeSignals),
+  coverage: asRecord(record.coverage),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const runtimeReleaseSnapshotDomainToCreateInput = (
+  entity: RuntimeReleaseSnapshotEntity,
+): Prisma.RuntimeReleaseSnapshotUncheckedCreateInput => ({
+  id: entity.id,
+  refName: entity.refName,
+  refRole: runtimeReleaseSnapshotRefRoleToPrisma(entity.refRole),
+  evidenceProfile: entity.evidenceProfile,
+  gitSha: entity.gitSha,
+  baselineRef: entity.baselineRef ?? null,
+  candidateRef: entity.candidateRef ?? null,
+  lookbackHours: entity.lookbackHours,
+  lookbackStart: new Date(entity.lookbackStart),
+  lookbackEnd: new Date(entity.lookbackEnd),
+  fingerprint: entity.fingerprint,
+  runtimeSignals: entity.runtimeSignals as Prisma.InputJsonValue,
+  coverage: entity.coverage as Prisma.InputJsonValue,
   createdAt: new Date(entity.createdAt),
   updatedAt: new Date(entity.updatedAt),
 });

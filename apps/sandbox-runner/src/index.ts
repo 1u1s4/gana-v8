@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
 
@@ -401,6 +401,7 @@ const sandboxPromotionStatusFromPrisma = (
 
 type PrismaCreateFindDelegate<TRecord> = {
   create(args: { readonly data: Record<string, unknown> }): Promise<TRecord>;
+  findUnique?(args: Record<string, unknown>): Promise<TRecord | null>;
   findMany?(args?: Record<string, unknown>): Promise<TRecord[]>;
 };
 
@@ -522,6 +523,103 @@ export const createPrismaSandboxCertificationRunStore = (
   };
 };
 
+const snapshotDateToIso = (value: unknown): string =>
+  value instanceof Date ? value.toISOString() : String(value);
+
+const normalizeRuntimeReleaseSnapshotRecord = (
+  record: RuntimeReleaseSnapshotEntity,
+): RuntimeReleaseSnapshotEntity => ({
+  ...structuredClone(record),
+  refRole: record.refRole,
+  lookbackStart: snapshotDateToIso(record.lookbackStart),
+  lookbackEnd: snapshotDateToIso(record.lookbackEnd),
+  createdAt: snapshotDateToIso(record.createdAt),
+  updatedAt: snapshotDateToIso(record.updatedAt),
+});
+
+export const createPrismaRuntimeReleaseSnapshotStore = (
+  delegateHost: unknown,
+): RuntimeReleaseSnapshotRepositoryLike | undefined => {
+  const delegate = asPrismaCreateFindDelegate<RuntimeReleaseSnapshotEntity>(
+    typeof delegateHost === "object" && delegateHost !== null
+      ? (delegateHost as Record<string, unknown>).runtimeReleaseSnapshot
+      : undefined,
+  );
+  if (!delegate) {
+    return undefined;
+  }
+
+  const listByQuery = async (
+    query: RuntimeReleaseSnapshotQuery = {},
+  ): Promise<readonly RuntimeReleaseSnapshotEntity[]> => {
+    if (typeof delegate.findMany !== "function") {
+      return [];
+    }
+
+    try {
+      const records = await delegate.findMany({
+        where: pruneUndefined({
+          ...(query.evidenceProfile
+            ? { evidenceProfile: query.evidenceProfile }
+            : {}),
+          ...(query.refName ? { refName: query.refName } : {}),
+          ...(query.refRole ? { refRole: query.refRole } : {}),
+          ...(query.fingerprint ? { fingerprint: query.fingerprint } : {}),
+          ...(query.gitSha ? { gitSha: query.gitSha } : {}),
+        }),
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        ...(query.limit ? { take: query.limit } : {}),
+      });
+      return records.map(normalizeRuntimeReleaseSnapshotRecord);
+    } catch {
+      return [];
+    }
+  };
+
+  return {
+    async save(entity) {
+      try {
+        await delegate.create({
+          data: pruneUndefined({
+            ...entity,
+            lookbackStart: new Date(entity.lookbackStart),
+            lookbackEnd: new Date(entity.lookbackEnd),
+            createdAt: new Date(entity.createdAt),
+            updatedAt: new Date(entity.updatedAt),
+            runtimeSignals: entity.runtimeSignals,
+            coverage: entity.coverage,
+          }),
+        });
+      } catch {
+        return entity;
+      }
+      return entity;
+    },
+    async getById(id) {
+      if (typeof delegate.findUnique !== "function") {
+        return null;
+      }
+
+      try {
+        const record = await delegate.findUnique({ where: { id } });
+        return record ? normalizeRuntimeReleaseSnapshotRecord(record) : null;
+      } catch {
+        return null;
+      }
+    },
+    listByQuery,
+    async findLatestByProfileRef(evidenceProfile, refName, refRole) {
+      const records = await listByQuery({
+        evidenceProfile,
+        refName,
+        ...(refRole ? { refRole } : {}),
+        limit: 1,
+      });
+      return records[0] ?? null;
+    },
+  };
+};
+
 const appendSandboxCertificationRun = async (
   repository: SandboxCertificationRunRepositoryLike | undefined,
   entity: SandboxCertificationRunEntity,
@@ -563,9 +661,11 @@ export const openSandboxCertificationPersistenceSession = async (
   )) as unknown as SandboxCertificationPersistenceSession["client"];
   const sandboxCertificationRuns =
     createPrismaSandboxCertificationRunStore(client);
+  const runtimeReleaseSnapshots = createPrismaRuntimeReleaseSnapshotStore(client);
   return {
     client,
     ...(sandboxCertificationRuns ? { sandboxCertificationRuns } : {}),
+    ...(runtimeReleaseSnapshots ? { runtimeReleaseSnapshots } : {}),
     telemetrySink: createPrismaDurableObservabilitySink(client),
     async close() {
       if (typeof client.$disconnect === "function") {
@@ -700,6 +800,50 @@ export interface SandboxCertificationRunRepositoryLike {
   ): Promise<SandboxCertificationRunEntity | null>;
 }
 
+export type RuntimeReleaseSnapshotRefRole = "baseline" | "candidate";
+
+export interface RuntimeReleaseSnapshotEntity {
+  readonly id: string;
+  readonly refName: string;
+  readonly refRole: RuntimeReleaseSnapshotRefRole;
+  readonly evidenceProfile: string;
+  readonly gitSha: string;
+  readonly baselineRef?: string;
+  readonly candidateRef?: string;
+  readonly lookbackHours: number;
+  readonly lookbackStart: string;
+  readonly lookbackEnd: string;
+  readonly fingerprint: string;
+  readonly runtimeSignals: Readonly<Record<string, unknown>>;
+  readonly coverage: Readonly<Record<string, unknown>>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface RuntimeReleaseSnapshotQuery {
+  readonly evidenceProfile?: string;
+  readonly refName?: string;
+  readonly refRole?: RuntimeReleaseSnapshotRefRole;
+  readonly fingerprint?: string;
+  readonly gitSha?: string;
+  readonly limit?: number;
+}
+
+export interface RuntimeReleaseSnapshotRepositoryLike {
+  save?(
+    entity: RuntimeReleaseSnapshotEntity,
+  ): Promise<RuntimeReleaseSnapshotEntity>;
+  getById?(id: string): Promise<RuntimeReleaseSnapshotEntity | null>;
+  listByQuery?(
+    query?: RuntimeReleaseSnapshotQuery,
+  ): Promise<readonly RuntimeReleaseSnapshotEntity[]>;
+  findLatestByProfileRef?(
+    evidenceProfile: string,
+    refName: string,
+    refRole?: RuntimeReleaseSnapshotRefRole,
+  ): Promise<RuntimeReleaseSnapshotEntity | null>;
+}
+
 export class InMemorySandboxCertificationRunStore implements SandboxCertificationRunRepositoryLike {
   private readonly runs: SandboxCertificationRunEntity[] = [];
 
@@ -751,6 +895,7 @@ export interface SandboxCertificationPersistenceSession {
     readonly $disconnect?: () => Promise<void>;
   } & Record<string, unknown>;
   readonly sandboxCertificationRuns?: SandboxCertificationRunRepositoryLike;
+  readonly runtimeReleaseSnapshots?: RuntimeReleaseSnapshotRepositoryLike;
   readonly telemetrySink: ObservabilitySink;
   close(): Promise<void>;
 }
@@ -788,7 +933,10 @@ export interface RuntimeReleaseCertificationOptions {
   readonly historyRoot?: string;
   readonly baselineRef?: string;
   readonly candidateRef?: string;
+  readonly baselineSnapshotId?: string;
+  readonly candidateSnapshotId?: string;
   readonly sandboxCertificationRuns?: SandboxCertificationRunRepositoryLike;
+  readonly runtimeReleaseSnapshots?: RuntimeReleaseSnapshotRepositoryLike;
   readonly telemetrySink?: ObservabilitySink;
   readonly traceId?: string;
   readonly correlationId?: string;
@@ -1346,14 +1494,23 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
     ? (value as Record<string, unknown>)
     : null;
 
+const asNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
 const countBy = (values: readonly string[]): Readonly<Record<string, number>> =>
   values.reduce<Record<string, number>>((accumulator, value) => {
     accumulator[value] = (accumulator[value] ?? 0) + 1;
     return accumulator;
   }, {});
 
+const getCount = (
+  value: Record<string, unknown> | null | undefined,
+  key: string,
+): number => asNumber(value?.[key]) ?? 0;
+
 type PrismaFindManyDelegate<TRecord> = {
   findMany(args?: Record<string, unknown>): Promise<TRecord[]>;
+  count?(args?: Record<string, unknown>): Promise<number>;
 };
 
 const asPrismaFindManyDelegate = <TRecord>(
@@ -1384,6 +1541,556 @@ const listPrismaRecords = async <TRecord>(
   }
 
   return delegate.findMany(args);
+};
+
+interface RuntimeReleaseRecordCoverage {
+  readonly observedTotal: number;
+  readonly total: number;
+  readonly truncated: boolean;
+  readonly batchSize: number;
+  readonly batches: number;
+  readonly delegatePresent: boolean;
+}
+
+interface RuntimeReleaseCapturedRuntimeRecords {
+  readonly automationCycles: readonly Record<string, unknown>[];
+  readonly tasks: readonly Record<string, unknown>[];
+  readonly taskRuns: readonly Record<string, unknown>[];
+  readonly auditEvents: readonly Record<string, unknown>[];
+}
+
+interface RuntimeReleaseSnapshotCapture {
+  readonly runtimeSignals: Record<string, unknown>;
+  readonly coverage: Record<string, unknown>;
+}
+
+interface RuntimeReleaseSnapshotHealthSignals {
+  readonly automationCycleTotal: number;
+  readonly taskTotal: number;
+  readonly taskRunTotal: number;
+  readonly auditEventTotal: number;
+  readonly schedulerSucceeded: boolean;
+  readonly dispatcherSucceeded: boolean;
+  readonly recoverySucceeded: boolean;
+  readonly failedTasks: number;
+  readonly quarantinedTasks: number;
+  readonly taskTraceCoverageRate: number;
+  readonly auditTraceCoverageRate: number;
+  readonly latestCycleId?: string;
+  readonly latestAuditOccurredAt?: string;
+}
+
+const runtimeReleaseSnapshotBatchSize = 250;
+
+const createRuntimeReleaseSnapshotId = (
+  refRole: RuntimeReleaseSnapshotRefRole,
+  refName: string,
+  generatedAt: string,
+): string =>
+  `runtime-release-snapshot:${refRole}:${sanitizeArtifactToken(refName)}:${generatedAt.replace(/[^0-9]/g, "")}:${randomUUID().slice(0, 8)}`;
+
+const normalizeRuntimeReleaseValue = (value: unknown): unknown => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(normalizeRuntimeReleaseValue);
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, normalizeRuntimeReleaseValue(entry)]),
+    );
+  }
+
+  return value;
+};
+
+const normalizeRuntimeReleaseRecord = (
+  record: Record<string, unknown>,
+): Record<string, unknown> =>
+  normalizeRuntimeReleaseValue(record) as Record<string, unknown>;
+
+const fetchPagedPrismaRecords = async (
+  delegateHost: Record<string, unknown>,
+  delegateName: string,
+  dateField: string,
+  lookbackStart: Date,
+  lookbackEnd: Date,
+  batchSize = runtimeReleaseSnapshotBatchSize,
+): Promise<{
+  readonly records: readonly Record<string, unknown>[];
+  readonly coverage: RuntimeReleaseRecordCoverage;
+}> => {
+  const delegate = asPrismaFindManyDelegate<Record<string, unknown>>(
+    delegateHost[delegateName],
+  );
+  if (!delegate) {
+    return {
+      records: [],
+      coverage: {
+        observedTotal: 0,
+        total: 0,
+        truncated: false,
+        batchSize,
+        batches: 0,
+        delegatePresent: false,
+      },
+    };
+  }
+
+  const where = {
+    [dateField]: {
+      gte: lookbackStart,
+      lte: lookbackEnd,
+    },
+  };
+  const records: Record<string, unknown>[] = [];
+  let cursor: { readonly id: string } | undefined;
+  let batches = 0;
+
+  for (;;) {
+    const page = await delegate.findMany({
+      where,
+      orderBy: [{ [dateField]: "desc" }, { id: "desc" }],
+      take: batchSize,
+      ...(cursor ? { cursor, skip: 1 } : {}),
+    });
+    if (page.length === 0) {
+      break;
+    }
+
+    batches += 1;
+    records.push(...page.map(normalizeRuntimeReleaseRecord));
+
+    const nextCursor = asString(page[page.length - 1]?.id);
+    if (page.length < batchSize || !nextCursor) {
+      break;
+    }
+    cursor = { id: nextCursor };
+  }
+
+  const total =
+    typeof delegate.count === "function"
+      ? await delegate.count({ where })
+      : records.length;
+
+  return {
+    records,
+    coverage: {
+      observedTotal: records.length,
+      total,
+      truncated: records.length < total,
+      batchSize,
+      batches,
+      delegatePresent: true,
+    },
+  };
+};
+
+const recordsWithTraceId = (
+  records: readonly Record<string, unknown>[],
+): number =>
+  records.filter((record) => {
+    const payload = asRecord(record.payload);
+    return (
+      asString(record.traceId) !== undefined ||
+      asString(payload?.traceId) !== undefined
+    );
+  }).length;
+
+const createRuntimeReleaseSignalsFromRecords = (
+  records: RuntimeReleaseCapturedRuntimeRecords,
+  input: {
+    readonly lookbackHours: number;
+    readonly lookbackStart: string;
+    readonly lookbackEnd: string;
+    readonly coverage: Record<string, unknown>;
+    readonly telemetry: {
+      readonly durableEvents: boolean;
+      readonly durableMetrics: boolean;
+    };
+  },
+): Record<string, unknown> => {
+  const cycleStatuses = records.automationCycles.map(
+    (cycle) => asString(cycle.status) ?? "unknown",
+  );
+  const cycleKinds = records.automationCycles.map(
+    (cycle) => asString(cycle.kind) ?? "unknown",
+  );
+  const succeededCycleKinds = records.automationCycles
+    .filter((cycle) => asString(cycle.status) === "succeeded")
+    .map((cycle) => asString(cycle.kind) ?? "unknown");
+  const taskStatuses = records.tasks.map(
+    (task) => asString(task.status) ?? "unknown",
+  );
+  const taskRunStatuses = records.taskRuns.map(
+    (taskRun) => asString(taskRun.status) ?? "unknown",
+  );
+  const auditAggregateTypes = records.auditEvents.map(
+    (event) => asString(event.aggregateType) ?? "unknown",
+  );
+  const tasksWithTraceId = recordsWithTraceId(records.tasks);
+  const auditsWithTraceId = recordsWithTraceId(records.auditEvents);
+  const taskTraceCoverageRate =
+    records.tasks.length === 0
+      ? 0
+      : Number((tasksWithTraceId / records.tasks.length).toFixed(4));
+  const auditTraceCoverageRate =
+    records.auditEvents.length === 0
+      ? 0
+      : Number((auditsWithTraceId / records.auditEvents.length).toFixed(4));
+  const latestCycleId = asString(records.automationCycles[0]?.id);
+  const latestAuditOccurredAt = asIsoString(records.auditEvents[0]?.occurredAt);
+
+  return {
+    lookback: {
+      hours: input.lookbackHours,
+      start: input.lookbackStart,
+      end: input.lookbackEnd,
+    },
+    automationCycles: {
+      total: records.automationCycles.length,
+      byKind: countBy(cycleKinds),
+      byStatus: countBy(cycleStatuses),
+      succeededByKind: countBy(succeededCycleKinds),
+      latestCycleId: latestCycleId ?? null,
+      records: records.automationCycles,
+    },
+    tasks: {
+      total: records.tasks.length,
+      byStatus: countBy(taskStatuses),
+      traceCoverageRate: taskTraceCoverageRate,
+      records: records.tasks,
+    },
+    taskRuns: {
+      total: records.taskRuns.length,
+      byStatus: countBy(taskRunStatuses),
+      records: records.taskRuns,
+    },
+    auditEvents: {
+      total: records.auditEvents.length,
+      byAggregateType: countBy(auditAggregateTypes),
+      latestOccurredAt: latestAuditOccurredAt ?? null,
+      traceCoverageRate: auditTraceCoverageRate,
+      records: records.auditEvents,
+    },
+    coverage: input.coverage,
+    telemetry: input.telemetry,
+  };
+};
+
+const captureRuntimeReleaseSnapshotSignals = async (
+  delegateHost: Record<string, unknown>,
+  input: {
+    readonly lookbackHours: number;
+    readonly lookbackStart: Date;
+    readonly lookbackEnd: Date;
+    readonly telemetry: {
+      readonly durableEvents: boolean;
+      readonly durableMetrics: boolean;
+    };
+  },
+): Promise<RuntimeReleaseSnapshotCapture> => {
+  const [
+    automationCycles,
+    tasks,
+    taskRuns,
+    auditEvents,
+  ] = await Promise.all([
+    fetchPagedPrismaRecords(
+      delegateHost,
+      "automationCycle",
+      "createdAt",
+      input.lookbackStart,
+      input.lookbackEnd,
+    ),
+    fetchPagedPrismaRecords(
+      delegateHost,
+      "task",
+      "createdAt",
+      input.lookbackStart,
+      input.lookbackEnd,
+    ),
+    fetchPagedPrismaRecords(
+      delegateHost,
+      "taskRun",
+      "createdAt",
+      input.lookbackStart,
+      input.lookbackEnd,
+    ),
+    fetchPagedPrismaRecords(
+      delegateHost,
+      "auditEvent",
+      "occurredAt",
+      input.lookbackStart,
+      input.lookbackEnd,
+    ),
+  ]);
+  const coverage = {
+    lookback: {
+      hours: input.lookbackHours,
+      start: input.lookbackStart.toISOString(),
+      end: input.lookbackEnd.toISOString(),
+    },
+    automationCycles: automationCycles.coverage,
+    tasks: tasks.coverage,
+    taskRuns: taskRuns.coverage,
+    auditEvents: auditEvents.coverage,
+  };
+
+  return {
+    coverage,
+    runtimeSignals: createRuntimeReleaseSignalsFromRecords(
+      {
+        automationCycles: automationCycles.records,
+        tasks: tasks.records,
+        taskRuns: taskRuns.records,
+        auditEvents: auditEvents.records,
+      },
+      {
+        lookbackHours: input.lookbackHours,
+        lookbackStart: input.lookbackStart.toISOString(),
+        lookbackEnd: input.lookbackEnd.toISOString(),
+        coverage,
+        telemetry: input.telemetry,
+      },
+    ),
+  };
+};
+
+const createRuntimeReleaseSnapshotFingerprint = (
+  input: Pick<
+    RuntimeReleaseSnapshotEntity,
+    | "refName"
+    | "refRole"
+    | "evidenceProfile"
+    | "gitSha"
+    | "baselineRef"
+    | "candidateRef"
+    | "lookbackHours"
+    | "lookbackStart"
+    | "lookbackEnd"
+    | "runtimeSignals"
+    | "coverage"
+  >,
+): string =>
+  createHash("sha256")
+    .update(
+      stableStringify({
+        ref: {
+          refName: input.refName,
+          refRole: input.refRole,
+          evidenceProfile: input.evidenceProfile,
+          gitSha: input.gitSha,
+          baselineRef: input.baselineRef ?? null,
+          candidateRef: input.candidateRef ?? null,
+          lookbackHours: input.lookbackHours,
+          lookbackStart: input.lookbackStart,
+          lookbackEnd: input.lookbackEnd,
+        },
+        runtimeSignals: input.runtimeSignals,
+        coverage: input.coverage,
+      }),
+    )
+    .digest("hex");
+
+const createRuntimeReleaseSnapshotEntity = (
+  input: Omit<
+    RuntimeReleaseSnapshotEntity,
+    "id" | "fingerprint" | "createdAt" | "updatedAt"
+  > & {
+    readonly id?: string;
+    readonly createdAt?: string;
+    readonly updatedAt?: string;
+  },
+): RuntimeReleaseSnapshotEntity => {
+  const createdAt = input.createdAt ?? input.lookbackEnd;
+  const snapshotWithoutFingerprint = {
+    ...input,
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt,
+  };
+  const fingerprint = createRuntimeReleaseSnapshotFingerprint(
+    snapshotWithoutFingerprint,
+  );
+
+  return {
+    id:
+      input.id ??
+      createRuntimeReleaseSnapshotId(input.refRole, input.refName, createdAt),
+    ...snapshotWithoutFingerprint,
+    fingerprint,
+  };
+};
+
+const saveRuntimeReleaseSnapshot = async (
+  repository: RuntimeReleaseSnapshotRepositoryLike | undefined,
+  snapshot: RuntimeReleaseSnapshotEntity,
+): Promise<RuntimeReleaseSnapshotEntity> => {
+  if (!repository || typeof repository.save !== "function") {
+    return snapshot;
+  }
+
+  return repository.save(snapshot);
+};
+
+const loadRuntimeReleaseSnapshotById = async (
+  repository: RuntimeReleaseSnapshotRepositoryLike | undefined,
+  snapshotId: string,
+): Promise<RuntimeReleaseSnapshotEntity | null> => {
+  if (repository && typeof repository.getById === "function") {
+    return repository.getById(snapshotId);
+  }
+
+  const records = await repository?.listByQuery?.({ limit: 1000 });
+  return records?.find((snapshot) => snapshot.id === snapshotId) ?? null;
+};
+
+const findLatestRuntimeReleaseBaselineSnapshot = async (
+  repository: RuntimeReleaseSnapshotRepositoryLike | undefined,
+  evidenceProfile: string,
+  baselineRef: string,
+): Promise<RuntimeReleaseSnapshotEntity | null> => {
+  if (repository && typeof repository.findLatestByProfileRef === "function") {
+    return repository.findLatestByProfileRef(
+      evidenceProfile,
+      baselineRef,
+      "baseline",
+    );
+  }
+
+  return (
+    (
+      await repository?.listByQuery?.({
+        evidenceProfile,
+        refName: baselineRef,
+        refRole: "baseline",
+        limit: 1,
+      })
+    )?.[0] ?? null
+  );
+};
+
+const summarizeRuntimeReleaseSnapshot = (
+  snapshot: RuntimeReleaseSnapshotEntity | null,
+): Record<string, unknown> | null =>
+  snapshot
+    ? {
+        id: snapshot.id,
+        refName: snapshot.refName,
+        refRole: snapshot.refRole,
+        evidenceProfile: snapshot.evidenceProfile,
+        gitSha: snapshot.gitSha,
+        fingerprint: snapshot.fingerprint,
+        lookbackHours: snapshot.lookbackHours,
+        lookbackStart: snapshot.lookbackStart,
+        lookbackEnd: snapshot.lookbackEnd,
+        createdAt: snapshot.createdAt,
+        coverage: snapshot.coverage,
+      }
+    : null;
+
+const readRuntimeReleaseSnapshotHealthSignals = (
+  runtimeSignals: Readonly<Record<string, unknown>>,
+): RuntimeReleaseSnapshotHealthSignals => {
+  const automationCycles = asRecord(runtimeSignals.automationCycles);
+  const tasks = asRecord(runtimeSignals.tasks);
+  const taskRuns = asRecord(runtimeSignals.taskRuns);
+  const auditEvents = asRecord(runtimeSignals.auditEvents);
+  const succeededByKind = asRecord(automationCycles?.succeededByKind);
+  const taskStatusCounts = asRecord(tasks?.byStatus);
+  const latestCycleId = asString(automationCycles?.latestCycleId);
+  const latestAuditOccurredAt = asString(auditEvents?.latestOccurredAt);
+
+  return {
+    automationCycleTotal: getCount(automationCycles, "total"),
+    taskTotal: getCount(tasks, "total"),
+    taskRunTotal: getCount(taskRuns, "total"),
+    auditEventTotal: getCount(auditEvents, "total"),
+    schedulerSucceeded: getCount(succeededByKind, "scheduler") > 0,
+    dispatcherSucceeded: getCount(succeededByKind, "dispatcher") > 0,
+    recoverySucceeded: getCount(succeededByKind, "recovery") > 0,
+    failedTasks: getCount(taskStatusCounts, "failed"),
+    quarantinedTasks: getCount(taskStatusCounts, "quarantined"),
+    taskTraceCoverageRate: asNumber(tasks?.traceCoverageRate) ?? 0,
+    auditTraceCoverageRate: asNumber(auditEvents?.traceCoverageRate) ?? 0,
+    ...(latestCycleId ? { latestCycleId } : {}),
+    ...(latestAuditOccurredAt ? { latestAuditOccurredAt } : {}),
+  };
+};
+
+const appendRuntimeSignalDiffEntries = (
+  entries: SandboxCertificationDiffEntry[],
+  path: string,
+  baseline: unknown,
+  candidate: unknown,
+): void => {
+  if (stableStringify(baseline) === stableStringify(candidate)) {
+    return;
+  }
+
+  if (Array.isArray(baseline) || Array.isArray(candidate)) {
+    entries.push({
+      path,
+      kind: "changed",
+      expected: baseline,
+      actual: candidate,
+    });
+    return;
+  }
+
+  const baselineRecord = asRecord(baseline);
+  const candidateRecord = asRecord(candidate);
+  if (baselineRecord && candidateRecord) {
+    const keys = new Set([
+      ...Object.keys(baselineRecord),
+      ...Object.keys(candidateRecord),
+    ]);
+    for (const key of [...keys].sort()) {
+      appendRuntimeSignalDiffEntries(
+        entries,
+        `${path}.${key}`,
+        baselineRecord[key],
+        candidateRecord[key],
+      );
+    }
+    return;
+  }
+
+  entries.push({
+    path,
+    kind:
+      baseline === undefined
+        ? "added"
+        : candidate === undefined
+          ? "removed"
+          : "changed",
+    ...(baseline !== undefined ? { expected: baseline } : {}),
+    ...(candidate !== undefined ? { actual: candidate } : {}),
+  });
+};
+
+const diffRuntimeReleaseSnapshotSignals = (
+  baselineSnapshot: RuntimeReleaseSnapshotEntity | null,
+  candidateSnapshot: RuntimeReleaseSnapshotEntity,
+): SandboxCertificationDiffEntry[] => {
+  if (!baselineSnapshot) {
+    return [];
+  }
+
+  const entries: SandboxCertificationDiffEntry[] = [];
+  appendRuntimeSignalDiffEntries(
+    entries,
+    "$.runtimeSignals",
+    baselineSnapshot.runtimeSignals,
+    candidateSnapshot.runtimeSignals,
+  );
+  return entries;
 };
 
 export const runRuntimeReleaseCertification = async (
@@ -1433,6 +2140,13 @@ export const runRuntimeReleaseCertification = async (
     const lookbackStart = new Date(
       Date.parse(generatedAt) - lookbackHours * 60 * 60 * 1000,
     );
+    const lookbackEnd = new Date(generatedAt);
+    const baselineSnapshotId =
+      options.baselineSnapshotId ??
+      asString(process.env.SANDBOX_CERT_BASELINE_SNAPSHOT_ID);
+    const candidateSnapshotId =
+      options.candidateSnapshotId ??
+      asString(process.env.SANDBOX_CERT_CANDIDATE_SNAPSHOT_ID);
     observability.log("runtime-release certification started", {
       data: {
         baselineRef: resolvedEvidenceDefaults.baselineRef,
@@ -1446,160 +2160,180 @@ export const runRuntimeReleaseCertification = async (
     });
 
     const delegateHost = session.client as Record<string, unknown>;
-    const automationCycles = await listPrismaRecords<Record<string, unknown>>(
-      delegateHost,
-      "automationCycle",
-      {
-        where: { createdAt: { gte: lookbackStart } },
-        orderBy: [{ createdAt: "desc" }],
-        take: 100,
-      },
-    );
-    const tasks = await listPrismaRecords<Record<string, unknown>>(
-      delegateHost,
-      "task",
-      {
-        where: { createdAt: { gte: lookbackStart } },
-        orderBy: [{ createdAt: "desc" }],
-        take: 500,
-      },
-    );
-    const taskRuns = await listPrismaRecords<Record<string, unknown>>(
-      delegateHost,
-      "taskRun",
-      {
-        where: { createdAt: { gte: lookbackStart } },
-        orderBy: [{ createdAt: "desc" }],
-        take: 500,
-      },
-    );
-    const auditEvents = await listPrismaRecords<Record<string, unknown>>(
-      delegateHost,
-      "auditEvent",
-      {
-        where: { occurredAt: { gte: lookbackStart } },
-        orderBy: [{ occurredAt: "desc" }],
-        take: 500,
-      },
-    );
+    const snapshotRepository =
+      options.runtimeReleaseSnapshots ?? session.runtimeReleaseSnapshots;
+    const capturedCandidate = candidateSnapshotId
+      ? null
+      : await captureRuntimeReleaseSnapshotSignals(delegateHost, {
+          lookbackHours,
+          lookbackStart,
+          lookbackEnd,
+          telemetry: {
+            durableEvents: observability.sinkCapabilities.eventsDurable,
+            durableMetrics: observability.sinkCapabilities.metricsDurable,
+          },
+        });
+    const candidateSnapshot = candidateSnapshotId
+      ? await loadRuntimeReleaseSnapshotById(
+          snapshotRepository,
+          candidateSnapshotId,
+        )
+      : await saveRuntimeReleaseSnapshot(
+          snapshotRepository,
+          createRuntimeReleaseSnapshotEntity({
+            refName: resolvedEvidenceDefaults.candidateRef,
+            refRole: "candidate",
+            evidenceProfile: resolvedEvidenceDefaults.evidenceProfile,
+            gitSha: resolvedEvidenceDefaults.gitSha,
+            baselineRef: resolvedEvidenceDefaults.baselineRef,
+            candidateRef: resolvedEvidenceDefaults.candidateRef,
+            lookbackHours,
+            lookbackStart: lookbackStart.toISOString(),
+            lookbackEnd: lookbackEnd.toISOString(),
+            runtimeSignals: capturedCandidate?.runtimeSignals ?? {},
+            coverage: capturedCandidate?.coverage ?? {},
+          }),
+        );
+    if (!candidateSnapshot) {
+      throw new Error(
+        `Runtime release candidate snapshot not found: ${candidateSnapshotId}`,
+      );
+    }
 
-    const cycleStatuses = automationCycles.map(
-      (cycle) => asString(cycle.status) ?? "unknown",
-    );
-    const cycleKinds = automationCycles.map(
-      (cycle) => asString(cycle.kind) ?? "unknown",
-    );
-    const taskStatuses = tasks.map(
-      (task) => asString(task.status) ?? "unknown",
-    );
-    const taskRunStatuses = taskRuns.map(
-      (taskRun) => asString(taskRun.status) ?? "unknown",
-    );
-    const auditAggregateTypes = auditEvents.map(
-      (event) => asString(event.aggregateType) ?? "unknown",
-    );
-    const tasksWithTraceId = tasks.filter((task) => {
-      const payload = asRecord(task.payload);
-      return (
-        asString(task.traceId) !== undefined ||
-        asString(payload?.traceId) !== undefined
+    let baselineSnapshot = baselineSnapshotId
+      ? await loadRuntimeReleaseSnapshotById(
+          snapshotRepository,
+          baselineSnapshotId,
+        )
+      : await findLatestRuntimeReleaseBaselineSnapshot(
+          snapshotRepository,
+          resolvedEvidenceDefaults.evidenceProfile,
+          resolvedEvidenceDefaults.baselineRef,
+        );
+    if (baselineSnapshotId && !baselineSnapshot) {
+      throw new Error(
+        `Runtime release baseline snapshot not found: ${baselineSnapshotId}`,
       );
-    }).length;
-    const auditsWithTraceId = auditEvents.filter((event) => {
-      const payload = asRecord(event.payload);
-      return (
-        asString(event.traceId) !== undefined ||
-        asString(payload?.traceId) !== undefined
+    }
+
+    const bootstrappedBaseline =
+      !baselineSnapshot &&
+      resolvedEvidenceDefaults.evidenceProfile === "ci-ephemeral";
+    if (bootstrappedBaseline) {
+      baselineSnapshot = await saveRuntimeReleaseSnapshot(
+        snapshotRepository,
+        createRuntimeReleaseSnapshotEntity({
+          refName: resolvedEvidenceDefaults.baselineRef,
+          refRole: "baseline",
+          evidenceProfile: resolvedEvidenceDefaults.evidenceProfile,
+          gitSha: resolvedEvidenceDefaults.gitSha,
+          baselineRef: resolvedEvidenceDefaults.baselineRef,
+          candidateRef: resolvedEvidenceDefaults.candidateRef,
+          lookbackHours,
+          lookbackStart: candidateSnapshot.lookbackStart,
+          lookbackEnd: candidateSnapshot.lookbackEnd,
+          runtimeSignals: structuredClone(
+            candidateSnapshot.runtimeSignals,
+          ) as Record<string, unknown>,
+          coverage: {
+            ...structuredClone(candidateSnapshot.coverage),
+            bootstrap: {
+              fromCandidateSnapshotId: candidateSnapshot.id,
+              reason: "ci-ephemeral baseline snapshot bootstrap",
+            },
+          },
+        }),
       );
-    }).length;
-    const taskTraceCoverageRate =
-      tasks.length === 0
-        ? 0
-        : Number((tasksWithTraceId / tasks.length).toFixed(4));
-    const auditTraceCoverageRate =
-      auditEvents.length === 0
-        ? 0
-        : Number((auditsWithTraceId / auditEvents.length).toFixed(4));
-    const schedulerSucceeded = automationCycles.some(
-      (cycle) =>
-        asString(cycle.kind) === "scheduler" &&
-        asString(cycle.status) === "succeeded",
+    }
+
+    const missingHistoricalBaseline =
+      !baselineSnapshot &&
+      resolvedEvidenceDefaults.evidenceProfile !== "ci-ephemeral";
+    const healthSignals = readRuntimeReleaseSnapshotHealthSignals(
+      candidateSnapshot.runtimeSignals,
     );
-    const dispatcherSucceeded = automationCycles.some(
-      (cycle) =>
-        asString(cycle.kind) === "dispatcher" &&
-        asString(cycle.status) === "succeeded",
-    );
-    const recoverySucceeded = automationCycles.some(
-      (cycle) =>
-        asString(cycle.kind) === "recovery" &&
-        asString(cycle.status) === "succeeded",
-    );
-    const failedTasks = taskStatuses.filter(
-      (status) => status === "failed",
-    ).length;
-    const quarantinedTasks = taskStatuses.filter(
-      (status) => status === "quarantined",
-    ).length;
-    const latestCycleId = asString(automationCycles[0]?.id);
-    const latestAuditOccurredAt = asIsoString(auditEvents[0]?.occurredAt);
 
     const promotion = evaluateSandboxPromotion({
       certification: {
         status:
-          automationCycles.length > 0 &&
-          taskRuns.length > 0 &&
-          auditEvents.length > 0
-            ? "pass"
+          healthSignals.automationCycleTotal > 0 &&
+          healthSignals.taskRunTotal > 0 &&
+          healthSignals.auditEventTotal > 0
+            ? missingHistoricalBaseline
+              ? resolvedEvidenceDefaults.evidenceProfile === "pre-release"
+                ? "block"
+                : "warn"
+              : "pass"
             : "block",
-        detail: `${automationCycles.length} cycle(s), ${tasks.length} task(s), ${taskRuns.length} task run(s), ${auditEvents.length} audit event(s) observed in durable runtime.`,
+        detail: missingHistoricalBaseline
+          ? `No baseline snapshot exists for ${resolvedEvidenceDefaults.baselineRef}/${resolvedEvidenceDefaults.evidenceProfile}.`
+          : `${healthSignals.automationCycleTotal} cycle(s), ${healthSignals.taskTotal} task(s), ${healthSignals.taskRunTotal} task run(s), ${healthSignals.auditEventTotal} audit event(s) observed in durable runtime.`,
       },
       contractCoverage: {
         status:
-          schedulerSucceeded && dispatcherSucceeded && recoverySucceeded
+          healthSignals.schedulerSucceeded &&
+          healthSignals.dispatcherSucceeded &&
+          healthSignals.recoverySucceeded
             ? "pass"
-            : automationCycles.length > 0 && taskRuns.length > 0
+            : healthSignals.automationCycleTotal > 0 &&
+                healthSignals.taskRunTotal > 0
               ? "warn"
               : "block",
-        detail: `scheduler=${schedulerSucceeded ? "ok" : "missing"} | dispatcher=${dispatcherSucceeded ? "ok" : "missing"} | recovery=${recoverySucceeded ? "ok" : "missing"}`,
+        detail: `scheduler=${healthSignals.schedulerSucceeded ? "ok" : "missing"} | dispatcher=${healthSignals.dispatcherSucceeded ? "ok" : "missing"} | recovery=${healthSignals.recoverySucceeded ? "ok" : "missing"}`,
       },
       cronWorkflows: {
-        status: schedulerSucceeded
+        status: healthSignals.schedulerSucceeded
           ? "pass"
-          : automationCycles.some(
-                (cycle) => asString(cycle.kind) === "scheduler",
-              )
+          : getCount(
+                asRecord(
+                  asRecord(candidateSnapshot.runtimeSignals.automationCycles)
+                    ?.byKind,
+                ),
+                "scheduler",
+              ) > 0
             ? "warn"
             : "block",
-        detail: schedulerSucceeded
+        detail: healthSignals.schedulerSucceeded
           ? "A succeeded scheduler cycle was observed in the lookback window."
           : "No succeeded scheduler cycle was observed in the lookback window.",
       },
       publicationSafety: {
         status:
-          quarantinedTasks > 0 ? "block" : failedTasks > 0 ? "warn" : "pass",
-        detail: `${quarantinedTasks} quarantined task(s) and ${failedTasks} failed task(s) observed.`,
+          healthSignals.quarantinedTasks > 0
+            ? "block"
+            : healthSignals.failedTasks > 0
+              ? "warn"
+              : "pass",
+        detail: `${healthSignals.quarantinedTasks} quarantined task(s) and ${healthSignals.failedTasks} failed task(s) observed.`,
       },
       capabilityIsolation: {
         status:
-          taskTraceCoverageRate >= 0.8 && auditTraceCoverageRate >= 0.8
+          healthSignals.taskTraceCoverageRate >= 0.8 &&
+          healthSignals.auditTraceCoverageRate >= 0.8
             ? "pass"
-            : taskTraceCoverageRate >= 0.5
+            : healthSignals.taskTraceCoverageRate >= 0.5
               ? "warn"
               : "block",
-        detail: `task trace coverage ${Math.round(taskTraceCoverageRate * 100)}% | audit trace coverage ${Math.round(auditTraceCoverageRate * 100)}%`,
+        detail: `task trace coverage ${Math.round(healthSignals.taskTraceCoverageRate * 100)}% | audit trace coverage ${Math.round(healthSignals.auditTraceCoverageRate * 100)}%`,
       },
       manualQa: {
-        status: quarantinedTasks > 0 || failedTasks > 0 ? "warn" : "pass",
+        status:
+          healthSignals.quarantinedTasks > 0 || healthSignals.failedTasks > 0
+            ? "warn"
+            : "pass",
         detail:
-          quarantinedTasks > 0 || failedTasks > 0
+          healthSignals.quarantinedTasks > 0 || healthSignals.failedTasks > 0
             ? "Runtime evidence contains quarantined or failed work that should be reviewed before promotion."
             : "No manual QA review signals were detected in the lookback window.",
       },
     });
 
-    const diffEntries: SandboxCertificationDiffEntry[] = [
-      ...(automationCycles.length === 0
+    const snapshotDiffEntries = diffRuntimeReleaseSnapshotSignals(
+      baselineSnapshot,
+      candidateSnapshot,
+    );
+    const healthDiffEntries: SandboxCertificationDiffEntry[] = [
+      ...(healthSignals.automationCycleTotal === 0
         ? [
             {
               path: "$.runtimeSignals.automationCycles.total",
@@ -1609,7 +2343,7 @@ export const runRuntimeReleaseCertification = async (
             } satisfies SandboxCertificationDiffEntry,
           ]
         : []),
-      ...(!schedulerSucceeded
+      ...(!healthSignals.schedulerSucceeded
         ? [
             {
               path: "$.runtimeSignals.automationCycles.scheduler",
@@ -1619,7 +2353,7 @@ export const runRuntimeReleaseCertification = async (
             } satisfies SandboxCertificationDiffEntry,
           ]
         : []),
-      ...(!dispatcherSucceeded
+      ...(!healthSignals.dispatcherSucceeded
         ? [
             {
               path: "$.runtimeSignals.automationCycles.dispatcher",
@@ -1629,7 +2363,7 @@ export const runRuntimeReleaseCertification = async (
             } satisfies SandboxCertificationDiffEntry,
           ]
         : []),
-      ...(!recoverySucceeded
+      ...(!healthSignals.recoverySucceeded
         ? [
             {
               path: "$.runtimeSignals.automationCycles.recovery",
@@ -1639,27 +2373,27 @@ export const runRuntimeReleaseCertification = async (
             } satisfies SandboxCertificationDiffEntry,
           ]
         : []),
-      ...(quarantinedTasks > 0
+      ...(healthSignals.quarantinedTasks > 0
         ? [
             {
               path: "$.runtimeSignals.tasks.quarantined",
               kind: "changed",
               expected: 0,
-              actual: quarantinedTasks,
+              actual: healthSignals.quarantinedTasks,
             } satisfies SandboxCertificationDiffEntry,
           ]
         : []),
-      ...(taskTraceCoverageRate < 0.8
+      ...(healthSignals.taskTraceCoverageRate < 0.8
         ? [
             {
               path: "$.runtimeSignals.tasks.traceCoverageRate",
               kind: "changed",
               expected: 0.8,
-              actual: taskTraceCoverageRate,
+              actual: healthSignals.taskTraceCoverageRate,
             } satisfies SandboxCertificationDiffEntry,
           ]
         : []),
-      ...(auditEvents.length === 0
+      ...(healthSignals.auditEventTotal === 0
         ? [
             {
               path: "$.runtimeSignals.auditEvents.total",
@@ -1670,33 +2404,33 @@ export const runRuntimeReleaseCertification = async (
           ]
         : []),
     ];
-
+    const baselineDiffEntries: SandboxCertificationDiffEntry[] =
+      missingHistoricalBaseline
+        ? [
+            {
+              path: "$.runtimeSnapshots.baseline",
+              kind: "changed",
+              expected: `latest baseline snapshot for ${resolvedEvidenceDefaults.baselineRef}/${resolvedEvidenceDefaults.evidenceProfile}`,
+              actual: "missing",
+            },
+          ]
+        : [];
+    const diffEntries = [
+      ...snapshotDiffEntries,
+      ...baselineDiffEntries,
+      ...healthDiffEntries,
+    ];
     const runtimeSignals = {
-      lookbackHours,
-      automationCycles: {
-        total: automationCycles.length,
-        byKind: countBy(cycleKinds),
-        byStatus: countBy(cycleStatuses),
-        latestCycleId: latestCycleId ?? null,
-      },
-      tasks: {
-        total: tasks.length,
-        byStatus: countBy(taskStatuses),
-        traceCoverageRate: taskTraceCoverageRate,
-      },
-      taskRuns: {
-        total: taskRuns.length,
-        byStatus: countBy(taskRunStatuses),
-      },
-      auditEvents: {
-        total: auditEvents.length,
-        byAggregateType: countBy(auditAggregateTypes),
-        latestOccurredAt: latestAuditOccurredAt ?? null,
-        traceCoverageRate: auditTraceCoverageRate,
-      },
-      telemetry: {
-        durableEvents: observability.sinkCapabilities.eventsDurable,
-        durableMetrics: observability.sinkCapabilities.metricsDurable,
+      ...candidateSnapshot.runtimeSignals,
+      summary: {
+        diffMode: bootstrappedBaseline
+          ? "bootstrap-baseline"
+          : baselineSnapshot
+            ? "historical-baseline"
+            : "missing-baseline",
+        baselineSnapshot: summarizeRuntimeReleaseSnapshot(baselineSnapshot),
+        candidateSnapshot: summarizeRuntimeReleaseSnapshot(candidateSnapshot),
+        snapshotDiffEntryCount: snapshotDiffEntries.length,
       },
     } satisfies Record<string, unknown>;
 
@@ -1730,7 +2464,7 @@ export const runRuntimeReleaseCertification = async (
 
     observability.setGauge(
       "sandbox.certification.runtime_release.automation_cycles",
-      automationCycles.length,
+      healthSignals.automationCycleTotal,
       {
         refs: telemetry.refs,
         recordedAt: generatedAt,
@@ -1738,7 +2472,7 @@ export const runRuntimeReleaseCertification = async (
     );
     observability.setGauge(
       "sandbox.certification.runtime_release.tasks",
-      tasks.length,
+      healthSignals.taskTotal,
       {
         refs: telemetry.refs,
         recordedAt: generatedAt,
@@ -1746,7 +2480,7 @@ export const runRuntimeReleaseCertification = async (
     );
     observability.setGauge(
       "sandbox.certification.runtime_release.audit_events",
-      auditEvents.length,
+      healthSignals.auditEventTotal,
       {
         refs: telemetry.refs,
         recordedAt: generatedAt,
@@ -1790,7 +2524,9 @@ export const runRuntimeReleaseCertification = async (
         evidenceProfile: resolvedEvidenceDefaults.evidenceProfile,
         lookbackHours,
         promotion,
-        latestCycleId: latestCycleId ?? null,
+        baselineSnapshot: summarizeRuntimeReleaseSnapshot(baselineSnapshot),
+        candidateSnapshot: summarizeRuntimeReleaseSnapshot(candidateSnapshot),
+        latestCycleId: healthSignals.latestCycleId ?? null,
       },
       generatedAt,
     };

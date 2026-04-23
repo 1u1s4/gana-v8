@@ -113,7 +113,7 @@ jobs:
       - name: Apply Prisma migrations to MySQL service
         run: pnpm db:migrate:deploy
 
-      - name: Run Hermes smoke E2E
+      - name: Run Hermes live-process smoke E2E
         run: pnpm test:e2e:hermes-smoke
 
       - name: Upload E2E diagnostics on failure

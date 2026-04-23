@@ -20,6 +20,8 @@ Resolución de refs:
 
 - `baselineRef`: `SANDBOX_CERT_BASELINE_REF` > `GITHUB_BASE_REF` > `main`
 - `candidateRef`: `SANDBOX_CERT_CANDIDATE_REF` > `GITHUB_SHA` > git sha/branch actual
+- `baselineSnapshot.id`: `SANDBOX_CERT_BASELINE_SNAPSHOT_ID` solo cuando el operador quiere forzar un snapshot durable preexistente; si falta, `runtime-release` busca el último baseline compatible por perfil/ref.
+- `candidateSnapshot.id`: `SANDBOX_CERT_CANDIDATE_SNAPSHOT_ID` solo cuando el operador quiere forzar un snapshot durable preexistente; si falta, `runtime-release` captura un candidate nuevo para la corrida.
 
 ## Precondiciones
 
@@ -76,8 +78,9 @@ curl -s -X POST \
 
 - `packages/control-plane-runtime/tests/runtime.db.test.ts` pasa cubriendo scheduler cursors, manifest scoping y recovery/redrive sobre MySQL real.
 - `tests/e2e/hermes-smoke.mjs` pasa compilando y validando `hermes-scheduler`, `hermes-dispatcher` y `hermes-recovery`.
-- `public-api` expone `/sandbox-certification/runs?verificationKind=runtime-release` y el detalle `/sandbox-certification/runs/:runId`.
-- `operator-console` muestra un inspector dedicado de `runtime-release` con el historial reciente de decisiones.
+- El smoke Hermes se ejecuta como smoke de procesos vivos para scheduler, dispatcher y recovery. Si se degrada a imports/compile-only, la corrida no debe promocionarse sin anotarlo en el handoff.
+- `public-api` expone `/sandbox-certification/runs?verificationKind=runtime-release` y el detalle `/sandbox-certification/runs/:runId` con `baselineSnapshot`, `candidateSnapshot`, `coverageSummary` y `snapshotDiffFingerprint`.
+- `operator-console` muestra un inspector dedicado de `runtime-release` con snapshots baseline/candidate, estado de cobertura/truncación y el historial reciente de decisiones.
 - Cada decisión humana queda como `AuditEvent` append-only sobre `sandbox-certification-run`.
 
 ## Decisiones humanas

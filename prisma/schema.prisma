@@ -156,6 +156,11 @@ enum SandboxPromotionStatus {
   promotable
 }
 
+enum RuntimeReleaseSnapshotRefRole {
+  baseline
+  candidate
+}
+
 enum OperationalTelemetryKind {
   log
   span
@@ -777,7 +782,32 @@ model SandboxCertificationRun {
 
   @@index([profileName, packId, verificationKind, generatedAt], map: "scr_profile_pack_kind_gen_idx")
   @@index([verificationKind, status, generatedAt], map: "scr_kind_status_gen_idx")
+  @@index([generatedAt, id], map: "scr_generated_id_idx")
   @@index([generatedAt])
+}
+
+model RuntimeReleaseSnapshot {
+  id              String                        @id
+  refName         String
+  refRole         RuntimeReleaseSnapshotRefRole
+  evidenceProfile String
+  gitSha          String
+  baselineRef     String?
+  candidateRef    String?
+  lookbackHours   Int
+  lookbackStart   DateTime
+  lookbackEnd     DateTime
+  fingerprint     String
+  runtimeSignals  Json
+  coverage        Json
+  createdAt       DateTime                      @default(now())
+  updatedAt       DateTime                      @updatedAt
+
+  @@index([evidenceProfile, refRole, refName, createdAt], map: "rrs_profile_role_ref_created_idx")
+  @@index([evidenceProfile, refRole, fingerprint], map: "rrs_profile_role_fingerprint_idx")
+  @@index([baselineRef, evidenceProfile, createdAt], map: "rrs_baseline_profile_created_idx")
+  @@index([candidateRef, evidenceProfile, createdAt], map: "rrs_candidate_profile_created_idx")
+  @@index([createdAt])
 }
 
 model OperationalTelemetryEvent {

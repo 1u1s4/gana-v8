@@ -50,6 +50,9 @@ import type {
   SandboxCertificationRunPruneResult,
   SandboxCertificationRunQuery,
   SandboxCertificationRunRepository,
+  RuntimeReleaseSnapshotEntity,
+  RuntimeReleaseSnapshotQuery,
+  RuntimeReleaseSnapshotRepository,
   SandboxNamespaceRepository,
   SchedulerCursorEntity,
   SchedulerCursorRepository,
@@ -281,6 +284,40 @@ export class InMemorySandboxCertificationRunRepository
       deletedCount: dryRun ? 0 : this.deleteIds(idsToDelete),
       preservedLatestCount: preservedLatestIds.size,
     };
+  }
+}
+
+export class InMemoryRuntimeReleaseSnapshotRepository
+  extends InMemoryRepository<RuntimeReleaseSnapshotEntity>
+  implements RuntimeReleaseSnapshotRepository
+{
+  async listByQuery(query: RuntimeReleaseSnapshotQuery = {}): Promise<RuntimeReleaseSnapshotEntity[]> {
+    const items = sortByIsoDescending(await this.list(), (item) => item.createdAt).filter((item) =>
+      (query.evidenceProfile ? item.evidenceProfile === query.evidenceProfile : true) &&
+      (query.refName ? item.refName === query.refName : true) &&
+      (query.refRole ? item.refRole === query.refRole : true) &&
+      (query.fingerprint ? item.fingerprint === query.fingerprint : true) &&
+      (query.gitSha ? item.gitSha === query.gitSha : true),
+    );
+
+    return query.limit ? items.slice(0, query.limit) : items;
+  }
+
+  async findLatestByProfileRef(
+    evidenceProfile: string,
+    refName: string,
+    refRole?: RuntimeReleaseSnapshotEntity["refRole"],
+  ): Promise<RuntimeReleaseSnapshotEntity | null> {
+    return (
+      (
+        await this.listByQuery({
+          evidenceProfile,
+          refName,
+          ...(refRole ? { refRole } : {}),
+          limit: 1,
+        })
+      )[0] ?? null
+    );
   }
 }
 

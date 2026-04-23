@@ -22,6 +22,10 @@ import type {
   SandboxCertificationRunStatus,
   SandboxCertificationVerificationKind,
 } from './entities/sandbox-certification-run.js';
+import type {
+  RuntimeReleaseSnapshotEntity,
+  RuntimeReleaseSnapshotRefRole,
+} from './entities/runtime-release-snapshot.js';
 import type { SchedulerCursorEntity } from './entities/scheduler-cursor.js';
 import type {
   ResearchAssignmentEntity,
@@ -109,6 +113,24 @@ export interface SandboxCertificationRunRepository extends Repository<SandboxCer
     verificationKind?: SandboxCertificationVerificationKind,
   ): Promise<SandboxCertificationRunEntity | null>;
   pruneBefore(options: RepositoryPruneOptions): Promise<SandboxCertificationRunPruneResult>;
+}
+
+export interface RuntimeReleaseSnapshotQuery {
+  readonly evidenceProfile?: string;
+  readonly refName?: string;
+  readonly refRole?: RuntimeReleaseSnapshotRefRole;
+  readonly fingerprint?: string;
+  readonly gitSha?: string;
+  readonly limit?: number;
+}
+
+export interface RuntimeReleaseSnapshotRepository extends Repository<RuntimeReleaseSnapshotEntity> {
+  listByQuery(query?: RuntimeReleaseSnapshotQuery): Promise<RuntimeReleaseSnapshotEntity[]>;
+  findLatestByProfileRef(
+    evidenceProfile: string,
+    refName: string,
+    refRole?: RuntimeReleaseSnapshotRefRole,
+  ): Promise<RuntimeReleaseSnapshotEntity | null>;
 }
 
 export interface OperationalTelemetryEventQuery {

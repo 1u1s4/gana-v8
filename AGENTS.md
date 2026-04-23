@@ -8,7 +8,7 @@ Entry point corto y canónico para agentes que trabajen en `gana-v8`.
 2. Leer `docs/README.md` para el mapa documental y la taxonomía vigente.
 3. Tratar `docs/plans/falta/` como la fuente de verdad para gaps activos del repo.
 4. Usar `docs/agentic-handoff.md` cuando haya subagentes, handoff entre sesiones o trabajo largo.
-5. Ir a `runbooks/` para procedimientos operativos activos; hoy el runbook vigente es `runbooks/sandbox-certification.md`.
+5. Ir a `runbooks/` para procedimientos operativos activos; usar `runbooks/expensive-verification-triage.md` para corridas largas o DB-backed y `runbooks/sandbox-certification.md` para la certificación sintética.
 
 ## Topología oficial hoy
 
@@ -50,9 +50,14 @@ pnpm test:sandbox:certification
 
 ## Planes activos
 
-No hay planes activos hoy en `docs/plans/falta/`.
+`docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
+
+- `docs/plans/falta/gana-v8-harness-contratos-agentic-y-evaluacion.md`
+- `docs/plans/falta/gana-v8-harness-doc-gardening-y-runbooks.md`
+- `docs/plans/falta/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 
 Último cierre relevante:
 
+- `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`
 - `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`
 - `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`

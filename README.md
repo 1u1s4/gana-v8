@@ -139,6 +139,7 @@ pnpm --filter @gana-v8/sandbox-runner certify -- --mode smoke --profile ci-smoke
 
 Runbooks asociados:
 
+- `runbooks/expensive-verification-triage.md`
 - `runbooks/sandbox-certification.md`
 - `runbooks/sandbox-certification-drift.md`
 
@@ -152,6 +153,8 @@ CI conserva la certificación sintética en `sandbox-certification` y agrega el 
 - `staging-shared`: reloj real, `lookback=72h`, aprobación humana del operador on-duty.
 - `pre-release`: reloj real, `lookback=168h`, aprobación humana del release owner.
 
+La evidencia de `runtime-release` ya persiste snapshots durables baseline/candidate y expone en `public-api`/`operator-console` la semántica de cobertura y truncación. `SANDBOX_CERT_BASELINE_SNAPSHOT_ID` y `SANDBOX_CERT_CANDIDATE_SNAPSHOT_ID` permiten apuntar a snapshots preexistentes; si no se definen, el gate captura candidate y resuelve baseline por perfil/ref.
+
 La reproducción local mínima de ese gate es:
 
 ```bash
@@ -162,6 +165,8 @@ pnpm test:runtime:release
 GANA_RUNTIME_PROFILE=ci-smoke pnpm test:e2e:hermes-smoke
 ```
 
+El smoke Hermes debe tratarse como smoke de procesos vivos de `hermes-scheduler`, `hermes-dispatcher` y `hermes-recovery`; si una corrida local o de CI cae a chequeos de imports/compile-only, documentar la degradación en el handoff.
+
 Housekeeping de historia durable:
 
 ```bash
@@ -171,6 +176,7 @@ pnpm ops-history-retention -- --apply
 
 Runbooks operativos activos:
 
+- `runbooks/expensive-verification-triage.md`
 - `runbooks/release-review-promotion.md`
 - `runbooks/rollback.md`
 - `runbooks/recovery-redrive.md`
@@ -205,9 +211,12 @@ Runbooks operativos activos:
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-No hay planes activos hoy en `docs/plans/falta/`.
+- `docs/plans/falta/gana-v8-harness-contratos-agentic-y-evaluacion.md`
+- `docs/plans/falta/gana-v8-harness-doc-gardening-y-runbooks.md`
+- `docs/plans/falta/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`
 - `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`
 - `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-runtime-durable.md`
