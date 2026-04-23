@@ -67,7 +67,7 @@ La brecha principal de este frente no es “escribir más documentación”, sin
 ## Dependencias
 
 - Toma como referencia el cierre de `docs/plans/completado/gana-v8-harness-runtime-durable.md` para enlazar desde el entrypoint agentic la topología runtime oficial y sus invariantes.
-- Depende del plan `gana-v8-harness-verificacion-release-ops-y-runbooks.md` para enlazar runbooks, promotion gates y superficies operativas activas sin duplicar su definición.
+- Depende del cierre de `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md` para enlazar runbooks, promotion gates y superficies operativas activas sin duplicar su definición.
 - Debe reutilizar y no reemplazar `docs/adr/`, `docs/architecture/`, `docs/plans/README.md` y los planes ya existentes en `completado/`.
 
 ## Criterio de done
