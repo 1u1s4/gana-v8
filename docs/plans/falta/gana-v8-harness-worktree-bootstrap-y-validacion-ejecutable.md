@@ -1,6 +1,6 @@
 # Plan de cierre de harness para worktree bootstrap y validacion ejecutable - gana-v8
 
-**Estado actual confirmado (2026-04-23)**
+## Estado actual confirmado (2026-04-23)
 
 - El repo ya documenta una estrategia historica de worktrees y deja claro en `docs/agentic-handoff.md` que para trabajo paralelo largo conviene `una rama y un worktree por frente`.
 - `README.md` ya expone como levantar `public-api` y `operator-console`, y el repo ya tiene surfaces consultables para release ops, certification y telemetria.

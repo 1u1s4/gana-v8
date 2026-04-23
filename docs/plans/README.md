@@ -10,7 +10,6 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `gana-v8-harness-doc-gardening-y-runbooks.md`
 - `gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 
@@ -20,13 +19,15 @@ La lista anterior debe coincidir exactamente con los archivos reales dentro de `
 
 - El cierre principal de harness, release ops y runbooks ya quedo materializado en `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`.
 - El cierre complementario de adopcion operativa de `runtime-release` ya quedo materializado en `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`.
-- Quedan abiertos tres gaps para adaptar el repo a un paradigma de harness mas agent-first y mas durable en loops largos: contratos/evaluacion agentic, bootstrap por worktree y doc-gardening/runbooks.
+- Quedan abiertos dos gaps para adaptar el repo a un paradigma de harness mas agent-first y mas durable en loops largos: bootstrap por worktree y doc-gardening/runbooks.
+- El frente de contratos/evaluacion agentic ya quedo materializado con `docs/agentic-sprint-contract.md`, `docs/agentic-evaluation-rubric.md` e invariantes de lint.
 - El frente de fidelidad de `runtime-release` ya quedo cerrado con snapshots baseline/candidate persistidos en DB, smoke Hermes con procesos vivos y surfaces `public-api`/`operator-console` mostrando fingerprint, diff y cobertura.
 
 ## Planes relevantes en `completado/`
 
 - `gana-v8-harness-runtime-durable.md`
 - `gana-v8-harness-runtime-release-y-verificacion-fiel.md`
+- `gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `gana-v8-runtime-release-adopcion-operativa.md`
 - `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 - `gana-v8-harness-core-y-claridad-agente.md`

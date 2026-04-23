@@ -11,6 +11,25 @@ const requiredPlanSections = [
   "Criterio de done",
   "Fuentes consolidadas",
 ];
+const requiredAgenticSprintContractSections = [
+  "Objetivo",
+  "No alcance",
+  "Roles",
+  "Ownership y worktree",
+  "Plan de validacion",
+  "Criterio de done",
+  "Riesgos",
+  "Handoff",
+];
+const requiredAgenticEvaluationRubricSections = [
+  "Version",
+  "Baseline",
+  "Dimensiones",
+  "Thresholds de aprobacion",
+  "Evidencia requerida",
+  "Salida del evaluador",
+  "Reevaluacion",
+];
 const localMarkdownLinkPattern = /!?\[[^\]]*]\(([^)]+)\)/g;
 
 const args = process.argv.slice(2);
@@ -41,8 +60,21 @@ async function lintRepo(repoPath) {
   await assertExists(resolve(repoPath, "README.md"), "README.md");
   await assertExists(resolve(repoPath, "docs/README.md"), "docs/README.md");
   await assertExists(resolve(repoPath, "docs/agentic-handoff.md"), "docs/agentic-handoff.md");
+  await assertExists(resolve(repoPath, "docs/agentic-sprint-contract.md"), "docs/agentic-sprint-contract.md");
+  await assertExists(resolve(repoPath, "docs/agentic-evaluation-rubric.md"), "docs/agentic-evaluation-rubric.md");
   await assertExists(resolve(repoPath, "docs/plans/README.md"), "docs/plans/README.md");
   await assertExists(resolve(repoPath, "runbooks"), "runbooks/");
+
+  await assertMarkdownHeadings(
+    await readFile(resolve(repoPath, "docs/agentic-sprint-contract.md"), "utf8"),
+    "docs/agentic-sprint-contract.md",
+    requiredAgenticSprintContractSections,
+  );
+  await assertMarkdownHeadings(
+    await readFile(resolve(repoPath, "docs/agentic-evaluation-rubric.md"), "utf8"),
+    "docs/agentic-evaluation-rubric.md",
+    requiredAgenticEvaluationRubricSections,
+  );
 
   const runbookEntries = await readdir(resolve(repoPath, "runbooks"), { withFileTypes: true });
   const runbookCount = runbookEntries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
@@ -54,11 +86,7 @@ async function lintRepo(repoPath) {
   for (const planName of activePlans) {
     const planPath = resolve(repoPath, "docs/plans/falta", planName);
     const content = await readFile(planPath, "utf8");
-    for (const section of requiredPlanSections) {
-      if (!content.includes(section)) {
-        throw new Error(`${planName} is missing section: ${section}`);
-      }
-    }
+    assertMarkdownHeadings(content, planName, requiredPlanSections);
   }
 
   const readmeContent = await readFile(resolve(repoPath, "README.md"), "utf8");
@@ -116,6 +144,25 @@ function readSection(markdown, heading) {
 
 function extractCodeListItems(markdownSection) {
   return [...markdownSection.matchAll(/^- `([^`]+)`/gm)].map((match) => match[1]);
+}
+
+function assertMarkdownHeadings(markdown, label, requiredHeadings) {
+  const headings = new Set(
+    markdown
+      .split(/\r?\n/)
+      .filter((line) => /^#{1,6}\s+/.test(line))
+      .map((line) => line.replace(/^#{1,6}\s+/, "").trim()),
+  );
+  const missingHeadings = requiredHeadings.filter((heading) => !hasHeading(headings, heading));
+  if (missingHeadings.length > 0) {
+    throw new Error(`${label} is missing heading(s): ${missingHeadings.join(", ")}`);
+  }
+}
+
+function hasHeading(headings, requiredHeading) {
+  return [...headings].some(
+    (heading) => heading === requiredHeading || heading.startsWith(`${requiredHeading} (`),
+  );
 }
 
 function assertSameList(label, actual, expected) {

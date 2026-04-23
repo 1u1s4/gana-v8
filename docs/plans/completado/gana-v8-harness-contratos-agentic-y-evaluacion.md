@@ -1,6 +1,13 @@
 # Plan de cierre de harness agentic para contratos, evaluacion y handoffs largos - gana-v8
 
-**Estado actual confirmado (2026-04-23)**
+## Resultado de cierre (2026-04-23)
+
+- Se materializo `docs/agentic-sprint-contract.md` como contrato canonico de sprint agentic.
+- Se materializo `docs/agentic-evaluation-rubric.md` como rubrica versionada de evaluacion.
+- `docs/agentic-handoff.md` conserva el contrato minimo de relevo y enlaza los nuevos contratos.
+- `scripts/workspace-lint.mjs` valida existencia y secciones obligatorias de los contratos agentic.
+
+## Estado actual confirmado (2026-04-23)
 
 - El repo ya tiene un entrypoint corto para agentes en `AGENTS.md`, un mapa documental en `docs/README.md` y un contrato minimo de handoff en `docs/agentic-handoff.md`.
 - `docs/agentic-handoff.md` ya fija ownership exclusivo por frente, artefacto minimo de relevo y preferencia por worktree por subagente, pero no define un contrato previo de sprint ni una separacion explicita planner/generator/evaluator.

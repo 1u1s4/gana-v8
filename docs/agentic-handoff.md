@@ -2,6 +2,8 @@
 
 Este documento define cómo dividir trabajo entre subagentes o entre sesiones sin perder ownership, contexto ni trazabilidad.
 
+Este es el contrato minimo de relevo. Para acordar alcance, baseline, roles, validacion, reset/compaction y evaluacion antes de editar, usar tambien `docs/agentic-sprint-contract.md` y `docs/agentic-evaluation-rubric.md`.
+
 ## Cuándo usar subagentes
 
 - Usarlos cuando el trabajo se puede partir en frentes con objetivo, archivos o contratos y verificación claramente separables.

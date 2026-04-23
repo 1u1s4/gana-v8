@@ -25,6 +25,8 @@ El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-m
 - `AGENTS.md`: entry point corto del repo para orientación inicial.
 - `docs/README.md`: mapa documental, taxonomía y lifecycle de documentos.
 - `docs/agentic-handoff.md`: contrato de subagentes, handoff y aislamientos de trabajo.
+- `docs/agentic-sprint-contract.md`: contrato para sprint agentic no trivial, roles, baseline y validación.
+- `docs/agentic-evaluation-rubric.md`: rúbrica para evaluador separado y salida `promotable`/`review-required`/`blocked`.
 - `docs/plans/falta/`: fuente de verdad para gaps activos del harness.
 - `runbooks/`: procedimientos operativos activos.
 
@@ -211,11 +213,11 @@ Runbooks operativos activos:
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `docs/plans/falta/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/falta/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`
 - `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`
 - `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`

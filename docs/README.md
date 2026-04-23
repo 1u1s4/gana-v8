@@ -11,12 +11,15 @@ Este directorio es el mapa canónico de documentación del repo. Su función es 
 - [`plans/completado/`](./plans/completado/) contiene planes cuyo resultado principal ya quedó materializado de forma sustancial.
 - [`plans/archivado/`](./plans/archivado/) contiene snapshots y planes históricos preservados para trazabilidad, no para trabajo activo.
 - [`agentic-handoff.md`](./agentic-handoff.md) contiene el contrato operativo para subagentes, handoff entre sesiones y aislamiento por frente.
+- [`agentic-sprint-contract.md`](./agentic-sprint-contract.md) contiene el contrato previo para trabajo agentic no trivial: alcance, roles, baseline, validacion, done y politica de contexto.
+- [`agentic-evaluation-rubric.md`](./agentic-evaluation-rubric.md) contiene la rubrica versionada para evaluar trabajo agentic y emitir `promotable`, `review-required` o `blocked`.
 - [`../runbooks/`](../runbooks/) contiene procedimientos operativos ejecutables. Punto de entrada recomendado para corridas costosas: [`expensive-verification-triage.md`](../runbooks/expensive-verification-triage.md). Para certificación sintética, usar [`sandbox-certification.md`](../runbooks/sandbox-certification.md). Para snapshots baseline/candidate de `runtime-release`, cobertura/truncación y smoke Hermes de procesos vivos, usar [`release-review-promotion.md`](../runbooks/release-review-promotion.md) y [`smoke-e2e-runtime-failure.md`](../runbooks/smoke-e2e-runtime-failure.md).
 - [`../README.md`](../README.md) sigue siendo el entrypoint general del repo para comandos, workspaces y superficies operativas.
 
 ## Regla de precedencia
 
 - Decisión de arquitectura: manda `docs/adr/`.
+- Trabajo agentic largo, paralelo o con evaluador: mandan `docs/agentic-sprint-contract.md` y `docs/agentic-evaluation-rubric.md`.
 - Gap activo, alcance pendiente y orden de cierre: manda `docs/plans/falta/`.
 - Procedimiento operativo ejecutable: mandan los runbooks.
 - Historial y contexto de decisiones ya materializadas: sirven `docs/plans/completado/` y `docs/plans/archivado/`, pero no reemplazan un plan activo.

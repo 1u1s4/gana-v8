@@ -1,6 +1,6 @@
 # Plan de cierre de harness para doc-gardening, discoverability operativa y runbooks - gana-v8
 
-**Estado actual confirmado (2026-04-23)**
+## Estado actual confirmado (2026-04-23)
 
 - El repo ya tiene taxonomia documental, indices canonicos y lint de links/planes en `docs/README.md`, `docs/plans/README.md` y `scripts/workspace-lint.mjs`.
 - `runbooks/` ya contiene una bateria operativa real, pero `AGENTS.md` y `docs/README.md` siguen apuntando a `runbooks/sandbox-certification.md` como punto de entrada principal.
