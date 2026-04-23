@@ -194,6 +194,9 @@ export function describeWorkspace() {
   return `${workspaceInfo.workspaceName} (${workspaceInfo.category})`;
 }
 
+const runtimeReleaseRunsEndpointPath =
+  `${publicApiEndpointPaths.sandboxCertificationRuns}?verificationKind=runtime-release`;
+
 const sortByNewest = <T extends { readonly id: string }>(
   items: readonly T[],
   selector: (item: T) => string | null | undefined,
@@ -501,6 +504,8 @@ const isOperationalDataEmpty = (snapshot: OperatorConsoleSnapshot): boolean =>
   snapshot.aiRuns.length === 0 &&
   snapshot.predictions.length === 0 &&
   snapshot.parlays.length === 0 &&
+  snapshot.sandboxCertification.length === 0 &&
+  snapshot.certificationRuns.length === 0 &&
   snapshot.operationalLogs.length === 0 &&
   snapshot.operationalSummary.etl.rawBatchCount === 0 &&
   snapshot.operationalSummary.etl.oddsSnapshotCount === 0;
@@ -1070,6 +1075,16 @@ export function buildOperatorConsoleModel(
             ),
     },
     {
+      title: "Runtime release",
+      lines:
+        snapshot.certificationRuns.length === 0
+          ? ["No runtime-release approval runs loaded."]
+          : snapshot.certificationRuns.map(
+              (run) =>
+                `${run.profileName}/${run.packId} | ${run.status}${run.promotionStatus ? ` | ${run.promotionStatus}` : ""} | baseline ${run.baselineRef ?? "main"} -> candidate ${run.candidateRef ?? run.gitSha} | generated ${run.generatedAt ?? "missing"}`,
+            ),
+    },
+    {
       title: "Release ops",
       lines: [
         `Manual review queue: ${snapshot.manualReviews.length}`,
@@ -1119,7 +1134,7 @@ export function buildOperatorConsoleModel(
           (metric) =>
             `${metric.recordedAt} | ${metric.name} | ${metric.type} | ${metric.value}`,
         ),
-        `Certification runs: ${snapshot.certificationRuns.length}`,
+        `Runtime release runs: ${snapshot.certificationRuns.length}`,
         ...snapshot.certificationRuns.map(
           (run) =>
             `${run.profileName}/${run.packId} | ${run.verificationKind} | ${run.status}${run.promotionStatus ? ` | ${run.promotionStatus}` : ""} | ${run.gitSha}`,
@@ -1416,7 +1431,7 @@ export const loadOperatorConsoleWebPayload = async (
   ] = await Promise.all([
     requestPublicApi(options, publicApiEndpointPaths.snapshot),
     requestPublicApi(options, publicApiEndpointPaths.sandboxCertification),
-    requestPublicApi(options, publicApiEndpointPaths.sandboxCertificationRuns),
+    requestPublicApi(options, runtimeReleaseRunsEndpointPath),
     requestPublicApi(options, publicApiEndpointPaths.manualReview),
     requestPublicApi(options, publicApiEndpointPaths.quarantines),
     requestPublicApi(options, publicApiEndpointPaths.recovery),
@@ -1859,13 +1874,16 @@ const state = {
   selectedTaskId: null,
   selectedAiRunId: null,
   selectedCertificationId: null,
+  selectedRuntimeReleaseRunId: null,
   taskDetail: null,
   taskRuns: [],
   aiRunDetail: null,
   certificationDetail: null,
+  runtimeReleaseDetail: null,
   taskInspectorError: null,
   aiRunInspectorError: null,
   certificationInspectorError: null,
+  runtimeReleaseInspectorError: null,
 };
 
 const escapeHtml = (value) =>
@@ -1921,6 +1939,8 @@ const isSnapshotEmpty = (snapshot) =>
   Array.isArray(snapshot.aiRuns) && snapshot.aiRuns.length === 0 &&
   Array.isArray(snapshot.predictions) && snapshot.predictions.length === 0 &&
   Array.isArray(snapshot.parlays) && snapshot.parlays.length === 0 &&
+  Array.isArray(snapshot.sandboxCertification) && snapshot.sandboxCertification.length === 0 &&
+  Array.isArray(snapshot.certificationRuns) && snapshot.certificationRuns.length === 0 &&
   Array.isArray(snapshot.operationalLogs) && snapshot.operationalLogs.length === 0 &&
   snapshot.operationalSummary &&
   snapshot.operationalSummary.etl &&
@@ -2055,6 +2075,43 @@ const renderCertificationList = (payload) => {
       '<div class="subtle">Generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + ' | diff ' + escapeHtml(certification.diffEntryCount) + ' | synthetic ' + escapeHtml(certification.latestSyntheticIntegrity?.status || 'n/a') + ' | runtime ' + escapeHtml(certification.latestRuntimeRelease?.promotionStatus || certification.latestRuntimeRelease?.status || 'n/a') + ' | promotion ' + escapeHtml(certification.promotion?.status || 'unknown') + '</div>' +
       '<div class="list-actions">' +
         '<button class="fixture-action" type="button" data-console-action="inspect-certification" data-certification-profile="' + escapeHtml(certification.profileName) + '" data-certification-pack="' + escapeHtml(certification.packId) + '" data-tone="neutral">Inspect</button>' +
+      '</div>' +
+    '</article>'
+  ).join('') + '</div>';
+};
+
+const renderRuntimeReleaseActions = (run) => {
+  if (!run) {
+    return '';
+  }
+
+  if (run.profileName === 'ci-ephemeral') {
+    return '<div class="list-actions"><span class="subtle">ci-ephemeral evidence is locked and cannot be overridden.</span></div>';
+  }
+
+  return '<div class="list-actions">' +
+    '<button class="fixture-action" type="button" data-runtime-release-action="approve" data-runtime-release-run-id="' + escapeHtml(run.id) + '" data-tone="include">Approve</button>' +
+    '<button class="fixture-action" type="button" data-runtime-release-action="reject" data-runtime-release-run-id="' + escapeHtml(run.id) + '" data-tone="exclude">Reject</button>' +
+  '</div>';
+};
+
+const renderRuntimeReleaseList = (snapshot) => {
+  const runs = Array.isArray(snapshot.certificationRuns) ? snapshot.certificationRuns : [];
+  if (runs.length === 0) {
+    return '<div class="empty-state">No runtime-release runs available.</div>';
+  }
+
+  return '<div class="list">' + runs.map((run) =>
+    '<article class="list-item' + (state.selectedRuntimeReleaseRunId === run.id ? ' is-selected' : '') + '">' +
+      '<strong>' + escapeHtml(run.profileName) + '</strong>' +
+      '<div>' + formatBadge(run.promotionStatus || run.status) + '</div>' +
+      '<div class="subtle">' + escapeHtml(run.id) + '</div>' +
+      '<div class="subtle">Pack ' + escapeHtml(run.packId) + ' | generated ' + escapeHtml(formatDateTime(run.generatedAt)) + '</div>' +
+      '<div class="subtle">Baseline ' + escapeHtml(run.baselineRef || 'main') + ' | candidate ' + escapeHtml(run.candidateRef || run.gitSha) + '</div>' +
+      '<div class="subtle">Git ' + escapeHtml(run.gitSha) + '</div>' +
+      renderRuntimeReleaseActions(run) +
+      '<div class="list-actions">' +
+        '<button class="fixture-action" type="button" data-console-action="inspect-runtime-release" data-runtime-release-run-id="' + escapeHtml(run.id) + '" data-tone="neutral">Inspect</button>' +
       '</div>' +
     '</article>'
   ).join('') + '</div>';
@@ -2241,6 +2298,65 @@ const renderCertificationInspector = () => {
   '</div>';
 };
 
+const renderRuntimeReleaseInspector = () => {
+  if (state.runtimeReleaseInspectorError) {
+    return '<div class="empty-state">' + escapeHtml(state.runtimeReleaseInspectorError) + '</div>';
+  }
+
+  if (!state.runtimeReleaseDetail) {
+    return '<div class="empty-state">Select a runtime-release run to inspect approval history and record a promotion decision.</div>';
+  }
+
+  const run = state.runtimeReleaseDetail;
+  const latestDecision = run.latestPromotionDecision || null;
+  const decisionHistory = Array.isArray(run.promotionDecisionHistory) ? run.promotionDecisionHistory : [];
+  const diffEntries = Array.isArray(run.diffEntries) ? run.diffEntries : [];
+
+  return '<div class="list">' +
+    '<article class="list-item is-selected">' +
+      '<strong>' + escapeHtml(run.profileName) + ' / ' + escapeHtml(run.packId) + '</strong>' +
+      '<div>' + formatBadge(run.promotionStatus || run.status) + '</div>' +
+      '<div class="subtle">' + escapeHtml(run.id) + '</div>' +
+      '<div class="subtle">Generated ' + escapeHtml(formatDateTime(run.generatedAt)) + ' | git ' + escapeHtml(run.gitSha) + '</div>' +
+      '<div class="subtle">Baseline ' + escapeHtml(run.baselineRef || 'main') + ' | candidate ' + escapeHtml(run.candidateRef || run.gitSha) + '</div>' +
+      '<div class="subtle">Verification ' + escapeHtml(run.verificationKind) + ' | diff entries ' + escapeHtml(diffEntries.length) + '</div>' +
+      renderRuntimeReleaseActions(run) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Latest decision</strong>' +
+      (latestDecision
+        ? '<div class="panel-line">' + escapeHtml(latestDecision.decision.toUpperCase()) + ' @ ' + escapeHtml(formatDateTime(latestDecision.occurredAt)) + ' by ' + escapeHtml(latestDecision.actor || latestDecision.actorType || 'unknown') + '</div>' +
+          '<div class="panel-line">Reason: ' + escapeHtml(latestDecision.reason) + '</div>' +
+          '<div class="panel-line">Evidence refs: ' + escapeHtml((latestDecision.evidenceRefs || []).join(', ') || 'none') + '</div>'
+        : '<div class="empty-state">No promotion decision recorded yet.</div>') +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Decision history</strong>' +
+      (decisionHistory.length === 0
+        ? '<div class="empty-state">No decision history available.</div>'
+        : decisionHistory.map((decision) =>
+            '<div class="panel-line">' + escapeHtml(decision.decision.toUpperCase()) + ' | ' + escapeHtml(formatDateTime(decision.occurredAt)) + ' | ' + escapeHtml(decision.actor || decision.actorType || 'unknown') + ' | ' + escapeHtml(decision.reason) + '</div>'
+          ).join('')) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Runtime signals</strong>' +
+      renderJsonBlock(run.runtimeSignals || {}) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Summary</strong>' +
+      renderJsonBlock(run.summary || {}) +
+    '</article>' +
+    '<article class="list-item">' +
+      '<strong>Diff entries</strong>' +
+      (diffEntries.length === 0
+        ? '<div class="empty-state">No runtime-release diff entries recorded.</div>'
+        : diffEntries.map((entry) =>
+            '<div class="panel-line">' + escapeHtml(entry.kind.toUpperCase()) + ' ' + escapeHtml(entry.path) + ' | expected ' + escapeHtml(JSON.stringify(entry.expected)) + ' | actual ' + escapeHtml(JSON.stringify(entry.actual)) + '</div>'
+          ).join('')) +
+    '</article>' +
+  '</div>';
+};
+
 const renderDashboard = (payload) => {
   const snapshot = payload.snapshot;
   const model = payload.model;
@@ -2274,6 +2390,10 @@ const renderDashboard = (payload) => {
     '<section class="panel-grid">' +
       '<section class="surface"><div class="surface-header"><h2>Sandbox Certification</h2><span class="subtle">Latest golden status by profile and fixture pack</span></div><div class="surface-body">' + renderCertificationList(payload) + '</div></section>' +
       '<section class="surface"><div class="surface-header"><h2>Certification Inspector</h2><span class="subtle">Golden diff, evidence timing, and safety rails</span></div><div class="surface-body">' + renderCertificationInspector() + '</div></section>' +
+    '</section>' +
+    '<section class="panel-grid">' +
+      '<section class="surface"><div class="surface-header"><h2>Runtime Release</h2><span class="subtle">Approval-required release evidence by environment profile</span></div><div class="surface-body">' + renderRuntimeReleaseList(snapshot) + '</div></section>' +
+      '<section class="surface"><div class="surface-header"><h2>Runtime Release Inspector</h2><span class="subtle">Approve or reject review-required runtime-release runs</span></div><div class="surface-body">' + renderRuntimeReleaseInspector() + '</div></section>' +
     '</section>' +
     '<section class="surface"><div class="surface-header"><h2>Operational Log</h2></div><div class="surface-body">' + renderLogs(model) + '</div></section>' +
     '<section class="surface"><div class="surface-header"><h2>Ops Panels</h2><span class="subtle">Derived from public-api snapshots</span></div><div class="surface-body">' + renderPanels(model) + '</div></section>';
@@ -2347,15 +2467,38 @@ const loadCertificationInspector = async (profileName, packId) => {
   }
 };
 
+const loadRuntimeReleaseInspector = async (runId) => {
+  state.selectedRuntimeReleaseRunId = runId;
+  state.runtimeReleaseDetail = null;
+  state.runtimeReleaseInspectorError = null;
+  if (!runId) {
+    return;
+  }
+
+  try {
+    const encodedRunId = encodeURIComponent(runId);
+    state.runtimeReleaseDetail = await requestJson(
+      '/api/public/sandbox-certification/runs/' + encodedRunId,
+    );
+  } catch (error) {
+    state.runtimeReleaseInspectorError = error.message || 'Unable to load runtime-release inspector';
+  }
+};
+
 const syncInspectors = async (payload) => {
   const nextTaskId = resolveSelectedId(payload.snapshot.tasks || [], state.selectedTaskId);
   const nextAiRunId = resolveSelectedId(payload.snapshot.aiRuns || [], state.selectedAiRunId);
   const nextCertificationId = resolveSelectedId(payload.certification || [], state.selectedCertificationId);
+  const nextRuntimeReleaseRunId = resolveSelectedId(
+    payload.snapshot.certificationRuns || [],
+    state.selectedRuntimeReleaseRunId,
+  );
   const [nextCertificationProfile, nextCertificationPack] = nextCertificationId ? nextCertificationId.split(':', 2) : [null, null];
   await Promise.all([
     loadTaskInspector(nextTaskId),
     loadAiRunInspector(nextAiRunId),
     loadCertificationInspector(nextCertificationProfile, nextCertificationPack),
+    loadRuntimeReleaseInspector(nextRuntimeReleaseRunId),
   ]);
 };
 
@@ -2439,6 +2582,49 @@ const submitTaskAction = async (taskId, action) => {
   return false;
 };
 
+const submitRuntimeReleaseDecision = async (runId, decision) => {
+  const encodedRunId = encodeURIComponent(runId);
+  const defaultReason = decision === 'approved'
+    ? 'Approved from operator console'
+    : 'Rejected from operator console';
+  const reason = window.prompt(
+    decision === 'approved'
+      ? 'Reason to approve runtime release:'
+      : 'Reason to reject runtime release:',
+    defaultReason,
+  );
+  if (reason === null) {
+    return false;
+  }
+  const evidenceRefsRaw = window.prompt(
+    'Evidence refs (comma separated URLs or ids):',
+    '',
+  );
+  if (evidenceRefsRaw === null) {
+    return false;
+  }
+
+  const detail = await requestJson(
+    '/api/public/sandbox-certification/runs/' + encodedRunId + '/promotion-decision',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        decision,
+        reason,
+        evidenceRefs: evidenceRefsRaw
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+      }),
+    },
+  );
+  state.runtimeReleaseDetail = detail;
+  state.selectedRuntimeReleaseRunId = runId;
+  state.runtimeReleaseInspectorError = null;
+  return true;
+};
+
 const selectTask = async (taskId) => {
   if (!state.payload) {
     return;
@@ -2466,13 +2652,22 @@ const selectCertification = async (profileName, packId) => {
   renderDashboard(state.payload);
 };
 
+const selectRuntimeReleaseRun = async (runId) => {
+  if (!state.payload) {
+    return;
+  }
+
+  await loadRuntimeReleaseInspector(runId);
+  renderDashboard(state.payload);
+};
+
 refreshButton.addEventListener('click', () => {
   void loadConsole();
 });
 
 document.addEventListener('click', async (event) => {
   const target = event.target instanceof HTMLElement
-    ? event.target.closest('[data-fixture-action], [data-console-action], [data-task-action]')
+    ? event.target.closest('[data-fixture-action], [data-console-action], [data-task-action], [data-runtime-release-action]')
     : null;
   if (!(target instanceof HTMLElement)) {
     return;
@@ -2510,10 +2705,32 @@ document.addEventListener('click', async (event) => {
       return;
     }
 
+    if (consoleAction === 'inspect-runtime-release' && target.dataset.runtimeReleaseRunId) {
+      await selectRuntimeReleaseRun(target.dataset.runtimeReleaseRunId);
+      return;
+    }
+
     const taskAction = target.dataset.taskAction;
     const taskId = target.dataset.taskId;
     if (taskAction && taskId) {
       const applied = await submitTaskAction(taskId, taskAction);
+      if (applied) {
+        await loadConsole();
+      }
+      return;
+    }
+
+    const runtimeReleaseAction = target.dataset.runtimeReleaseAction;
+    const runtimeReleaseRunId = target.dataset.runtimeReleaseRunId;
+    if (
+      runtimeReleaseAction &&
+      runtimeReleaseRunId &&
+      (runtimeReleaseAction === 'approve' || runtimeReleaseAction === 'reject')
+    ) {
+      const applied = await submitRuntimeReleaseDecision(
+        runtimeReleaseRunId,
+        runtimeReleaseAction === 'approve' ? 'approved' : 'rejected',
+      );
       if (applied) {
         await loadConsole();
       }
@@ -2582,7 +2799,7 @@ export const createOperatorConsoleWebServer = (
         ] = await Promise.all([
           requestPublicApi(options, publicApiEndpointPaths.snapshot),
           requestPublicApi(options, publicApiEndpointPaths.sandboxCertification),
-          requestPublicApi(options, publicApiEndpointPaths.sandboxCertificationRuns),
+          requestPublicApi(options, runtimeReleaseRunsEndpointPath),
           requestPublicApi(options, publicApiEndpointPaths.manualReview),
           requestPublicApi(options, publicApiEndpointPaths.quarantines),
           requestPublicApi(options, publicApiEndpointPaths.recovery),

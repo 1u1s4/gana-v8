@@ -5,7 +5,13 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createAiRun, createFixture, createTask, createTaskRun } from "@gana-v8/domain-core";
+import {
+  createAiRun,
+  createFixture,
+  createSandboxCertificationRun,
+  createTask,
+  createTaskRun,
+} from "@gana-v8/domain-core";
 import {
   createPublicApiServer,
   createPublicApiTokenAuthentication,
@@ -148,6 +154,36 @@ const createSandboxCertificationFixture = async (): Promise<{
 
   return { goldensRoot, artifactsRoot };
 };
+
+const createRuntimeReleaseRun = (input: {
+  readonly id: string;
+  readonly profileName: string;
+  readonly generatedAt: string;
+}) =>
+  createSandboxCertificationRun({
+    id: input.id,
+    verificationKind: "runtime-release",
+    profileName: input.profileName,
+    packId: "runtime-release",
+    mode: "runtime-release",
+    gitSha: "def456runtime",
+    baselineRef: "main",
+    candidateRef: "codex/runtime-release",
+    status: "passed",
+    promotionStatus: "review-required",
+    runtimeSignals: {
+      automationCycles: {
+        total: 2,
+      },
+    },
+    diffEntries: [],
+    summary: {
+      promotion: {
+        status: "review-required",
+      },
+    },
+    generatedAt: input.generatedAt,
+  });
 
 const createOperationLikeSnapshot = (overrides: Record<string, unknown> = {}) => ({
   generatedAt: "2026-04-15T01:00:00.000Z",
@@ -385,7 +421,7 @@ test("operator console builds panels and alerts from the snapshot", () => {
   const snapshot = createOperatorConsoleSnapshotFromOperation(createOperationLikeSnapshot() as never);
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 23);
+  assert.equal(model.panels.length, 24);
   assert.equal(model.health.status, "ok");
   assert.equal(model.validationSummary.partial, 1);
   assert.ok(model.alerts.length >= 1);
@@ -398,11 +434,12 @@ test("operator console builds panels and alerts from the snapshot", () => {
   assert.equal(model.panels[6]?.title, "AI & providers");
   assert.equal(model.panels[7]?.title, "Research trace");
   assert.equal(model.panels[8]?.title, "Sandbox certification");
-  assert.equal(model.panels[9]?.title, "Release ops");
-  assert.equal(model.panels[10]?.title, "Observability");
-  assert.equal(model.panels[11]?.title, "Telemetry");
-  assert.equal(model.panels[12]?.title, "Policy");
-  assert.equal(model.panels[13]?.title, "Traceability");
+  assert.equal(model.panels[9]?.title, "Runtime release");
+  assert.equal(model.panels[10]?.title, "Release ops");
+  assert.equal(model.panels[11]?.title, "Observability");
+  assert.equal(model.panels[12]?.title, "Telemetry");
+  assert.equal(model.panels[13]?.title, "Policy");
+  assert.equal(model.panels[14]?.title, "Traceability");
 });
 
 test("operator console defaults to an operational empty state instead of demo data", () => {
@@ -453,6 +490,37 @@ test("operator console derives an ops-focused snapshot from public-api operation
   assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /fixture:api-football:123/);
   assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /workflow/);
   assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /predictions 1/);
+});
+
+test("operator console surfaces runtime-release approval runs in a dedicated panel", () => {
+  const snapshot = createOperatorConsoleSnapshotFromOperation(createOperationLikeSnapshot() as never, {
+    certificationRuns: [
+      {
+        id: "scr-runtime-release-console-1",
+        profileName: "pre-release",
+        packId: "runtime-release",
+        mode: "runtime-release",
+        verificationKind: "runtime-release",
+        status: "passed",
+        promotionStatus: "review-required",
+        gitSha: "def456runtime",
+        baselineRef: "main",
+        candidateRef: "codex/runtime-release",
+        runtimeSignals: {},
+        diffEntryCount: 0,
+        diffEntries: [],
+        summary: {},
+        generatedAt: "2026-04-22T01:00:00.000Z",
+      },
+    ],
+  });
+  const model = buildOperatorConsoleModel(snapshot);
+  const runtimeReleasePanel = model.panels.find((panel) => panel.title === "Runtime release");
+
+  assert.ok(runtimeReleasePanel);
+  assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /pre-release\/runtime-release/);
+  assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /review-required/);
+  assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /codex\/runtime-release/);
 });
 
 test("operator console surfaces fixture pipeline readiness from persisted research read models", () => {
@@ -858,6 +926,7 @@ test("operator console can load a web payload from public-api snapshots", async 
     assert.equal(payload.model.health.status, "ok");
     assert.ok(payload.model.panels.some((panel) => panel.title === "Task queue"));
     assert.ok(payload.model.panels.some((panel) => panel.title === "Sandbox certification"));
+    assert.ok(payload.model.panels.some((panel) => panel.title === "Runtime release"));
     assert.ok(payload.model.panels.some((panel) => panel.title === "Release ops"));
     assert.ok(payload.model.panels.some((panel) => panel.title === "Telemetry"));
   } finally {
@@ -929,6 +998,13 @@ test("operator console web server serves dashboard assets and proxies fixture ac
       updatedAt: "2026-04-22T00:40:30.000Z",
     }),
   );
+  await unitOfWork.sandboxCertificationRuns.save(
+    createRuntimeReleaseRun({
+      id: "scr-runtime-release-console-web-1",
+      profileName: "pre-release",
+      generatedAt: "2026-04-22T01:10:00.000Z",
+    }),
+  );
   const authentication = createPublicApiTokenAuthentication({
     viewerToken: "viewer-token",
     operatorToken: "operator-token",
@@ -965,19 +1041,24 @@ test("operator console web server serves dashboard assets and proxies fixture ac
     const appJs = await appJsResponse.text();
     assert.match(appJs, /Task Inspector/);
     assert.match(appJs, /AI Run Inspector/);
+    assert.match(appJs, /Runtime Release Inspector/);
+    assert.match(appJs, /Approve/);
 
     const payloadResponse = await fetch(`${baseUrl}/api/console`);
     assert.equal(payloadResponse.status, 200);
     const payloadJson = (await payloadResponse.json()) as {
-      snapshot: { fixtures: Array<{ id: string }> };
+      snapshot: { fixtures: Array<{ id: string }>; certificationRuns: Array<{ id: string; packId: string }> };
       certification: Array<{ packId: string; status: string }>;
       model: { panels: Array<{ title: string }> };
     };
     assert.equal(payloadJson.snapshot.fixtures[0]?.id, fixture.id);
+    assert.equal(payloadJson.snapshot.certificationRuns[0]?.id, "scr-runtime-release-console-web-1");
+    assert.equal(payloadJson.snapshot.certificationRuns[0]?.packId, "runtime-release");
     assert.equal(payloadJson.certification[0]?.packId, "football-dual-smoke");
     assert.equal(payloadJson.certification[0]?.status, "passed");
     assert.ok(payloadJson.model.panels.some((panel) => panel.title === "Fixture ops"));
     assert.ok(payloadJson.model.panels.some((panel) => panel.title === "Sandbox certification"));
+    assert.ok(payloadJson.model.panels.some((panel) => panel.title === "Runtime release"));
 
     const certificationDetailResponse = await fetch(
       `${baseUrl}/api/public/sandbox-certification/ci-smoke/football-dual-smoke`,
@@ -1019,6 +1100,28 @@ test("operator console web server serves dashboard assets and proxies fixture ac
     });
     assert.equal(queueActionResponse.status, 200);
     assert.equal(((await queueActionResponse.json()) as { status: string }).status, "queued");
+
+    const runtimeReleaseDecisionResponse = await fetch(
+      `${baseUrl}/api/public/sandbox-certification/runs/${encodeURIComponent("scr-runtime-release-console-web-1")}/promotion-decision`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          decision: "approved",
+          reason: "Release owner approved after reviewing evidence.",
+          evidenceRefs: ["https://example.com/runtime-release/console-web-1"],
+        }),
+      },
+    );
+    assert.equal(runtimeReleaseDecisionResponse.status, 200);
+    const runtimeReleaseDecisionJson = (await runtimeReleaseDecisionResponse.json()) as {
+      latestPromotionDecision?: { decision: string; reason: string };
+    };
+    assert.equal(runtimeReleaseDecisionJson.latestPromotionDecision?.decision, "approved");
+    assert.equal(
+      runtimeReleaseDecisionJson.latestPromotionDecision?.reason,
+      "Release owner approved after reviewing evidence.",
+    );
   } finally {
     await new Promise<void>((resolve, reject) =>
       operatorConsoleServer.close((error) => (error ? reject(error) : resolve())),

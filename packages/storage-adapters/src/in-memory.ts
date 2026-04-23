@@ -47,6 +47,7 @@ import type {
   ResearchSourceRepository,
   SandboxNamespace,
   SandboxCertificationRunEntity,
+  SandboxCertificationRunPruneResult,
   SandboxCertificationRunQuery,
   SandboxCertificationRunRepository,
   SandboxNamespaceRepository,
@@ -58,6 +59,8 @@ import type {
   TaskRunRepository,
   TeamCoveragePolicyEntity,
   TeamCoveragePolicyRepository,
+  RepositoryPruneOptions,
+  RepositoryPruneResult,
   ValidationEntity,
   ValidationRepository,
 } from "@gana-v8/domain-core";
@@ -66,6 +69,10 @@ const sortByIsoDescending = <T>(
   items: readonly T[],
   selector: (item: T) => string,
 ): T[] => [...items].sort((left, right) => selector(right).localeCompare(selector(left)));
+
+const buildSandboxCertificationRunKey = (
+  item: Pick<SandboxCertificationRunEntity, "profileName" | "packId" | "verificationKind">,
+): string => `${item.profileName}::${item.packId}::${item.verificationKind}`;
 
 class InMemoryRepository<T extends AuditableEntity> {
   protected readonly items = new Map<EntityId, T>();
@@ -86,6 +93,18 @@ class InMemoryRepository<T extends AuditableEntity> {
 
   async delete(id: EntityId): Promise<void> {
     this.items.delete(id);
+  }
+
+  protected deleteIds(ids: readonly EntityId[]): number {
+    let deletedCount = 0;
+
+    for (const id of ids) {
+      if (this.items.delete(id)) {
+        deletedCount += 1;
+      }
+    }
+
+    return deletedCount;
   }
 }
 
@@ -226,6 +245,43 @@ export class InMemorySandboxCertificationRunRepository
       )[0] ?? null
     );
   }
+
+  async pruneBefore(options: RepositoryPruneOptions): Promise<SandboxCertificationRunPruneResult> {
+    const dryRun = options.dryRun ?? false;
+    const items = await this.list();
+    const latestGeneratedAtByKey = new Map<string, string>();
+
+    for (const item of items) {
+      const key = buildSandboxCertificationRunKey(item);
+      const currentLatest = latestGeneratedAtByKey.get(key);
+      if (!currentLatest || item.generatedAt > currentLatest) {
+        latestGeneratedAtByKey.set(key, item.generatedAt);
+      }
+    }
+
+    const preservedLatestIds = new Set<EntityId>();
+    for (const item of items) {
+      if (item.generatedAt >= options.cutoff) {
+        continue;
+      }
+
+      if (latestGeneratedAtByKey.get(buildSandboxCertificationRunKey(item)) === item.generatedAt) {
+        preservedLatestIds.add(item.id);
+      }
+    }
+
+    const idsToDelete = items
+      .filter((item) => item.generatedAt < options.cutoff && !preservedLatestIds.has(item.id))
+      .map((item) => item.id);
+
+    return {
+      cutoff: options.cutoff,
+      dryRun,
+      prunableCount: idsToDelete.length,
+      deletedCount: dryRun ? 0 : this.deleteIds(idsToDelete),
+      preservedLatestCount: preservedLatestIds.size,
+    };
+  }
 }
 
 export class InMemoryOperationalTelemetryEventRepository
@@ -247,6 +303,20 @@ export class InMemoryOperationalTelemetryEventRepository
 
     return query.limit ? items.slice(0, query.limit) : items;
   }
+
+  async pruneBefore(options: RepositoryPruneOptions): Promise<RepositoryPruneResult> {
+    const dryRun = options.dryRun ?? false;
+    const idsToDelete = (await this.list())
+      .filter((item) => item.occurredAt < options.cutoff)
+      .map((item) => item.id);
+
+    return {
+      cutoff: options.cutoff,
+      dryRun,
+      prunableCount: idsToDelete.length,
+      deletedCount: dryRun ? 0 : this.deleteIds(idsToDelete),
+    };
+  }
 }
 
 export class InMemoryOperationalMetricSampleRepository
@@ -267,6 +337,20 @@ export class InMemoryOperationalMetricSampleRepository
     );
 
     return query.limit ? items.slice(0, query.limit) : items;
+  }
+
+  async pruneBefore(options: RepositoryPruneOptions): Promise<RepositoryPruneResult> {
+    const dryRun = options.dryRun ?? false;
+    const idsToDelete = (await this.list())
+      .filter((item) => item.recordedAt < options.cutoff)
+      .map((item) => item.id);
+
+    return {
+      cutoff: options.cutoff,
+      dryRun,
+      prunableCount: idsToDelete.length,
+      deletedCount: dryRun ? 0 : this.deleteIds(idsToDelete),
+    };
   }
 }
 

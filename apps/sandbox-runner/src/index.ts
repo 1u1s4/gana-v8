@@ -32,6 +32,13 @@ import {
   type ObservabilitySink,
   type TelemetryEntityRefs,
 } from "../../../packages/observability/dist/index.js";
+import {
+  resolveRuntimeReleaseEvidenceDefaults,
+  type RuntimeReleaseEvidenceProfile,
+} from "./runtime-release-evidence.js";
+
+export { resolveRuntimeReleaseEvidenceDefaults } from "./runtime-release-evidence.js";
+export type { RuntimeReleaseEvidenceProfile } from "./runtime-release-evidence.js";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/sandbox-runner",
@@ -129,7 +136,9 @@ interface PersistedSandboxNamespace {
 }
 
 interface SandboxNamespaceRepositoryLike {
-  save(namespace: PersistedSandboxNamespace): Promise<PersistedSandboxNamespace>;
+  save(
+    namespace: PersistedSandboxNamespace,
+  ): Promise<PersistedSandboxNamespace>;
   list(): Promise<PersistedSandboxNamespace[]>;
   delete(id: string): Promise<void>;
 }
@@ -138,9 +147,13 @@ export interface SandboxStorageUnitOfWorkLike {
   readonly sandboxNamespaces: SandboxNamespaceRepositoryLike;
 }
 
-const createPersistedSandboxNamespace = (input: PersistedSandboxNamespace): PersistedSandboxNamespace => input;
+const createPersistedSandboxNamespace = (
+  input: PersistedSandboxNamespace,
+): PersistedSandboxNamespace => input;
 
-const createPromotionReport = (manifest: SandboxRunManifest): SandboxPromotionReport => {
+const createPromotionReport = (
+  manifest: SandboxRunManifest,
+): SandboxPromotionReport => {
   const cronPlan = createCronValidationPlan(manifest);
   const capabilityIsolationValid = (() => {
     try {
@@ -154,30 +167,42 @@ const createPromotionReport = (manifest: SandboxRunManifest): SandboxPromotionRe
   return evaluateSandboxPromotion({
     certification: {
       status: "pass",
-      detail: "Sandbox profile materialized with certification-ready assertions and policy snapshot.",
+      detail:
+        "Sandbox profile materialized with certification-ready assertions and policy snapshot.",
     },
     contractCoverage: {
-      status: manifest.assertionsPack.includes("contract-coverage") ? "pass" : "block",
+      status: manifest.assertionsPack.includes("contract-coverage")
+        ? "pass"
+        : "block",
       detail: manifest.assertionsPack.includes("contract-coverage")
         ? "Contract coverage assertions are included in the sandbox evidence pack."
         : "Contract coverage assertions are missing from the sandbox evidence pack.",
     },
     cronWorkflows: {
-      status: cronPlan.length > 0 && cronPlan.every((job) => job.dryRun && !job.writesAllowed) ? "pass" : "block",
+      status:
+        cronPlan.length > 0 &&
+        cronPlan.every((job) => job.dryRun && !job.writesAllowed)
+          ? "pass"
+          : "block",
       detail:
         cronPlan.length > 0
           ? cronPlan
-              .map((job) => `${job.jobName}:${job.dryRun ? "dry-run" : "writes"}:${job.lookbackMinutes}m`)
+              .map(
+                (job) =>
+                  `${job.jobName}:${job.dryRun ? "dry-run" : "writes"}:${job.lookbackMinutes}m`,
+              )
               .join(" | ")
           : "No cron workflows were declared for this sandbox profile.",
     },
     publicationSafety: {
       status:
-        !manifest.profile.isolation.publishEnabled && manifest.profile.providerModes.publish_api === "disabled"
+        !manifest.profile.isolation.publishEnabled &&
+        manifest.profile.providerModes.publish_api === "disabled"
           ? "pass"
           : "block",
       detail:
-        !manifest.profile.isolation.publishEnabled && manifest.profile.providerModes.publish_api === "disabled"
+        !manifest.profile.isolation.publishEnabled &&
+        manifest.profile.providerModes.publish_api === "disabled"
           ? "Publishing remains disabled and publication safety is enforced."
           : "Publishing is not fully disabled for this sandbox profile.",
     },
@@ -189,11 +214,13 @@ const createPromotionReport = (manifest: SandboxRunManifest): SandboxPromotionRe
     },
     manualQa: {
       status:
-        manifest.fixturePack.promotionExpectation === "review-required" || manifest.profile.isolation.requiresManualQa
+        manifest.fixturePack.promotionExpectation === "review-required" ||
+        manifest.profile.isolation.requiresManualQa
           ? "warn"
           : "pass",
       detail:
-        manifest.fixturePack.promotionExpectation === "review-required" || manifest.profile.isolation.requiresManualQa
+        manifest.fixturePack.promotionExpectation === "review-required" ||
+        manifest.profile.isolation.requiresManualQa
           ? "Manual QA review is required before promotion for this profile."
           : "No manual QA review is required for this profile.",
     },
@@ -205,11 +232,16 @@ const createSummary = (
   mode: RunnerMode,
 ): SandboxRunSummary => {
   const cronPlan = createCronValidationPlan(manifest);
-  const replayChannels = [...new Set(manifest.fixturePack.replayEvents.map((event) => event.channel))].sort();
+  const replayChannels = [
+    ...new Set(manifest.fixturePack.replayEvents.map((event) => event.channel)),
+  ].sort();
   const timeline = buildReplayTimeline(manifest);
   const clock = createVirtualClockPlan(manifest);
   const golden = createGoldenFixturePackFingerprint(manifest.fixturePack);
-  const comparison = compareFixturePacks(manifest.fixturePack, manifest.fixturePack);
+  const comparison = compareFixturePacks(
+    manifest.fixturePack,
+    manifest.fixturePack,
+  );
   const policy = createSandboxPolicySnapshot(manifest.profile);
   const promotion = createPromotionReport(manifest);
 
@@ -224,7 +256,9 @@ const createSummary = (
     providerModes: manifest.profile.providerModes,
     stats: {
       fixtureCount: manifest.fixturePack.fixtures.length,
-      completedFixtures: manifest.fixturePack.fixtures.filter((fixture) => fixture.status === "completed").length,
+      completedFixtures: manifest.fixturePack.fixtures.filter(
+        (fixture) => fixture.status === "completed",
+      ).length,
       replayEventCount: manifest.fixturePack.replayEvents.length,
       replayChannels,
       cronJobsValidated: cronPlan.length,
@@ -276,7 +310,10 @@ const stableStringify = (value: unknown): string => {
   if (value !== null && typeof value === "object") {
     return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`,
+      )
       .join(",")}}`;
   }
 
@@ -296,14 +333,21 @@ const createSandboxCertificationRunId = (
 
 const createSyntheticIntegrityRefs = (
   runId: string,
-  options: Pick<SandboxCertificationOptions, "correlationId" | "traceId" | "profileName" | "packId" | "gitSha">,
+  options: Pick<
+    SandboxCertificationOptions,
+    "correlationId" | "traceId" | "profileName" | "packId" | "gitSha"
+  >,
 ): {
   readonly traceId: string;
   readonly correlationId: string;
   readonly refs: TelemetryEntityRefs;
 } => ({
-  traceId: options.traceId ?? `sandbox-certification:${options.profileName}:${options.packId}:${options.gitSha}`,
-  correlationId: options.correlationId ?? `${options.profileName}:${options.packId}:${options.gitSha}`,
+  traceId:
+    options.traceId ??
+    `sandbox-certification:${options.profileName}:${options.packId}:${options.gitSha}`,
+  correlationId:
+    options.correlationId ??
+    `${options.profileName}:${options.packId}:${options.gitSha}`,
   refs: {
     sandboxCertificationRunId: runId,
   },
@@ -311,7 +355,10 @@ const createSyntheticIntegrityRefs = (
 
 const createRuntimeReleaseRefs = (
   runId: string,
-  options: Pick<RuntimeReleaseCertificationOptions, "correlationId" | "traceId" | "gitSha">,
+  options: Pick<
+    RuntimeReleaseCertificationOptions,
+    "correlationId" | "traceId" | "gitSha"
+  >,
 ): {
   readonly traceId: string;
   readonly correlationId: string;
@@ -336,15 +383,21 @@ const sandboxCertificationVerificationKindFromPrisma = (
   value: unknown,
 ): SandboxCertificationRunEntity["verificationKind"] =>
   typeof value === "string" && value.includes("_")
-    ? value.replaceAll("_", "-") as SandboxCertificationRunEntity["verificationKind"]
-    : value as SandboxCertificationRunEntity["verificationKind"];
+    ? (value.replaceAll(
+        "_",
+        "-",
+      ) as SandboxCertificationRunEntity["verificationKind"])
+    : (value as SandboxCertificationRunEntity["verificationKind"]);
 
 const sandboxPromotionStatusFromPrisma = (
   value: unknown,
 ): SandboxCertificationRunEntity["promotionStatus"] =>
   typeof value === "string" && value.includes("_")
-    ? value.replaceAll("_", "-") as SandboxCertificationRunEntity["promotionStatus"]
-    : value as SandboxCertificationRunEntity["promotionStatus"];
+    ? (value.replaceAll(
+        "_",
+        "-",
+      ) as SandboxCertificationRunEntity["promotionStatus"])
+    : (value as SandboxCertificationRunEntity["promotionStatus"]);
 
 type PrismaCreateFindDelegate<TRecord> = {
   create(args: { readonly data: Record<string, unknown> }): Promise<TRecord>;
@@ -378,16 +431,26 @@ export const createPrismaSandboxCertificationRunStore = (
     return undefined;
   }
 
-  const normalizeRecord = (record: SandboxCertificationRunEntity): SandboxCertificationRunEntity =>
+  const normalizeRecord = (
+    record: SandboxCertificationRunEntity,
+  ): SandboxCertificationRunEntity =>
     ({
       ...structuredClone(record),
-      verificationKind: sandboxCertificationVerificationKindFromPrisma(record.verificationKind),
+      verificationKind: sandboxCertificationVerificationKindFromPrisma(
+        record.verificationKind,
+      ),
       ...(record.promotionStatus
-        ? { promotionStatus: sandboxPromotionStatusFromPrisma(record.promotionStatus) }
+        ? {
+            promotionStatus: sandboxPromotionStatusFromPrisma(
+              record.promotionStatus,
+            ),
+          }
         : {}),
     }) as SandboxCertificationRunEntity;
 
-  const listByQuery = async (query: SandboxCertificationRunQuery = {}): Promise<readonly SandboxCertificationRunEntity[]> => {
+  const listByQuery = async (
+    query: SandboxCertificationRunQuery = {},
+  ): Promise<readonly SandboxCertificationRunEntity[]> => {
     if (typeof delegate.findMany !== "function") {
       return [];
     }
@@ -396,13 +459,21 @@ export const createPrismaSandboxCertificationRunStore = (
       const records = await delegate.findMany({
         where: pruneUndefined({
           ...(query.verificationKind
-            ? { verificationKind: sandboxCertificationVerificationKindToPrisma(query.verificationKind) }
+            ? {
+                verificationKind: sandboxCertificationVerificationKindToPrisma(
+                  query.verificationKind,
+                ),
+              }
             : {}),
           ...(query.profileName ? { profileName: query.profileName } : {}),
           ...(query.packId ? { packId: query.packId } : {}),
           ...(query.status ? { status: query.status } : {}),
           ...(query.promotionStatus
-            ? { promotionStatus: sandboxPromotionStatusToPrisma(query.promotionStatus) }
+            ? {
+                promotionStatus: sandboxPromotionStatusToPrisma(
+                  query.promotionStatus,
+                ),
+              }
             : {}),
         }),
         orderBy: [{ generatedAt: "desc" }, { id: "desc" }],
@@ -419,9 +490,15 @@ export const createPrismaSandboxCertificationRunStore = (
         await delegate.create({
           data: pruneUndefined({
             ...entity,
-            verificationKind: sandboxCertificationVerificationKindToPrisma(entity.verificationKind),
+            verificationKind: sandboxCertificationVerificationKindToPrisma(
+              entity.verificationKind,
+            ),
             ...(entity.promotionStatus
-              ? { promotionStatus: sandboxPromotionStatusToPrisma(entity.promotionStatus) }
+              ? {
+                  promotionStatus: sandboxPromotionStatusToPrisma(
+                    entity.promotionStatus,
+                  ),
+                }
               : {}),
             runtimeSignals: entity.runtimeSignals,
             diffEntries: entity.diffEntries,
@@ -481,8 +558,11 @@ const createSandboxCertificationPrismaClient = async (
 export const openSandboxCertificationPersistenceSession = async (
   databaseUrl: string,
 ): Promise<SandboxCertificationPersistenceSession> => {
-  const client = await createSandboxCertificationPrismaClient(databaseUrl) as unknown as SandboxCertificationPersistenceSession["client"];
-  const sandboxCertificationRuns = createPrismaSandboxCertificationRunStore(client);
+  const client = (await createSandboxCertificationPrismaClient(
+    databaseUrl,
+  )) as unknown as SandboxCertificationPersistenceSession["client"];
+  const sandboxCertificationRuns =
+    createPrismaSandboxCertificationRunStore(client);
   return {
     client,
     ...(sandboxCertificationRuns ? { sandboxCertificationRuns } : {}),
@@ -598,13 +678,21 @@ export interface SandboxCertificationRunQuery {
   readonly profileName?: string;
   readonly packId?: string;
   readonly status?: SandboxCertificationRunEntity["status"];
-  readonly promotionStatus?: NonNullable<SandboxCertificationRunEntity["promotionStatus"]>;
+  readonly promotionStatus?: NonNullable<
+    SandboxCertificationRunEntity["promotionStatus"]
+  >;
 }
 
 export interface SandboxCertificationRunRepositoryLike {
-  append?(entity: SandboxCertificationRunEntity): Promise<SandboxCertificationRunEntity>;
-  save?(entity: SandboxCertificationRunEntity): Promise<SandboxCertificationRunEntity>;
-  listByQuery?(query?: SandboxCertificationRunQuery): Promise<readonly SandboxCertificationRunEntity[]>;
+  append?(
+    entity: SandboxCertificationRunEntity,
+  ): Promise<SandboxCertificationRunEntity>;
+  save?(
+    entity: SandboxCertificationRunEntity,
+  ): Promise<SandboxCertificationRunEntity>;
+  listByQuery?(
+    query?: SandboxCertificationRunQuery,
+  ): Promise<readonly SandboxCertificationRunEntity[]>;
   findLatestByProfilePack?(
     profileName: string,
     packId: string,
@@ -615,19 +703,27 @@ export interface SandboxCertificationRunRepositoryLike {
 export class InMemorySandboxCertificationRunStore implements SandboxCertificationRunRepositoryLike {
   private readonly runs: SandboxCertificationRunEntity[] = [];
 
-  async append(entity: SandboxCertificationRunEntity): Promise<SandboxCertificationRunEntity> {
+  async append(
+    entity: SandboxCertificationRunEntity,
+  ): Promise<SandboxCertificationRunEntity> {
     this.runs.push(structuredClone(entity));
     return structuredClone(entity);
   }
 
-  async listByQuery(query: SandboxCertificationRunQuery = {}): Promise<readonly SandboxCertificationRunEntity[]> {
+  async listByQuery(
+    query: SandboxCertificationRunQuery = {},
+  ): Promise<readonly SandboxCertificationRunEntity[]> {
     return this.runs
-      .filter((run) =>
-        (query.verificationKind === undefined || run.verificationKind === query.verificationKind) &&
-        (query.profileName === undefined || run.profileName === query.profileName) &&
-        (query.packId === undefined || run.packId === query.packId) &&
-        (query.status === undefined || run.status === query.status) &&
-        (query.promotionStatus === undefined || run.promotionStatus === query.promotionStatus),
+      .filter(
+        (run) =>
+          (query.verificationKind === undefined ||
+            run.verificationKind === query.verificationKind) &&
+          (query.profileName === undefined ||
+            run.profileName === query.profileName) &&
+          (query.packId === undefined || run.packId === query.packId) &&
+          (query.status === undefined || run.status === query.status) &&
+          (query.promotionStatus === undefined ||
+            run.promotionStatus === query.promotionStatus),
       )
       .sort((left, right) => right.generatedAt.localeCompare(left.generatedAt))
       .map((run) => structuredClone(run));
@@ -639,11 +735,13 @@ export class InMemorySandboxCertificationRunStore implements SandboxCertificatio
     verificationKind?: SandboxCertificationRunEntity["verificationKind"],
   ): Promise<SandboxCertificationRunEntity | null> {
     return (
-      (await this.listByQuery({
-        ...(verificationKind ? { verificationKind } : {}),
-        profileName,
-        packId,
-      }))[0] ?? null
+      (
+        await this.listByQuery({
+          ...(verificationKind ? { verificationKind } : {}),
+          profileName,
+          packId,
+        })
+      )[0] ?? null
     );
   }
 }
@@ -663,8 +761,9 @@ export interface RuntimeReleaseCertificationEvidencePack {
   readonly workspace: string;
   readonly runtime: {
     readonly gitSha: string;
-    readonly baselineRef?: string;
-    readonly candidateRef?: string;
+    readonly evidenceProfile: RuntimeReleaseEvidenceProfile;
+    readonly baselineRef: string;
+    readonly candidateRef: string;
   };
   readonly runtimeSignals: Readonly<Record<string, unknown>>;
   readonly promotion: SandboxPromotionReport;
@@ -682,6 +781,7 @@ export interface RuntimeReleaseCertificationResult {
 export interface RuntimeReleaseCertificationOptions {
   readonly databaseUrl: string;
   readonly gitSha: string;
+  readonly evidenceProfile?: RuntimeReleaseEvidenceProfile;
   readonly now?: Date;
   readonly lookbackHours?: number;
   readonly artifactPath?: string;
@@ -694,7 +794,9 @@ export interface RuntimeReleaseCertificationOptions {
   readonly correlationId?: string;
 }
 
-export const prepareSandboxRun = (options: SandboxRunnerOptions): SandboxRunManifest => {
+export const prepareSandboxRun = (
+  options: SandboxRunnerOptions,
+): SandboxRunManifest => {
   const fixturePack = getSyntheticFixturePack(options.packId);
   if (!fixturePack.profileHints.includes(options.profileName)) {
     throw new Error(
@@ -718,7 +820,9 @@ export const prepareSandboxRun = (options: SandboxRunnerOptions): SandboxRunMani
   });
 };
 
-export const runSandboxScenario = (options: SandboxRunnerOptions): SandboxRunSummary => {
+export const runSandboxScenario = (
+  options: SandboxRunnerOptions,
+): SandboxRunSummary => {
   const manifest = prepareSandboxRun(options);
   return createSummary(manifest, options.mode);
 };
@@ -749,7 +853,9 @@ const materializeManifestNamespaces = async (
 
   try {
     for (const namespace of namespaces) {
-      persistedNamespaces.push(await unitOfWork.sandboxNamespaces.save(namespace));
+      persistedNamespaces.push(
+        await unitOfWork.sandboxNamespaces.save(namespace),
+      );
     }
 
     return persistedNamespaces.map((namespace) => namespace.id);
@@ -772,7 +878,10 @@ export const materializeSandboxRun = async (
   unitOfWork: SandboxStorageUnitOfWorkLike,
 ): Promise<MaterializedSandboxRun> => {
   const manifest = prepareSandboxRun(options);
-  const persistedNamespaceIds = await materializeManifestNamespaces(manifest, unitOfWork);
+  const persistedNamespaceIds = await materializeManifestNamespaces(
+    manifest,
+    unitOfWork,
+  );
 
   return {
     summary: createSummary(manifest, options.mode),
@@ -800,7 +909,10 @@ export const compareSandboxReleases = (input: {
     gitSha: input.candidateGitSha,
     ...(input.now ? { now: input.now } : {}),
   });
-  const comparison = compareFixturePacks(baselineManifest.fixturePack, candidateManifest.fixturePack);
+  const comparison = compareFixturePacks(
+    baselineManifest.fixturePack,
+    candidateManifest.fixturePack,
+  );
 
   return {
     baselineGitSha: input.baselineGitSha,
@@ -808,7 +920,8 @@ export const compareSandboxReleases = (input: {
     packId: input.packId,
     changed: comparison.changed,
     fingerprintChanged:
-      comparison.baselineFingerprint.fingerprint !== comparison.candidateFingerprint.fingerprint,
+      comparison.baselineFingerprint.fingerprint !==
+      comparison.candidateFingerprint.fingerprint,
     fixtureDelta: comparison.fixtureDelta,
     replayEventDelta: comparison.replayEventDelta,
     changedFixtureIds: comparison.changedFixtureIds,
@@ -852,28 +965,42 @@ const compareGoldenValues = (
         continue;
       }
       if (index >= actual.length) {
-        entries.push({ path: childPath, kind: "removed", expected: expected[index] });
+        entries.push({
+          path: childPath,
+          kind: "removed",
+          expected: expected[index],
+        });
         continue;
       }
-      entries.push(...compareGoldenValues(expected[index], actual[index], childPath));
+      entries.push(
+        ...compareGoldenValues(expected[index], actual[index], childPath),
+      );
     }
     return entries;
   }
 
   if (isPlainObject(expected) && isPlainObject(actual)) {
     const entries: GoldenDiffEntry[] = [];
-    const keys = [...new Set([...Object.keys(expected), ...Object.keys(actual)])].sort();
+    const keys = [
+      ...new Set([...Object.keys(expected), ...Object.keys(actual)]),
+    ].sort();
     for (const key of keys) {
       const childPath = `${path}.${key}`;
       if (!(key in actual)) {
-        entries.push({ path: childPath, kind: "removed", expected: expected[key] });
+        entries.push({
+          path: childPath,
+          kind: "removed",
+          expected: expected[key],
+        });
         continue;
       }
       if (!(key in expected)) {
         entries.push({ path: childPath, kind: "added", actual: actual[key] });
         continue;
       }
-      entries.push(...compareGoldenValues(expected[key], actual[key], childPath));
+      entries.push(
+        ...compareGoldenValues(expected[key], actual[key], childPath),
+      );
     }
     return entries;
   }
@@ -921,50 +1048,68 @@ const withCertificationOutcome = (
   evidence: SandboxCertificationEvidencePack,
   certificationStatus: SandboxCertificationResult["status"],
 ): SandboxCertificationEvidencePack => {
-  const gates: SandboxPromotionReport["gates"] = evidence.summary.promotion.gates.map((gate) => {
-    if (gate.name !== "sandbox-certification") {
-      return gate;
-    }
+  const gates: SandboxPromotionReport["gates"] =
+    evidence.summary.promotion.gates.map((gate) => {
+      if (gate.name !== "sandbox-certification") {
+        return gate;
+      }
 
-    const gateStatus: SandboxPromotionReport["gates"][number]["status"] =
-      certificationStatus === "passed" ? "pass" : "block";
+      const gateStatus: SandboxPromotionReport["gates"][number]["status"] =
+        certificationStatus === "passed" ? "pass" : "block";
 
-    return {
-      ...gate,
-      status: gateStatus,
-      detail:
-        certificationStatus === "passed"
-          ? "Certification evidence matches the tracked golden snapshot."
-          : "Certification drift was detected against the tracked golden snapshot.",
-    };
-  });
+      return {
+        ...gate,
+        status: gateStatus,
+        detail:
+          certificationStatus === "passed"
+            ? "Certification evidence matches the tracked golden snapshot."
+            : "Certification drift was detected against the tracked golden snapshot.",
+      };
+    });
   const findGateStatus = (
     name: SandboxPromotionReport["gates"][number]["name"],
   ): SandboxPromotionReport["gates"][number]["status"] =>
     gates.find((gate) => gate.name === name)?.status ?? "block";
-  const findGateDetail = (name: SandboxPromotionReport["gates"][number]["name"], fallback: string): string =>
-    gates.find((gate) => gate.name === name)?.detail ?? fallback;
+  const findGateDetail = (
+    name: SandboxPromotionReport["gates"][number]["name"],
+    fallback: string,
+  ): string => gates.find((gate) => gate.name === name)?.detail ?? fallback;
 
   const promotion = evaluateSandboxPromotion({
     certification: {
       status: findGateStatus("sandbox-certification"),
-      detail: findGateDetail("sandbox-certification", "Certification gate status is unavailable."),
+      detail: findGateDetail(
+        "sandbox-certification",
+        "Certification gate status is unavailable.",
+      ),
     },
     contractCoverage: {
       status: findGateStatus("contract-coverage"),
-      detail: findGateDetail("contract-coverage", "Contract coverage is unavailable."),
+      detail: findGateDetail(
+        "contract-coverage",
+        "Contract coverage is unavailable.",
+      ),
     },
     cronWorkflows: {
       status: findGateStatus("cron-workflows"),
-      detail: findGateDetail("cron-workflows", "Cron workflow status is unavailable."),
+      detail: findGateDetail(
+        "cron-workflows",
+        "Cron workflow status is unavailable.",
+      ),
     },
     publicationSafety: {
       status: findGateStatus("publication-safety"),
-      detail: findGateDetail("publication-safety", "Publication safety status is unavailable."),
+      detail: findGateDetail(
+        "publication-safety",
+        "Publication safety status is unavailable.",
+      ),
     },
     capabilityIsolation: {
       status: findGateStatus("capability-isolation"),
-      detail: findGateDetail("capability-isolation", "Capability isolation status is unavailable."),
+      detail: findGateDetail(
+        "capability-isolation",
+        "Capability isolation status is unavailable.",
+      ),
     },
     manualQa: {
       status: findGateStatus("manual-qa"),
@@ -984,7 +1129,9 @@ const withCertificationOutcome = (
 export const loadSandboxGoldenSnapshot = async (
   goldenPath: string,
 ): Promise<SandboxGoldenSnapshot> => {
-  const loaded = JSON.parse(await readFile(goldenPath, "utf8")) as SandboxGoldenSnapshot;
+  const loaded = JSON.parse(
+    await readFile(goldenPath, "utf8"),
+  ) as SandboxGoldenSnapshot;
   if (loaded.schemaVersion !== "sandbox-golden-v1") {
     throw new Error(`Unsupported sandbox golden schema in ${goldenPath}`);
   }
@@ -1006,7 +1153,11 @@ const writeJsonArtifact = async (
 ): Promise<string> => {
   const resolvedArtifactPath = resolve(artifactPath);
   await mkdir(dirname(resolvedArtifactPath), { recursive: true });
-  await writeFile(resolvedArtifactPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await writeFile(
+    resolvedArtifactPath,
+    `${JSON.stringify(payload, null, 2)}\n`,
+    "utf8",
+  );
   return resolvedArtifactPath;
 };
 
@@ -1019,7 +1170,9 @@ const writeCertificationHistoryArtifact = async (input: {
   readonly profileName?: string;
   readonly packId?: string;
 }): Promise<string> => {
-  const timestamp = sanitizeArtifactToken(input.generatedAt.replace(/[:]/g, ""));
+  const timestamp = sanitizeArtifactToken(
+    input.generatedAt.replace(/[:]/g, ""),
+  );
   const historyPath = resolve(
     input.historyRoot,
     input.verificationKind,
@@ -1042,7 +1195,10 @@ export const certifySandboxRun = async (
   options: SandboxCertificationOptions,
 ): Promise<SandboxCertificationResult> => {
   const initialEvidence = createSandboxCertificationEvidencePack(options);
-  const runId = createSandboxCertificationRunId("synthetic-integrity", initialEvidence.generatedAt);
+  const runId = createSandboxCertificationRunId(
+    "synthetic-integrity",
+    initialEvidence.generatedAt,
+  );
   const telemetry = createSyntheticIntegrityRefs(runId, options);
   const observability = createObservabilityKit({
     context: {
@@ -1070,8 +1226,14 @@ export const certifySandboxRun = async (
   });
   const resolvedGoldenPath = resolve(options.goldenPath);
   const expectedGolden = await loadSandboxGoldenSnapshot(resolvedGoldenPath);
-  const diff = diffSandboxGoldenSnapshot(expectedGolden, initialEvidence.goldenSnapshot);
-  const evidence = withCertificationOutcome(initialEvidence, diff.changed ? "failed" : "passed");
+  const diff = diffSandboxGoldenSnapshot(
+    expectedGolden,
+    initialEvidence.goldenSnapshot,
+  );
+  const evidence = withCertificationOutcome(
+    initialEvidence,
+    diff.changed ? "failed" : "passed",
+  );
   const artifactPath = options.artifactPath
     ? await writeSandboxCertificationArtifact(options.artifactPath, evidence)
     : undefined;
@@ -1086,12 +1248,18 @@ export const certifySandboxRun = async (
         packId: options.packId,
       })
     : undefined;
-  observability.setGauge("sandbox.certification.synthetic_integrity.diff_entries", diff.entryCount, {
-    refs: telemetry.refs,
-    recordedAt: evidence.generatedAt,
-  });
+  observability.setGauge(
+    "sandbox.certification.synthetic_integrity.diff_entries",
+    diff.entryCount,
+    {
+      refs: telemetry.refs,
+      recordedAt: evidence.generatedAt,
+    },
+  );
   observability.incrementCounter(
-    diff.changed ? "sandbox.certification.synthetic_integrity.failed" : "sandbox.certification.synthetic_integrity.passed",
+    diff.changed
+      ? "sandbox.certification.synthetic_integrity.failed"
+      : "sandbox.certification.synthetic_integrity.passed",
     1,
     {
       refs: telemetry.refs,
@@ -1134,7 +1302,8 @@ export const certifySandboxRun = async (
       artifactPath: artifactPath ?? null,
       historyArtifactPath: historyArtifactPath ?? null,
       telemetryDurable:
-        observability.sinkCapabilities.eventsDurable || observability.sinkCapabilities.metricsDurable,
+        observability.sinkCapabilities.eventsDurable ||
+        observability.sinkCapabilities.metricsDurable,
       telemetryFailures: observability.failures(),
     },
     diffEntries: diff.entries,
@@ -1146,7 +1315,10 @@ export const certifySandboxRun = async (
     },
     generatedAt: evidence.generatedAt,
   };
-  const persistedRun = await appendSandboxCertificationRun(options.sandboxCertificationRuns, runEntity);
+  const persistedRun = await appendSandboxCertificationRun(
+    options.sandboxCertificationRuns,
+    runEntity,
+  );
 
   return {
     status: diff.changed ? "failed" : "passed",
@@ -1204,7 +1376,9 @@ const listPrismaRecords = async <TRecord>(
   delegateName: string,
   args?: Record<string, unknown>,
 ): Promise<TRecord[]> => {
-  const delegate = asPrismaFindManyDelegate<TRecord>(delegateHost[delegateName]);
+  const delegate = asPrismaFindManyDelegate<TRecord>(
+    delegateHost[delegateName],
+  );
   if (!delegate) {
     return [];
   }
@@ -1215,17 +1389,36 @@ const listPrismaRecords = async <TRecord>(
 export const runRuntimeReleaseCertification = async (
   options: RuntimeReleaseCertificationOptions,
 ): Promise<RuntimeReleaseCertificationResult> => {
-  const generatedAt = (options.now ?? new Date()).toISOString();
+  const resolvedEvidenceDefaults = resolveRuntimeReleaseEvidenceDefaults({
+    gitSha: options.gitSha,
+    ...(options.evidenceProfile
+      ? { evidenceProfile: options.evidenceProfile }
+      : {}),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.lookbackHours !== undefined
+      ? { lookbackHours: options.lookbackHours }
+      : {}),
+    ...(options.baselineRef ? { baselineRef: options.baselineRef } : {}),
+    ...(options.candidateRef ? { candidateRef: options.candidateRef } : {}),
+  });
+  const generatedAt = (
+    resolvedEvidenceDefaults.now ?? new Date()
+  ).toISOString();
   const runId = createSandboxCertificationRunId("runtime-release", generatedAt);
-  const session = await openSandboxCertificationPersistenceSession(options.databaseUrl);
-  const telemetry = createRuntimeReleaseRefs(runId, options);
+  const session = await openSandboxCertificationPersistenceSession(
+    options.databaseUrl,
+  );
+  const telemetry = createRuntimeReleaseRefs(runId, {
+    ...options,
+    gitSha: resolvedEvidenceDefaults.gitSha,
+  });
   const observability = createObservabilityKit({
     context: {
       correlationId: telemetry.correlationId,
       traceId: telemetry.traceId,
       workspace: workspaceInfo.workspaceName,
       labels: {
-        gitSha: options.gitSha,
+        gitSha: resolvedEvidenceDefaults.gitSha,
         verificationKind: "runtime-release",
       },
     },
@@ -1236,13 +1429,16 @@ export const runRuntimeReleaseCertification = async (
   });
 
   try {
-    const lookbackHours = Math.max(1, options.lookbackHours ?? 168);
-    const lookbackStart = new Date(Date.parse(generatedAt) - lookbackHours * 60 * 60 * 1000);
+    const lookbackHours = resolvedEvidenceDefaults.lookbackHours;
+    const lookbackStart = new Date(
+      Date.parse(generatedAt) - lookbackHours * 60 * 60 * 1000,
+    );
     observability.log("runtime-release certification started", {
       data: {
-        baselineRef: options.baselineRef ?? null,
-        candidateRef: options.candidateRef ?? null,
-        gitSha: options.gitSha,
+        baselineRef: resolvedEvidenceDefaults.baselineRef,
+        candidateRef: resolvedEvidenceDefaults.candidateRef,
+        evidenceProfile: resolvedEvidenceDefaults.evidenceProfile,
+        gitSha: resolvedEvidenceDefaults.gitSha,
         lookbackHours,
       },
       refs: telemetry.refs,
@@ -1250,60 +1446,110 @@ export const runRuntimeReleaseCertification = async (
     });
 
     const delegateHost = session.client as Record<string, unknown>;
-    const automationCycles = await listPrismaRecords<Record<string, unknown>>(delegateHost, "automationCycle", {
-      where: { createdAt: { gte: lookbackStart } },
-      orderBy: [{ createdAt: "desc" }],
-      take: 100,
-    });
-    const tasks = await listPrismaRecords<Record<string, unknown>>(delegateHost, "task", {
-      where: { createdAt: { gte: lookbackStart } },
-      orderBy: [{ createdAt: "desc" }],
-      take: 500,
-    });
-    const taskRuns = await listPrismaRecords<Record<string, unknown>>(delegateHost, "taskRun", {
-      where: { createdAt: { gte: lookbackStart } },
-      orderBy: [{ createdAt: "desc" }],
-      take: 500,
-    });
-    const auditEvents = await listPrismaRecords<Record<string, unknown>>(delegateHost, "auditEvent", {
-      where: { occurredAt: { gte: lookbackStart } },
-      orderBy: [{ occurredAt: "desc" }],
-      take: 500,
-    });
+    const automationCycles = await listPrismaRecords<Record<string, unknown>>(
+      delegateHost,
+      "automationCycle",
+      {
+        where: { createdAt: { gte: lookbackStart } },
+        orderBy: [{ createdAt: "desc" }],
+        take: 100,
+      },
+    );
+    const tasks = await listPrismaRecords<Record<string, unknown>>(
+      delegateHost,
+      "task",
+      {
+        where: { createdAt: { gte: lookbackStart } },
+        orderBy: [{ createdAt: "desc" }],
+        take: 500,
+      },
+    );
+    const taskRuns = await listPrismaRecords<Record<string, unknown>>(
+      delegateHost,
+      "taskRun",
+      {
+        where: { createdAt: { gte: lookbackStart } },
+        orderBy: [{ createdAt: "desc" }],
+        take: 500,
+      },
+    );
+    const auditEvents = await listPrismaRecords<Record<string, unknown>>(
+      delegateHost,
+      "auditEvent",
+      {
+        where: { occurredAt: { gte: lookbackStart } },
+        orderBy: [{ occurredAt: "desc" }],
+        take: 500,
+      },
+    );
 
-    const cycleStatuses = automationCycles.map((cycle) => asString(cycle.status) ?? "unknown");
-    const cycleKinds = automationCycles.map((cycle) => asString(cycle.kind) ?? "unknown");
-    const taskStatuses = tasks.map((task) => asString(task.status) ?? "unknown");
-    const taskRunStatuses = taskRuns.map((taskRun) => asString(taskRun.status) ?? "unknown");
-    const auditAggregateTypes = auditEvents.map((event) => asString(event.aggregateType) ?? "unknown");
+    const cycleStatuses = automationCycles.map(
+      (cycle) => asString(cycle.status) ?? "unknown",
+    );
+    const cycleKinds = automationCycles.map(
+      (cycle) => asString(cycle.kind) ?? "unknown",
+    );
+    const taskStatuses = tasks.map(
+      (task) => asString(task.status) ?? "unknown",
+    );
+    const taskRunStatuses = taskRuns.map(
+      (taskRun) => asString(taskRun.status) ?? "unknown",
+    );
+    const auditAggregateTypes = auditEvents.map(
+      (event) => asString(event.aggregateType) ?? "unknown",
+    );
     const tasksWithTraceId = tasks.filter((task) => {
       const payload = asRecord(task.payload);
-      return asString(task.traceId) !== undefined || asString(payload?.traceId) !== undefined;
+      return (
+        asString(task.traceId) !== undefined ||
+        asString(payload?.traceId) !== undefined
+      );
     }).length;
     const auditsWithTraceId = auditEvents.filter((event) => {
       const payload = asRecord(event.payload);
-      return asString(event.traceId) !== undefined || asString(payload?.traceId) !== undefined;
+      return (
+        asString(event.traceId) !== undefined ||
+        asString(payload?.traceId) !== undefined
+      );
     }).length;
-    const taskTraceCoverageRate = tasks.length === 0 ? 0 : Number((tasksWithTraceId / tasks.length).toFixed(4));
-    const auditTraceCoverageRate = auditEvents.length === 0 ? 0 : Number((auditsWithTraceId / auditEvents.length).toFixed(4));
+    const taskTraceCoverageRate =
+      tasks.length === 0
+        ? 0
+        : Number((tasksWithTraceId / tasks.length).toFixed(4));
+    const auditTraceCoverageRate =
+      auditEvents.length === 0
+        ? 0
+        : Number((auditsWithTraceId / auditEvents.length).toFixed(4));
     const schedulerSucceeded = automationCycles.some(
-      (cycle) => asString(cycle.kind) === "scheduler" && asString(cycle.status) === "succeeded",
+      (cycle) =>
+        asString(cycle.kind) === "scheduler" &&
+        asString(cycle.status) === "succeeded",
     );
     const dispatcherSucceeded = automationCycles.some(
-      (cycle) => asString(cycle.kind) === "dispatcher" && asString(cycle.status) === "succeeded",
+      (cycle) =>
+        asString(cycle.kind) === "dispatcher" &&
+        asString(cycle.status) === "succeeded",
     );
     const recoverySucceeded = automationCycles.some(
-      (cycle) => asString(cycle.kind) === "recovery" && asString(cycle.status) === "succeeded",
+      (cycle) =>
+        asString(cycle.kind) === "recovery" &&
+        asString(cycle.status) === "succeeded",
     );
-    const failedTasks = taskStatuses.filter((status) => status === "failed").length;
-    const quarantinedTasks = taskStatuses.filter((status) => status === "quarantined").length;
+    const failedTasks = taskStatuses.filter(
+      (status) => status === "failed",
+    ).length;
+    const quarantinedTasks = taskStatuses.filter(
+      (status) => status === "quarantined",
+    ).length;
     const latestCycleId = asString(automationCycles[0]?.id);
     const latestAuditOccurredAt = asIsoString(auditEvents[0]?.occurredAt);
 
     const promotion = evaluateSandboxPromotion({
       certification: {
         status:
-          automationCycles.length > 0 && taskRuns.length > 0 && auditEvents.length > 0
+          automationCycles.length > 0 &&
+          taskRuns.length > 0 &&
+          auditEvents.length > 0
             ? "pass"
             : "block",
         detail: `${automationCycles.length} cycle(s), ${tasks.length} task(s), ${taskRuns.length} task run(s), ${auditEvents.length} audit event(s) observed in durable runtime.`,
@@ -1318,17 +1564,29 @@ export const runRuntimeReleaseCertification = async (
         detail: `scheduler=${schedulerSucceeded ? "ok" : "missing"} | dispatcher=${dispatcherSucceeded ? "ok" : "missing"} | recovery=${recoverySucceeded ? "ok" : "missing"}`,
       },
       cronWorkflows: {
-        status: schedulerSucceeded ? "pass" : automationCycles.some((cycle) => asString(cycle.kind) === "scheduler") ? "warn" : "block",
+        status: schedulerSucceeded
+          ? "pass"
+          : automationCycles.some(
+                (cycle) => asString(cycle.kind) === "scheduler",
+              )
+            ? "warn"
+            : "block",
         detail: schedulerSucceeded
           ? "A succeeded scheduler cycle was observed in the lookback window."
           : "No succeeded scheduler cycle was observed in the lookback window.",
       },
       publicationSafety: {
-        status: quarantinedTasks > 0 ? "block" : failedTasks > 0 ? "warn" : "pass",
+        status:
+          quarantinedTasks > 0 ? "block" : failedTasks > 0 ? "warn" : "pass",
         detail: `${quarantinedTasks} quarantined task(s) and ${failedTasks} failed task(s) observed.`,
       },
       capabilityIsolation: {
-        status: taskTraceCoverageRate >= 0.8 && auditTraceCoverageRate >= 0.8 ? "pass" : taskTraceCoverageRate >= 0.5 ? "warn" : "block",
+        status:
+          taskTraceCoverageRate >= 0.8 && auditTraceCoverageRate >= 0.8
+            ? "pass"
+            : taskTraceCoverageRate >= 0.5
+              ? "warn"
+              : "block",
         detail: `task trace coverage ${Math.round(taskTraceCoverageRate * 100)}% | audit trace coverage ${Math.round(auditTraceCoverageRate * 100)}%`,
       },
       manualQa: {
@@ -1342,25 +1600,74 @@ export const runRuntimeReleaseCertification = async (
 
     const diffEntries: SandboxCertificationDiffEntry[] = [
       ...(automationCycles.length === 0
-        ? [{ path: "$.runtimeSignals.automationCycles.total", kind: "changed", expected: ">0", actual: 0 } satisfies SandboxCertificationDiffEntry]
+        ? [
+            {
+              path: "$.runtimeSignals.automationCycles.total",
+              kind: "changed",
+              expected: ">0",
+              actual: 0,
+            } satisfies SandboxCertificationDiffEntry,
+          ]
         : []),
       ...(!schedulerSucceeded
-        ? [{ path: "$.runtimeSignals.automationCycles.scheduler", kind: "changed", expected: "succeeded", actual: "missing" } satisfies SandboxCertificationDiffEntry]
+        ? [
+            {
+              path: "$.runtimeSignals.automationCycles.scheduler",
+              kind: "changed",
+              expected: "succeeded",
+              actual: "missing",
+            } satisfies SandboxCertificationDiffEntry,
+          ]
         : []),
       ...(!dispatcherSucceeded
-        ? [{ path: "$.runtimeSignals.automationCycles.dispatcher", kind: "changed", expected: "succeeded", actual: "missing" } satisfies SandboxCertificationDiffEntry]
+        ? [
+            {
+              path: "$.runtimeSignals.automationCycles.dispatcher",
+              kind: "changed",
+              expected: "succeeded",
+              actual: "missing",
+            } satisfies SandboxCertificationDiffEntry,
+          ]
         : []),
       ...(!recoverySucceeded
-        ? [{ path: "$.runtimeSignals.automationCycles.recovery", kind: "changed", expected: "succeeded", actual: "missing" } satisfies SandboxCertificationDiffEntry]
+        ? [
+            {
+              path: "$.runtimeSignals.automationCycles.recovery",
+              kind: "changed",
+              expected: "succeeded",
+              actual: "missing",
+            } satisfies SandboxCertificationDiffEntry,
+          ]
         : []),
       ...(quarantinedTasks > 0
-        ? [{ path: "$.runtimeSignals.tasks.quarantined", kind: "changed", expected: 0, actual: quarantinedTasks } satisfies SandboxCertificationDiffEntry]
+        ? [
+            {
+              path: "$.runtimeSignals.tasks.quarantined",
+              kind: "changed",
+              expected: 0,
+              actual: quarantinedTasks,
+            } satisfies SandboxCertificationDiffEntry,
+          ]
         : []),
       ...(taskTraceCoverageRate < 0.8
-        ? [{ path: "$.runtimeSignals.tasks.traceCoverageRate", kind: "changed", expected: 0.8, actual: taskTraceCoverageRate } satisfies SandboxCertificationDiffEntry]
+        ? [
+            {
+              path: "$.runtimeSignals.tasks.traceCoverageRate",
+              kind: "changed",
+              expected: 0.8,
+              actual: taskTraceCoverageRate,
+            } satisfies SandboxCertificationDiffEntry,
+          ]
         : []),
       ...(auditEvents.length === 0
-        ? [{ path: "$.runtimeSignals.auditEvents.total", kind: "changed", expected: ">0", actual: 0 } satisfies SandboxCertificationDiffEntry]
+        ? [
+            {
+              path: "$.runtimeSignals.auditEvents.total",
+              kind: "changed",
+              expected: ">0",
+              actual: 0,
+            } satisfies SandboxCertificationDiffEntry,
+          ]
         : []),
     ];
 
@@ -1398,9 +1705,10 @@ export const runRuntimeReleaseCertification = async (
       generatedAt,
       workspace: describeWorkspace(),
       runtime: {
-        gitSha: options.gitSha,
-        ...(options.baselineRef ? { baselineRef: options.baselineRef } : {}),
-        ...(options.candidateRef ? { candidateRef: options.candidateRef } : {}),
+        gitSha: resolvedEvidenceDefaults.gitSha,
+        evidenceProfile: resolvedEvidenceDefaults.evidenceProfile,
+        baselineRef: resolvedEvidenceDefaults.baselineRef,
+        candidateRef: resolvedEvidenceDefaults.candidateRef,
       },
       runtimeSignals,
       promotion,
@@ -1415,23 +1723,35 @@ export const runRuntimeReleaseCertification = async (
           historyRoot: options.historyRoot,
           verificationKind: "runtime-release",
           generatedAt,
-          gitSha: options.gitSha,
+          gitSha: resolvedEvidenceDefaults.gitSha,
           payload: evidence,
         })
       : undefined;
 
-    observability.setGauge("sandbox.certification.runtime_release.automation_cycles", automationCycles.length, {
-      refs: telemetry.refs,
-      recordedAt: generatedAt,
-    });
-    observability.setGauge("sandbox.certification.runtime_release.tasks", tasks.length, {
-      refs: telemetry.refs,
-      recordedAt: generatedAt,
-    });
-    observability.setGauge("sandbox.certification.runtime_release.audit_events", auditEvents.length, {
-      refs: telemetry.refs,
-      recordedAt: generatedAt,
-    });
+    observability.setGauge(
+      "sandbox.certification.runtime_release.automation_cycles",
+      automationCycles.length,
+      {
+        refs: telemetry.refs,
+        recordedAt: generatedAt,
+      },
+    );
+    observability.setGauge(
+      "sandbox.certification.runtime_release.tasks",
+      tasks.length,
+      {
+        refs: telemetry.refs,
+        recordedAt: generatedAt,
+      },
+    );
+    observability.setGauge(
+      "sandbox.certification.runtime_release.audit_events",
+      auditEvents.length,
+      {
+        refs: telemetry.refs,
+        recordedAt: generatedAt,
+      },
+    );
     observability.log("runtime-release certification completed", {
       severity: promotion.status === "blocked" ? "warn" : "info",
       data: {
@@ -1450,10 +1770,12 @@ export const runRuntimeReleaseCertification = async (
       verificationKind: "runtime-release",
       status: promotion.status === "blocked" ? "failed" : "passed",
       promotionStatus: promotion.status,
+      profileName: resolvedEvidenceDefaults.evidenceProfile,
+      packId: "runtime-release",
       mode: "runtime-release",
-      gitSha: options.gitSha,
-      ...(options.baselineRef ? { baselineRef: options.baselineRef } : {}),
-      ...(options.candidateRef ? { candidateRef: options.candidateRef } : {}),
+      gitSha: resolvedEvidenceDefaults.gitSha,
+      baselineRef: resolvedEvidenceDefaults.baselineRef,
+      candidateRef: resolvedEvidenceDefaults.candidateRef,
       ...(historyArtifactPath
         ? { artifactRef: historyArtifactPath }
         : artifactPath
@@ -1465,6 +1787,8 @@ export const runRuntimeReleaseCertification = async (
       },
       diffEntries,
       summary: {
+        evidenceProfile: resolvedEvidenceDefaults.evidenceProfile,
+        lookbackHours,
         promotion,
         latestCycleId: latestCycleId ?? null,
       },
@@ -1487,7 +1811,10 @@ export const runRuntimeReleaseCertification = async (
   }
 };
 
-const parseArgValue = (argv: readonly string[], name: string): string | undefined => {
+const parseArgValue = (
+  argv: readonly string[],
+  name: string,
+): string | undefined => {
   const index = argv.indexOf(name);
   if (index === -1) {
     return undefined;
@@ -1496,18 +1823,24 @@ const parseArgValue = (argv: readonly string[], name: string): string | undefine
   return argv[index + 1];
 };
 
-const hasArgFlag = (argv: readonly string[], flag: string): boolean => argv.includes(flag);
+const hasArgFlag = (argv: readonly string[], flag: string): boolean =>
+  argv.includes(flag);
 
 export const parseSandboxRunnerArgs = (
   argv: readonly string[],
 ): SandboxRunnerOptions => {
   const mode = (parseArgValue(argv, "--mode") ?? "smoke") as RunnerMode;
-  const profileName = (parseArgValue(argv, "--profile") ?? "ci-smoke") as SandboxProfileName;
+  const profileName = (parseArgValue(argv, "--profile") ??
+    "ci-smoke") as SandboxProfileName;
   const packId = parseArgValue(argv, "--pack") ?? "football-dual-smoke";
   const gitSha = parseArgValue(argv, "--git-sha") ?? "dev-sha-0000000";
   const now = parseArgValue(argv, "--now");
 
-  const validModes: readonly RunnerMode[] = ["smoke", "replay", "cron-validation"];
+  const validModes: readonly RunnerMode[] = [
+    "smoke",
+    "replay",
+    "cron-validation",
+  ];
   if (!validModes.includes(mode)) {
     throw new Error(`Unsupported mode: ${mode}`);
   }
@@ -1561,7 +1894,9 @@ export const parseSandboxCertificationArgs = (
   };
 };
 
-export const runSandboxCertificationCli = async (argv: readonly string[]): Promise<string> => {
+export const runSandboxCertificationCli = async (
+  argv: readonly string[],
+): Promise<string> => {
   const result = await certifySandboxRun(parseSandboxCertificationArgs(argv));
   return JSON.stringify(result, null, 2);
 };
@@ -1572,7 +1907,9 @@ const isEntrypoint =
 
 if (isEntrypoint) {
   if (hasArgFlag(process.argv.slice(2), "--certify")) {
-    process.stdout.write(`${await runSandboxCertificationCli(process.argv.slice(2))}\n`);
+    process.stdout.write(
+      `${await runSandboxCertificationCli(process.argv.slice(2))}\n`,
+    );
   } else {
     process.stdout.write(`${runSandboxCli(process.argv.slice(2))}\n`);
   }

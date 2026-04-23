@@ -24,7 +24,15 @@ test("authz lets system actors bypass specific capability checks", () => {
   const actor = systemActor("system:test");
 
   assert.equal(hasCapability(actor, "workflow:override"), true);
+  assert.equal(hasCapability(actor, "release:approve"), true);
   assert.doesNotThrow(() => assertCapability(actor, "publish:webhook"));
+});
+
+test("authz grants release approval to operators by default", () => {
+  const actor = createAuthorizationActor({ id: "operator:release", role: "operator" });
+
+  assert.equal(hasCapability(actor, "release:approve"), true);
+  assert.doesNotThrow(() => assertCapability(actor, "release:approve"));
 });
 
 test("authz rejects actors without the requested capability", () => {

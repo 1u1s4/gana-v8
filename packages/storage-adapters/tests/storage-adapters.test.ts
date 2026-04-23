@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -61,6 +64,7 @@ import {
   validationDomainToCreateInput,
   validationRecordToDomain,
 } from "../src/index.js";
+import { runOpsHistoryRetention } from "../src/ops-history-retention.js";
 
 test("in-memory repositories store and query core aggregates", async () => {
   const uow = createInMemoryUnitOfWork();
@@ -319,6 +323,223 @@ test("release ops repositories persist certification history and telemetry queri
     (await uow.metricSamples.listByQuery({ sandboxCertificationRunId: runtimeRun.id }))[0]?.id,
     metricSample.id,
   );
+});
+
+test("in-memory certification retention preserves the latest expired run per tuple", async () => {
+  const uow = createInMemoryUnitOfWork();
+  const cutoff = "2026-01-01T00:00:00.000Z";
+
+  const oldestExpiredRun = createSandboxCertificationRun({
+    id: "cert-oldest-expired",
+    verificationKind: "synthetic-integrity",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-oldest",
+    status: "passed",
+    runtimeSignals: {},
+    diffEntries: [],
+    summary: {},
+    generatedAt: "2025-10-01T00:00:00.000Z",
+  });
+  const latestExpiredRun = createSandboxCertificationRun({
+    id: "cert-latest-expired",
+    verificationKind: "synthetic-integrity",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-latest-expired",
+    status: "passed",
+    runtimeSignals: {},
+    diffEntries: [],
+    summary: {},
+    generatedAt: "2025-12-15T00:00:00.000Z",
+  });
+  const expiredWithFreshSibling = createSandboxCertificationRun({
+    id: "cert-expired-with-fresh-sibling",
+    verificationKind: "runtime-release",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-runtime-old",
+    status: "failed",
+    runtimeSignals: {},
+    diffEntries: [],
+    summary: {},
+    generatedAt: "2025-11-01T00:00:00.000Z",
+  });
+  const freshRun = createSandboxCertificationRun({
+    id: "cert-fresh",
+    verificationKind: "runtime-release",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-runtime-fresh",
+    status: "passed",
+    runtimeSignals: {},
+    diffEntries: [],
+    summary: {},
+    generatedAt: "2026-02-01T00:00:00.000Z",
+  });
+  const onlyExpiredRun = createSandboxCertificationRun({
+    id: "cert-only-expired",
+    verificationKind: "synthetic-integrity",
+    profileName: "staging-like",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-only-expired",
+    status: "passed",
+    runtimeSignals: {},
+    diffEntries: [],
+    summary: {},
+    generatedAt: "2025-12-20T00:00:00.000Z",
+  });
+
+  await uow.sandboxCertificationRuns.save(oldestExpiredRun);
+  await uow.sandboxCertificationRuns.save(latestExpiredRun);
+  await uow.sandboxCertificationRuns.save(expiredWithFreshSibling);
+  await uow.sandboxCertificationRuns.save(freshRun);
+  await uow.sandboxCertificationRuns.save(onlyExpiredRun);
+
+  const dryRun = await uow.sandboxCertificationRuns.pruneBefore({ cutoff, dryRun: true });
+  assert.equal(dryRun.prunableCount, 2);
+  assert.equal(dryRun.deletedCount, 0);
+  assert.equal(dryRun.preservedLatestCount, 2);
+  assert.equal((await uow.sandboxCertificationRuns.list()).length, 5);
+
+  const applied = await uow.sandboxCertificationRuns.pruneBefore({ cutoff });
+  assert.equal(applied.prunableCount, 2);
+  assert.equal(applied.deletedCount, 2);
+  assert.equal(applied.preservedLatestCount, 2);
+  assert.deepEqual(
+    (await uow.sandboxCertificationRuns.list()).map((item) => item.id).sort(),
+    [latestExpiredRun.id, freshRun.id, onlyExpiredRun.id].sort(),
+  );
+});
+
+test("ops history retention apply writes a report and records an audit event", async () => {
+  const uow = createInMemoryUnitOfWork();
+  const now = new Date("2026-04-22T12:00:00.000Z");
+  const reportDirectory = mkdtempSync(path.join(os.tmpdir(), "ops-history-retention-"));
+
+  try {
+    const preservedOldRun = createSandboxCertificationRun({
+      id: "cert-preserved-old",
+      verificationKind: "synthetic-integrity",
+      profileName: "ci-smoke",
+      packId: "football-dual-smoke",
+      mode: "smoke",
+      gitSha: "sha-preserved",
+      status: "passed",
+      runtimeSignals: {},
+      diffEntries: [],
+      summary: {},
+      generatedAt: "2025-12-15T00:00:00.000Z",
+    });
+    const prunableOldRun = createSandboxCertificationRun({
+      id: "cert-prunable-old",
+      verificationKind: "runtime-release",
+      profileName: "ci-smoke",
+      packId: "football-dual-smoke",
+      mode: "smoke",
+      gitSha: "sha-prunable",
+      status: "failed",
+      runtimeSignals: {},
+      diffEntries: [],
+      summary: {},
+      generatedAt: "2025-12-01T00:00:00.000Z",
+    });
+    const freshRun = createSandboxCertificationRun({
+      id: "cert-fresh-apply",
+      verificationKind: "runtime-release",
+      profileName: "ci-smoke",
+      packId: "football-dual-smoke",
+      mode: "smoke",
+      gitSha: "sha-fresh",
+      status: "passed",
+      runtimeSignals: {},
+      diffEntries: [],
+      summary: {},
+      generatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    const oldTelemetryEvent = createOperationalTelemetryEvent({
+      id: "telemetry-old",
+      kind: "log",
+      name: "runtime.old",
+      severity: "warn",
+      occurredAt: "2025-12-20T00:00:00.000Z",
+      message: "Old telemetry should be pruned.",
+      attributes: {},
+    });
+    const freshTelemetryEvent = createOperationalTelemetryEvent({
+      id: "telemetry-fresh",
+      kind: "log",
+      name: "runtime.fresh",
+      severity: "info",
+      occurredAt: "2026-04-20T00:00:00.000Z",
+      message: "Fresh telemetry should remain.",
+      attributes: {},
+    });
+    const oldMetricSample = createOperationalMetricSample({
+      id: "metric-old",
+      name: "runtime.old.count",
+      type: "counter",
+      value: 1,
+      labels: {},
+      recordedAt: "2025-12-21T00:00:00.000Z",
+    });
+
+    await uow.sandboxCertificationRuns.save(preservedOldRun);
+    await uow.sandboxCertificationRuns.save(prunableOldRun);
+    await uow.sandboxCertificationRuns.save(freshRun);
+    await uow.telemetryEvents.save(oldTelemetryEvent);
+    await uow.telemetryEvents.save(freshTelemetryEvent);
+    await uow.metricSamples.save(oldMetricSample);
+
+    const report = await runOpsHistoryRetention({
+      unitOfWork: uow,
+      mode: "apply",
+      now,
+      reportDirectory,
+      auditEventIdFactory: () => "audit:ops-history-retention:test",
+    });
+
+    assert.equal(report.cutoff, "2026-01-22T12:00:00.000Z");
+    assert.equal(report.sandboxCertificationRuns.prunableCount, 1);
+    assert.equal(report.sandboxCertificationRuns.deletedCount, 1);
+    assert.equal(report.sandboxCertificationRuns.preservedLatestCount, 1);
+    assert.equal(report.telemetryEvents.deletedCount, 1);
+    assert.equal(report.metricSamples.deletedCount, 1);
+    assert.equal(report.totals.deletedCount, 3);
+    assert.equal(report.auditEventId, "audit:ops-history-retention:test");
+    assert.equal(path.dirname(report.reportPath ?? ""), reportDirectory);
+
+    assert.deepEqual(
+      (await uow.sandboxCertificationRuns.list()).map((item) => item.id).sort(),
+      [preservedOldRun.id, freshRun.id].sort(),
+    );
+    assert.deepEqual(
+      (await uow.telemetryEvents.list()).map((item) => item.id),
+      [freshTelemetryEvent.id],
+    );
+    assert.deepEqual((await uow.metricSamples.list()).map((item) => item.id), []);
+
+    const [auditEvent] = await uow.auditEvents.list();
+    assert.equal(auditEvent?.id, "audit:ops-history-retention:test");
+    assert.deepEqual(auditEvent?.payload.deletedCounts, {
+      sandboxCertificationRuns: 1,
+      telemetryEvents: 1,
+      metricSamples: 1,
+    });
+    assert.equal(auditEvent?.payload.cutoff, report.cutoff);
+
+    const persistedReport = JSON.parse(readFileSync(report.reportPath ?? "", "utf8"));
+    assert.equal(persistedReport.auditEventId, "audit:ops-history-retention:test");
+    assert.equal(persistedReport.totals.deletedCount, 3);
+    assert.equal(persistedReport.cutoff, report.cutoff);
+  } finally {
+    rmSync(reportDirectory, { recursive: true, force: true });
+  }
 });
 
 test("taskAttemptToTaskRunInput emits opaque trn task run ids", () => {

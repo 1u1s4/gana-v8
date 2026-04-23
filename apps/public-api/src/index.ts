@@ -48,9 +48,14 @@ import {
   type FixtureWorkflowSelectionOverrideInput,
   type FixtureWorkflowEntity,
   type LeagueCoveragePolicyEntity,
+  type OperationalMetricType,
+  type OperationalMetricSampleQuery,
+  type OperationalTelemetrySeverity,
+  type OperationalTelemetryEventQuery,
   type ParlayEntity,
   type PredictionEntity,
   type ResearchBundleEntity,
+  type SandboxCertificationRunQuery,
   type TaskEntity,
   type TaskRunEntity,
   type TaskStatus,
@@ -509,6 +514,15 @@ export interface QueueTaskQuarantineActionInput {
   readonly occurredAt?: string;
 }
 
+export type SandboxCertificationPromotionDecision = "approved" | "rejected";
+
+export interface SandboxCertificationPromotionDecisionInput {
+  readonly decision: SandboxCertificationPromotionDecision;
+  readonly reason: string;
+  readonly evidenceRefs: readonly string[];
+  readonly occurredAt?: string;
+}
+
 export interface PublicApiResponse {
   readonly status: number;
   readonly body: unknown;
@@ -582,6 +596,20 @@ export interface SandboxCertificationRunReadModel extends SandboxCertificationRu
   readonly mode: string;
   readonly gitSha: string;
   readonly diffEntries: readonly SandboxCertificationDiffEntryReadModel[];
+}
+
+export interface SandboxCertificationPromotionDecisionReadModel {
+  readonly decision: SandboxCertificationPromotionDecision;
+  readonly reason: string;
+  readonly evidenceRefs: readonly string[];
+  readonly actor?: string;
+  readonly actorType?: AuditEventEntity["actorType"];
+  readonly occurredAt: string;
+}
+
+export interface SandboxCertificationRunDetailReadModel extends SandboxCertificationRunReadModel {
+  readonly latestPromotionDecision: SandboxCertificationPromotionDecisionReadModel | null;
+  readonly promotionDecisionHistory: readonly SandboxCertificationPromotionDecisionReadModel[];
 }
 
 export interface SandboxPromotionGateReadModel {
@@ -921,6 +949,36 @@ const asStringArray = (value: unknown): string[] => {
   }
 
   return [];
+};
+
+const SANDBOX_CERTIFICATION_PROMOTION_DECISION_EVENT_TYPE =
+  "sandbox-certification-run.promotion-decision.recorded";
+
+const PUBLIC_API_DEFAULT_QUERY_LIMIT = 100;
+const PUBLIC_API_MAX_QUERY_LIMIT = 500;
+
+const parseQueryLimit = (rawValue: string | null | undefined): number => {
+  const parsed = Number.parseInt(rawValue ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return PUBLIC_API_DEFAULT_QUERY_LIMIT;
+  }
+
+  return Math.min(parsed, PUBLIC_API_MAX_QUERY_LIMIT);
+};
+
+const toAuditActorType = (
+  actor: AuthorizationActor | undefined,
+): AuditEventEntity["actorType"] | undefined => {
+  switch (actor?.role) {
+    case "operator":
+      return "operator";
+    case "system":
+      return "system";
+    case "automation":
+      return "service";
+    default:
+      return undefined;
+  }
 };
 
 const asBundleStatus = (value: unknown): FixtureResearchBundleStatus | null => {
@@ -2475,6 +2533,24 @@ const normalizeSandboxCertificationPromotionStatus = (
   return null;
 };
 
+const normalizeOperationalTelemetrySeverity = (
+  value: string | null | undefined,
+): OperationalTelemetrySeverity | null => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error"
+    ? normalized
+    : null;
+};
+
+const normalizeOperationalMetricType = (
+  value: string | null | undefined,
+): OperationalMetricType | null => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "counter" || normalized === "gauge" || normalized === "histogram"
+    ? normalized
+    : null;
+};
+
 const isWithinIsoWindow = (
   value: string | undefined,
   searchParams: URLSearchParams,
@@ -2510,6 +2586,7 @@ const filterSandboxCertificationRuns = (
     searchParams.get("verificationKind"),
   );
   const status = normalizeSandboxCertificationRunStatus(searchParams.get("status"));
+  const limit = parseQueryLimit(searchParams.get("limit"));
 
   return runs.filter((run) => {
     if (profileName && run.profileName !== profileName) {
@@ -2532,7 +2609,7 @@ const filterSandboxCertificationRuns = (
       fromParam: "generatedFrom",
       toParam: "generatedTo",
     });
-  });
+  }).slice(0, limit);
 };
 
 const findSandboxCertificationRunById = (
@@ -2540,6 +2617,67 @@ const findSandboxCertificationRunById = (
   runId: string,
 ): SandboxCertificationRunReadModel | null =>
   runs.find((run) => run.id === runId) ?? null;
+
+const toSandboxCertificationPromotionDecisionReadModel = (
+  auditEvent: AuditEventEntity,
+): SandboxCertificationPromotionDecisionReadModel | null => {
+  if (
+    auditEvent.aggregateType !== "sandbox-certification-run" ||
+    auditEvent.eventType !== SANDBOX_CERTIFICATION_PROMOTION_DECISION_EVENT_TYPE
+  ) {
+    return null;
+  }
+
+  const decision = asString(auditEvent.payload.decision);
+  if (decision !== "approved" && decision !== "rejected") {
+    return null;
+  }
+
+  const reason = asString(auditEvent.payload.reason);
+  if (!reason) {
+    return null;
+  }
+
+  return {
+    decision,
+    reason,
+    evidenceRefs: asStringArray(auditEvent.payload.evidenceRefs),
+    ...(auditEvent.actor ? { actor: auditEvent.actor } : {}),
+    ...(auditEvent.actorType ? { actorType: auditEvent.actorType } : {}),
+    occurredAt: auditEvent.occurredAt,
+  };
+};
+
+const listSandboxCertificationPromotionDecisions = (
+  auditEvents: readonly AuditEventEntity[],
+  runId: string,
+): readonly SandboxCertificationPromotionDecisionReadModel[] =>
+  sortByIsoDescending(
+    auditEvents.flatMap((auditEvent) => {
+      if (
+        auditEvent.aggregateType !== "sandbox-certification-run" ||
+        auditEvent.aggregateId !== runId
+      ) {
+        return [];
+      }
+
+      const decision = toSandboxCertificationPromotionDecisionReadModel(auditEvent);
+      return decision ? [decision] : [];
+    }),
+    (decision) => decision.occurredAt,
+  );
+
+const createSandboxCertificationRunDetail = (
+  run: SandboxCertificationRunReadModel,
+  auditEvents: readonly AuditEventEntity[] = [],
+): SandboxCertificationRunDetailReadModel => {
+  const promotionDecisionHistory = listSandboxCertificationPromotionDecisions(auditEvents, run.id);
+  return {
+    ...run,
+    latestPromotionDecision: promotionDecisionHistory[0] ?? null,
+    promotionDecisionHistory,
+  };
+};
 
 const filterTelemetryEvents = (
   events: readonly TelemetryEventReadModel[],
@@ -2550,6 +2688,7 @@ const filterTelemetryEvents = (
   const automationCycleId = searchParams.get("automationCycleId");
   const severity = searchParams.get("severity");
   const name = searchParams.get("name");
+  const limit = parseQueryLimit(searchParams.get("limit"));
 
   return events.filter((event) => {
     if (traceId && event.traceId !== traceId) {
@@ -2573,7 +2712,7 @@ const filterTelemetryEvents = (
     }
 
     return isWithinIsoWindow(event.occurredAt, searchParams);
-  });
+  }).slice(0, limit);
 };
 
 const filterTelemetryMetrics = (
@@ -2584,6 +2723,7 @@ const filterTelemetryMetrics = (
   const taskId = searchParams.get("taskId");
   const automationCycleId = searchParams.get("automationCycleId");
   const name = searchParams.get("name");
+  const limit = parseQueryLimit(searchParams.get("limit"));
 
   return metrics.filter((metric) => {
     if (traceId && metric.traceId !== traceId) {
@@ -2603,7 +2743,7 @@ const filterTelemetryMetrics = (
     }
 
     return isWithinIsoWindow(metric.recordedAt, searchParams);
-  });
+  }).slice(0, limit);
 };
 
 const toSandboxCertificationRunSummary = (
@@ -2968,6 +3108,113 @@ export const loadSandboxCertificationRuns = async (
     (run) => run.generatedAt ?? run.id,
   );
 
+const loadSandboxCertificationRunsFromUnitOfWork = async (
+  unitOfWork: Pick<StorageUnitOfWork, "sandboxCertificationRuns">,
+  searchParams: URLSearchParams,
+): Promise<readonly SandboxCertificationRunReadModel[]> => {
+  const requestedLimit = parseQueryLimit(searchParams.get("limit"));
+  const generatedFrom = searchParams.get("generatedFrom");
+  const generatedTo = searchParams.get("generatedTo");
+  const verificationKind = normalizeSandboxCertificationVerificationKind(
+    searchParams.get("verificationKind"),
+  );
+  const status = normalizeSandboxCertificationRunStatus(searchParams.get("status"));
+  const profileName = searchParams.get("profileName");
+  const packId = searchParams.get("packId");
+  const query = {
+    ...(profileName ? { profileName } : {}),
+    ...(packId ? { packId } : {}),
+    ...(verificationKind ? { verificationKind } : {}),
+    ...(status ? { status } : {}),
+    limit:
+      generatedFrom || generatedTo
+        ? PUBLIC_API_MAX_QUERY_LIMIT
+        : requestedLimit,
+  } satisfies SandboxCertificationRunQuery;
+  const rows = await unitOfWork.sandboxCertificationRuns.listByQuery(query);
+
+  const filtered = filterSandboxCertificationRuns(
+    sortByIsoDescending(
+      rows.flatMap((row) => {
+        const mapped = mapSandboxCertificationRunRecord(asRecord(row) ?? {});
+        return mapped ? [mapped] : [];
+      }),
+      (run) => run.generatedAt ?? run.id,
+    ),
+    searchParams,
+  );
+
+  return filtered.slice(0, requestedLimit);
+};
+
+const loadTelemetryEventsFromUnitOfWork = async (
+  unitOfWork: Pick<StorageUnitOfWork, "telemetryEvents">,
+  searchParams: URLSearchParams,
+): Promise<readonly TelemetryEventReadModel[]> => {
+  const severity = normalizeOperationalTelemetrySeverity(searchParams.get("severity"));
+  const traceId = searchParams.get("traceId");
+  const taskId = searchParams.get("taskId");
+  const taskRunId = searchParams.get("taskRunId");
+  const automationCycleId = searchParams.get("automationCycleId");
+  const name = searchParams.get("name");
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
+  const query = {
+    ...(traceId ? { traceId } : {}),
+    ...(taskId ? { taskId } : {}),
+    ...(taskRunId ? { taskRunId } : {}),
+    ...(automationCycleId ? { automationCycleId } : {}),
+    ...(severity ? { severity } : {}),
+    ...(name ? { name } : {}),
+    ...(from ? { occurredAfter: from } : {}),
+    ...(to ? { occurredBefore: to } : {}),
+    limit: parseQueryLimit(searchParams.get("limit")),
+  } satisfies OperationalTelemetryEventQuery;
+  const rows = await unitOfWork.telemetryEvents.listByQuery(query);
+
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapTelemetryEventRecord(asRecord(row) ?? {});
+      return mapped ? [mapped] : [];
+    }),
+    (event) => event.occurredAt,
+  );
+};
+
+const loadTelemetryMetricsFromUnitOfWork = async (
+  unitOfWork: Pick<StorageUnitOfWork, "metricSamples">,
+  searchParams: URLSearchParams,
+): Promise<readonly TelemetryMetricReadModel[]> => {
+  const type = normalizeOperationalMetricType(searchParams.get("type"));
+  const traceId = searchParams.get("traceId");
+  const taskId = searchParams.get("taskId");
+  const taskRunId = searchParams.get("taskRunId");
+  const automationCycleId = searchParams.get("automationCycleId");
+  const name = searchParams.get("name");
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
+  const query = {
+    ...(traceId ? { traceId } : {}),
+    ...(taskId ? { taskId } : {}),
+    ...(taskRunId ? { taskRunId } : {}),
+    ...(automationCycleId ? { automationCycleId } : {}),
+    ...(name ? { name } : {}),
+    ...(type ? { type } : {}),
+    ...(from ? { recordedAfter: from } : {}),
+    ...(to ? { recordedBefore: to } : {}),
+    limit: parseQueryLimit(searchParams.get("limit")),
+  } satisfies OperationalMetricSampleQuery;
+  const rows = await unitOfWork.metricSamples.listByQuery(query);
+
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapTelemetryMetricRecord(asRecord(row) ?? {});
+      return mapped ? [mapped] : [];
+    }),
+    (metric) => metric.recordedAt,
+  );
+};
+
 export const loadSandboxCertificationDetail = async (
   profileName: string,
   packId: string,
@@ -3126,6 +3373,10 @@ export const loadPublicApiTokenAuthenticationFromEnv = (
 
 const getPublicApiWriteCapability = (requestPath: string): AuthorizationCapability => {
   const normalizedPath = normalizeRequestPath(requestPath);
+  if (matchSandboxCertificationPromotionDecisionPath(normalizedPath)) {
+    return "release:approve";
+  }
+
   if (matchTaskRequeuePath(normalizedPath) || matchTaskQuarantinePath(normalizedPath)) {
     return "queue:operate";
   }
@@ -3295,23 +3546,37 @@ export async function handlePublicApiRequest(
     }
 
     if (normalizedRequestPath === publicApiEndpointPaths.sandboxCertificationRuns) {
+      const certificationRuns = options.unitOfWork
+        ? await loadSandboxCertificationRunsFromUnitOfWork(options.unitOfWork, searchParams)
+        : filterSandboxCertificationRuns(
+            await loadSandboxCertificationRuns(sandboxCertificationOptions),
+            searchParams,
+          );
       writeJsonResponse(
         response,
         200,
-        filterSandboxCertificationRuns(
-          await loadSandboxCertificationRuns(sandboxCertificationOptions),
-          searchParams,
-        ),
+        certificationRuns,
       );
       return;
     }
 
     const sandboxCertificationRunDetail = matchSandboxCertificationRunDetailPath(normalizedRequestPath);
     if (sandboxCertificationRunDetail) {
-      const certificationRun = findSandboxCertificationRunById(
-        await loadSandboxCertificationRuns(sandboxCertificationOptions),
-        sandboxCertificationRunDetail.runId,
-      );
+      const repositoryRun = options.unitOfWork
+        ? mapSandboxCertificationRunRecord(
+            asRecord(
+              await options.unitOfWork.sandboxCertificationRuns.getById(
+                sandboxCertificationRunDetail.runId,
+              ),
+            ) ?? {},
+          )
+        : null;
+      const certificationRun =
+        repositoryRun ??
+        findSandboxCertificationRunById(
+          await loadSandboxCertificationRuns(sandboxCertificationOptions),
+          sandboxCertificationRunDetail.runId,
+        );
       if (!certificationRun) {
         writeJsonResponse(response, 404, {
           error: "resource_not_found",
@@ -3321,7 +3586,21 @@ export async function handlePublicApiRequest(
         return;
       }
 
-      writeJsonResponse(response, 200, certificationRun);
+      const promotionDecisionAuditEvents = options.unitOfWork
+        ? await options.unitOfWork.auditEvents.findByAggregate(
+            "sandbox-certification-run",
+            sandboxCertificationRunDetail.runId,
+          )
+        : (options.snapshot?.auditEvents ?? []).filter(
+            (auditEvent) =>
+              auditEvent.aggregateType === "sandbox-certification-run" &&
+              auditEvent.aggregateId === sandboxCertificationRunDetail.runId,
+          );
+      writeJsonResponse(
+        response,
+        200,
+        createSandboxCertificationRunDetail(certificationRun, promotionDecisionAuditEvents),
+      );
       return;
     }
 
@@ -3360,12 +3639,18 @@ export async function handlePublicApiRequest(
         : options.handlers ?? createPublicApiHandlers(createEmptyOperationSnapshot());
 
     if (normalizedRequestPath === publicApiEndpointPaths.telemetryEvents) {
-      writeJsonResponse(response, 200, filterTelemetryEvents(handlers.telemetryEvents(), searchParams));
+      const telemetryEvents = options.unitOfWork
+        ? await loadTelemetryEventsFromUnitOfWork(options.unitOfWork, searchParams)
+        : filterTelemetryEvents(handlers.telemetryEvents(), searchParams);
+      writeJsonResponse(response, 200, telemetryEvents);
       return;
     }
 
     if (normalizedRequestPath === publicApiEndpointPaths.telemetryMetrics) {
-      writeJsonResponse(response, 200, filterTelemetryMetrics(handlers.telemetryMetrics(), searchParams));
+      const telemetryMetrics = options.unitOfWork
+        ? await loadTelemetryMetricsFromUnitOfWork(options.unitOfWork, searchParams)
+        : filterTelemetryMetrics(handlers.telemetryMetrics(), searchParams);
+      writeJsonResponse(response, 200, telemetryMetrics);
       return;
     }
 
@@ -3375,6 +3660,139 @@ export async function handlePublicApiRequest(
   }
 
   if (method === "POST" && options.unitOfWork) {
+    const sandboxCertificationPromotionDecisionPath = matchSandboxCertificationPromotionDecisionPath(
+      normalizedRequestPath,
+    );
+    if (sandboxCertificationPromotionDecisionPath) {
+      const body = await readJsonRequestBody<SandboxCertificationPromotionDecisionInput>(request);
+      if (body.decision !== "approved" && body.decision !== "rejected") {
+        writeJsonResponse(response, 400, {
+          error: "invalid_request_body",
+          message: "Promotion decisions require decision=approved or decision=rejected.",
+        });
+        return;
+      }
+      if (typeof body.reason !== "string" || body.reason.trim().length === 0) {
+        writeJsonResponse(response, 400, {
+          error: "invalid_request_body",
+          message: "Promotion decisions require a non-empty reason.",
+        });
+        return;
+      }
+      if (!Array.isArray(body.evidenceRefs) || body.evidenceRefs.some((value) => typeof value !== "string")) {
+        writeJsonResponse(response, 400, {
+          error: "invalid_request_body",
+          message: "Promotion decisions require evidenceRefs to be an array of strings.",
+        });
+        return;
+      }
+
+      const occurredAt = parseQueueActionOccurredAt(body.occurredAt);
+      if (occurredAt === null) {
+        writeJsonResponse(response, 400, {
+          error: "invalid_request_body",
+          message: "Promotion decisions require a valid ISO timestamp when occurredAt is provided.",
+        });
+        return;
+      }
+
+      const evidenceRefs = body.evidenceRefs
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      const certificationRun = mapSandboxCertificationRunRecord(
+        asRecord(
+          await options.unitOfWork.sandboxCertificationRuns.getById(
+            sandboxCertificationPromotionDecisionPath.runId,
+          ),
+        ) ?? {},
+      );
+      if (!certificationRun) {
+        writeJsonResponse(response, 404, {
+          error: "resource_not_found",
+          resource: "sandbox-certification-run",
+          resourceId: sandboxCertificationPromotionDecisionPath.runId,
+        });
+        return;
+      }
+
+      if (certificationRun.verificationKind !== "runtime-release") {
+        writeJsonResponse(response, 409, {
+          error: "invalid_promotion_target",
+          message: "Promotion decisions only apply to runtime-release certification runs.",
+        });
+        return;
+      }
+
+      if (certificationRun.profileName === "ci-ephemeral") {
+        writeJsonResponse(response, 409, {
+          error: "promotion_decision_forbidden",
+          message: "ci-ephemeral runtime-release runs are not overrideable.",
+        });
+        return;
+      }
+
+      const decisionOccurredAt = occurredAt?.toISOString() ?? new Date().toISOString();
+      const auditActorType = toAuditActorType(authorization.actor);
+      const auditActorFields = {
+        ...(authorization.actor?.id ? { actor: authorization.actor.id } : {}),
+        ...(auditActorType ? { actorType: auditActorType } : {}),
+      } satisfies Partial<Pick<AuditEventEntity, "actor" | "actorType">>;
+      await options.unitOfWork.auditEvents.save(
+        createAuditEvent({
+          id: `audit:sandbox-certification-run:${certificationRun.id}:promotion-decision:${decisionOccurredAt}:${randomUUID()}`,
+          aggregateType: "sandbox-certification-run",
+          aggregateId: certificationRun.id,
+          eventType: SANDBOX_CERTIFICATION_PROMOTION_DECISION_EVENT_TYPE,
+          ...auditActorFields,
+          subjectType: "sandbox-certification-run",
+          subjectId: certificationRun.id,
+          action: "promotion-decision",
+          payload: {
+            decision: body.decision,
+            reason: body.reason.trim(),
+            evidenceRefs,
+            verificationKind: certificationRun.verificationKind,
+            profileName: certificationRun.profileName,
+            packId: certificationRun.packId,
+            gitSha: certificationRun.gitSha,
+            promotionStatus: certificationRun.promotionStatus ?? null,
+          },
+          occurredAt: decisionOccurredAt,
+        }),
+      );
+      await recordPublicApiActionTelemetry(options.unitOfWork, {
+        action: "promotion-decision",
+        occurredAt: decisionOccurredAt,
+        actorId: authorization.actor?.id,
+        message: `Runtime release ${certificationRun.id} was marked ${body.decision} through public-api.`,
+        attributes: {
+          runId: certificationRun.id,
+          decision: body.decision,
+          profileName: certificationRun.profileName,
+          packId: certificationRun.packId,
+          promotionStatus: certificationRun.promotionStatus ?? null,
+          reason: body.reason.trim(),
+          evidenceRefs,
+        },
+        labels: {
+          verificationKind: certificationRun.verificationKind,
+          decision: body.decision,
+          evidenceProfile: certificationRun.profileName,
+        },
+      });
+
+      const promotionDecisionAuditEvents = await options.unitOfWork.auditEvents.findByAggregate(
+        "sandbox-certification-run",
+        certificationRun.id,
+      );
+      writeJsonResponse(
+        response,
+        200,
+        createSandboxCertificationRunDetail(certificationRun, promotionDecisionAuditEvents),
+      );
+      return;
+    }
+
     const taskRequeuePath = matchTaskRequeuePath(normalizedRequestPath);
     if (taskRequeuePath) {
       if (!options.queueAdapter) {
@@ -4864,7 +5282,9 @@ const loadPersistedSandboxCertificationRunsFromRepositories = async (
     return [];
   }
 
-  const rows = await unitOfWork.sandboxCertificationRuns.listByQuery({ limit: 500 });
+  const rows = await unitOfWork.sandboxCertificationRuns.listByQuery({
+    limit: PUBLIC_API_DEFAULT_QUERY_LIMIT,
+  });
   return sortByIsoDescending(
     rows.flatMap((row) => {
       const mapped = mapSandboxCertificationRunRecord(asRecord(row) ?? {});
@@ -4881,7 +5301,9 @@ const loadPersistedTelemetryEventsFromRepositories = async (
     return [];
   }
 
-  const rows = await unitOfWork.telemetryEvents.listByQuery({ limit: 500 });
+  const rows = await unitOfWork.telemetryEvents.listByQuery({
+    limit: PUBLIC_API_DEFAULT_QUERY_LIMIT,
+  });
   return sortByIsoDescending(
     rows.flatMap((row) => {
       const mapped = mapTelemetryEventRecord(asRecord(row) ?? {});
@@ -4898,7 +5320,9 @@ const loadPersistedMetricSamplesFromRepositories = async (
     return [];
   }
 
-  const rows = await unitOfWork.metricSamples.listByQuery({ limit: 500 });
+  const rows = await unitOfWork.metricSamples.listByQuery({
+    limit: PUBLIC_API_DEFAULT_QUERY_LIMIT,
+  });
   return sortByIsoDescending(
     rows.flatMap((row) => {
       const mapped = mapTelemetryMetricRecord(asRecord(row) ?? {});
@@ -4916,7 +5340,9 @@ const loadPersistedSandboxCertificationRunsFromPrisma = async (
   }
 
   const rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
-    "SELECT * FROM SandboxCertificationRun LIMIT 500",
+    `SELECT * FROM SandboxCertificationRun
+      ORDER BY generatedAt DESC, id DESC
+      LIMIT ${PUBLIC_API_DEFAULT_QUERY_LIMIT}`,
   );
 
   return sortByIsoDescending(
@@ -4936,7 +5362,9 @@ const loadPersistedTelemetryEventsFromPrisma = async (
   }
 
   const rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
-    "SELECT * FROM OperationalTelemetryEvent LIMIT 500",
+    `SELECT * FROM OperationalTelemetryEvent
+      ORDER BY occurredAt DESC, id DESC
+      LIMIT ${PUBLIC_API_DEFAULT_QUERY_LIMIT}`,
   );
 
   return sortByIsoDescending(
@@ -4956,7 +5384,9 @@ const loadPersistedTelemetryMetricsFromPrisma = async (
   }
 
   const rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
-    "SELECT * FROM OperationalMetricSample LIMIT 500",
+    `SELECT * FROM OperationalMetricSample
+      ORDER BY recordedAt DESC, id DESC
+      LIMIT ${PUBLIC_API_DEFAULT_QUERY_LIMIT}`,
   );
 
   return sortByIsoDescending(
@@ -5496,6 +5926,17 @@ function matchSandboxCertificationDetailPath(
 
 function matchSandboxCertificationRunDetailPath(requestPath: string): { runId: string } | null {
   const match = requestPath.match(/^\/sandbox-certification\/runs\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { runId: decodeURIComponent(match[1]) };
+}
+
+function matchSandboxCertificationPromotionDecisionPath(
+  requestPath: string,
+): { runId: string } | null {
+  const match = requestPath.match(/^\/sandbox-certification\/runs\/([^/]+)\/promotion-decision$/);
   if (!match?.[1]) {
     return null;
   }

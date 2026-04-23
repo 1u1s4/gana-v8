@@ -649,7 +649,9 @@ export const runDispatcherCycle = async (
     });
 
     try {
-      const manifestId = await findManifestToDispatch(unitOfWork, toIso(now));
+      const manifestId =
+        options.manifestId ??
+        (await findManifestToDispatch(unitOfWork, toIso(now)));
       if (!manifestId) {
         observability.log("dispatcher cycle completed without work", {
           data: {

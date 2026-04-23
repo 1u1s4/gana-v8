@@ -29,7 +29,7 @@
 ## Notas de compatibilidad
 
 - `apps/hermes-control-plane` permanece como compatibilidad temporal y oracle de parity, pero el gap central de runtime durable ya no vive alli.
-- El follow-up activo residual que depende de este cierre es `docs/plans/falta/gana-v8-runtime-release-adopcion-operativa.md`, que ahora toma estas senales durables como base operativa.
+- El follow-up que dependia de este cierre ya quedo materializado en `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`, que tomo estas senales durables como base operativa.
 
 ## Fuentes consolidadas
 

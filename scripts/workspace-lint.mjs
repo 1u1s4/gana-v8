@@ -51,10 +51,6 @@ async function lintRepo(repoPath) {
   }
 
   const activePlans = await readActivePlanNames(resolve(repoPath, "docs/plans/falta"));
-  if (activePlans.length === 0) {
-    throw new Error("docs/plans/falta/ should contain at least one active plan");
-  }
-
   for (const planName of activePlans) {
     const planPath = resolve(repoPath, "docs/plans/falta", planName);
     const content = await readFile(planPath, "utf8");

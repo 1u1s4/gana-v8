@@ -60,6 +60,7 @@ export interface SchedulerCycleOptions {
 
 export interface DispatcherCycleOptions {
   readonly maxClaims?: number;
+  readonly manifestId?: string;
   readonly now?: Date;
   readonly leaseOwner?: string;
 }

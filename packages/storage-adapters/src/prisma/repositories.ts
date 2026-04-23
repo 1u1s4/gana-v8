@@ -46,6 +46,7 @@ import type {
   ResearchSourceRepository,
   SandboxNamespace,
   SandboxCertificationRunEntity,
+  SandboxCertificationRunPruneResult,
   SandboxCertificationRunQuery,
   SandboxCertificationRunRepository,
   SandboxNamespaceRepository,
@@ -57,6 +58,8 @@ import type {
   TaskRunRepository,
   TeamCoveragePolicyEntity,
   TeamCoveragePolicyRepository,
+  RepositoryPruneOptions,
+  RepositoryPruneResult,
   ValidationEntity,
   ValidationRepository,
 } from "@gana-v8/domain-core";
@@ -185,6 +188,25 @@ export type PrismaClientLike = Pick<
   | "dailyAutomationPolicy"
   | "sandboxNamespace"
 >;
+
+const pruneDeleteBatchSize = 500;
+
+const chunkEntityIds = (ids: readonly EntityId[], size = pruneDeleteBatchSize): EntityId[][] => {
+  const chunks: EntityId[][] = [];
+
+  for (let index = 0; index < ids.length; index += size) {
+    chunks.push(ids.slice(index, index + size));
+  }
+
+  return chunks;
+};
+
+const buildSandboxCertificationRunKey = (
+  item: Pick<
+    SandboxCertificationRunEntity,
+    "profileName" | "packId" | "verificationKind"
+  >,
+): string => `${item.profileName}::${item.packId}::${item.verificationKind}`;
 
 export class PrismaFixtureRepository implements FixtureRepository {
   constructor(private readonly client: PrismaClientLike) {}
@@ -1336,6 +1358,85 @@ export class PrismaSandboxCertificationRunRepository implements SandboxCertifica
     );
     return record ? sandboxCertificationRunRecordToDomain(record) : null;
   }
+
+  async pruneBefore(options: RepositoryPruneOptions): Promise<SandboxCertificationRunPruneResult> {
+    const dryRun = options.dryRun ?? false;
+    const cutoff = new Date(options.cutoff);
+
+    const [latestByGroup, expiredRuns] = await Promise.all([
+      retryPrismaReadOperation(() =>
+        this.client.sandboxCertificationRun.groupBy({
+          by: ["profileName", "packId", "verificationKind"],
+          _max: { generatedAt: true },
+        }),
+      ),
+      retryPrismaReadOperation(() =>
+        this.client.sandboxCertificationRun.findMany({
+          where: { generatedAt: { lt: cutoff } },
+          select: {
+            id: true,
+            profileName: true,
+            packId: true,
+            verificationKind: true,
+            generatedAt: true,
+          },
+        }),
+      ),
+    ]);
+
+    const latestGeneratedAtByKey = new Map<string, string>();
+    for (const group of latestByGroup) {
+      if (!group._max.generatedAt) {
+        continue;
+      }
+
+      latestGeneratedAtByKey.set(
+        buildSandboxCertificationRunKey({
+          profileName: group.profileName,
+          packId: group.packId,
+          verificationKind: group.verificationKind.replaceAll("_", "-") as SandboxCertificationRunEntity["verificationKind"],
+        }),
+        group._max.generatedAt.toISOString(),
+      );
+    }
+
+    const preservedLatestIds = new Set<EntityId>();
+    for (const run of expiredRuns) {
+      const latestGeneratedAt = latestGeneratedAtByKey.get(
+        buildSandboxCertificationRunKey({
+          profileName: run.profileName,
+          packId: run.packId,
+          verificationKind: run.verificationKind.replaceAll("_", "-") as SandboxCertificationRunEntity["verificationKind"],
+        }),
+      );
+
+      if (latestGeneratedAt === run.generatedAt.toISOString()) {
+        preservedLatestIds.add(run.id);
+      }
+    }
+
+    const idsToDelete = expiredRuns
+      .filter((run) => !preservedLatestIds.has(run.id))
+      .map((run) => run.id);
+
+    let deletedCount = 0;
+    if (!dryRun) {
+      for (const idChunk of chunkEntityIds(idsToDelete)) {
+        const result = await this.client.sandboxCertificationRun.deleteMany({
+          where: { id: { in: idChunk } },
+        });
+        deletedCount += result.count;
+      }
+    }
+
+    return {
+      cutoff: options.cutoff,
+      dryRun,
+      prunableCount: idsToDelete.length,
+      deletedCount,
+      preservedLatestCount: preservedLatestIds.size,
+    };
+  }
 }
 
 export class PrismaOperationalTelemetryEventRepository implements OperationalTelemetryEventRepository {
@@ -1404,6 +1505,29 @@ export class PrismaOperationalTelemetryEventRepository implements OperationalTel
     );
     return records.map(operationalTelemetryEventRecordToDomain);
   }
+
+  async pruneBefore(options: RepositoryPruneOptions): Promise<RepositoryPruneResult> {
+    const dryRun = options.dryRun ?? false;
+    const where = {
+      occurredAt: { lt: new Date(options.cutoff) },
+    };
+    const prunableCount = await retryPrismaReadOperation(() =>
+      this.client.operationalTelemetryEvent.count({ where }),
+    );
+
+    let deletedCount = 0;
+    if (!dryRun && prunableCount > 0) {
+      const result = await this.client.operationalTelemetryEvent.deleteMany({ where });
+      deletedCount = result.count;
+    }
+
+    return {
+      cutoff: options.cutoff,
+      dryRun,
+      prunableCount,
+      deletedCount,
+    };
+  }
 }
 
 export class PrismaOperationalMetricSampleRepository implements OperationalMetricSampleRepository {
@@ -1471,6 +1595,29 @@ export class PrismaOperationalMetricSampleRepository implements OperationalMetri
       }),
     );
     return records.map(operationalMetricSampleRecordToDomain);
+  }
+
+  async pruneBefore(options: RepositoryPruneOptions): Promise<RepositoryPruneResult> {
+    const dryRun = options.dryRun ?? false;
+    const where = {
+      recordedAt: { lt: new Date(options.cutoff) },
+    };
+    const prunableCount = await retryPrismaReadOperation(() =>
+      this.client.operationalMetricSample.count({ where }),
+    );
+
+    let deletedCount = 0;
+    if (!dryRun && prunableCount > 0) {
+      const result = await this.client.operationalMetricSample.deleteMany({ where });
+      deletedCount = result.count;
+    }
+
+    return {
+      cutoff: options.cutoff,
+      dryRun,
+      prunableCount,
+      deletedCount,
+    };
   }
 }
 

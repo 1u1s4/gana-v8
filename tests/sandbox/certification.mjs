@@ -44,15 +44,11 @@ const listJsonFiles = async (directory) => {
 
 await mkdir(artifactsRoot, { recursive: true });
 
-execFileSync(
-  pnpmBin,
-  ["--filter", "@gana-v8/sandbox-runner", "build"],
-  {
-    cwd: rootDir,
-    env: process.env,
-    stdio: "inherit",
-  },
-);
+execFileSync(pnpmBin, ["--filter", "@gana-v8/sandbox-runner", "build"], {
+  cwd: rootDir,
+  env: process.env,
+  stdio: "inherit",
+});
 
 const sandboxRunnerModule = await import(
   pathToFileURL(resolve(rootDir, "apps/sandbox-runner/dist/index.js")).href
@@ -63,14 +59,19 @@ if (goldenPaths.length === 0) {
   throw new Error(`No sandbox goldens found under ${goldensRoot}`);
 }
 
-const gitSha = process.env.SANDBOX_CERT_GIT_SHA ?? process.env.GITHUB_SHA ?? "local-cert-sha";
+const gitSha =
+  process.env.SANDBOX_CERT_GIT_SHA ??
+  process.env.GITHUB_SHA ??
+  "local-cert-sha";
 const databaseUrl = process.env.DATABASE_URL;
 const certificationNow = process.env.SANDBOX_CERT_NOW
   ? new Date(process.env.SANDBOX_CERT_NOW)
   : undefined;
 let runtimeReleaseSkipped = false;
 const persistenceSession = databaseUrl
-  ? await sandboxRunnerModule.openSandboxCertificationPersistenceSession(databaseUrl)
+  ? await sandboxRunnerModule.openSandboxCertificationPersistenceSession(
+      databaseUrl,
+    )
   : null;
 
 const failures = [];
@@ -99,7 +100,10 @@ try {
       artifactPath,
       historyRoot,
       ...(persistenceSession?.sandboxCertificationRuns
-        ? { sandboxCertificationRuns: persistenceSession.sandboxCertificationRuns }
+        ? {
+            sandboxCertificationRuns:
+              persistenceSession.sandboxCertificationRuns,
+          }
         : {}),
       ...(persistenceSession?.telemetrySink
         ? { telemetrySink: persistenceSession.telemetrySink }
@@ -111,7 +115,9 @@ try {
       `[sandbox-certification] ${result.status.toUpperCase()} ${goldenLabel} (${result.diff.entryCount} diff entr${result.diff.entryCount === 1 ? "y" : "ies"})`,
     );
     if (result.historyArtifactPath) {
-      console.log(`  history: ${relative(rootDir, result.historyArtifactPath)}`);
+      console.log(
+        `  history: ${relative(rootDir, result.historyArtifactPath)}`,
+      );
     }
     if (result.persistedRun?.id) {
       console.log(`  persisted-run: ${result.persistedRun.id}`);
@@ -129,28 +135,47 @@ try {
 
   if (databaseUrl && includeRuntimeRelease) {
     try {
-      const runtimeReleaseArtifactPath = resolve(artifactsRoot, "runtime-release", "latest.json");
-      const runtimeRelease = await sandboxRunnerModule.runRuntimeReleaseCertification({
-        databaseUrl,
-        gitSha,
-        ...(certificationNow ? { now: certificationNow } : {}),
-        artifactPath: runtimeReleaseArtifactPath,
-        historyRoot,
-        baselineRef: process.env.SANDBOX_CERT_BASELINE_REF,
-        candidateRef: process.env.SANDBOX_CERT_CANDIDATE_REF ?? gitSha,
-        ...(persistenceSession?.sandboxCertificationRuns
-          ? { sandboxCertificationRuns: persistenceSession.sandboxCertificationRuns }
-          : {}),
-        ...(persistenceSession?.telemetrySink
-          ? { telemetrySink: persistenceSession.telemetrySink }
-          : {}),
-      });
+      const runtimeReleaseDefaults =
+        sandboxRunnerModule.resolveRuntimeReleaseEvidenceDefaults({
+          cwd: rootDir,
+          env: process.env,
+        });
+      const runtimeReleaseArtifactPath = resolve(
+        artifactsRoot,
+        "runtime-release",
+        "latest.json",
+      );
+      const runtimeRelease =
+        await sandboxRunnerModule.runRuntimeReleaseCertification({
+          databaseUrl,
+          gitSha: runtimeReleaseDefaults.gitSha,
+          evidenceProfile: runtimeReleaseDefaults.evidenceProfile,
+          ...(runtimeReleaseDefaults.now
+            ? { now: runtimeReleaseDefaults.now }
+            : {}),
+          lookbackHours: runtimeReleaseDefaults.lookbackHours,
+          artifactPath: runtimeReleaseArtifactPath,
+          historyRoot,
+          baselineRef: runtimeReleaseDefaults.baselineRef,
+          candidateRef: runtimeReleaseDefaults.candidateRef,
+          ...(persistenceSession?.sandboxCertificationRuns
+            ? {
+                sandboxCertificationRuns:
+                  persistenceSession.sandboxCertificationRuns,
+              }
+            : {}),
+          ...(persistenceSession?.telemetrySink
+            ? { telemetrySink: persistenceSession.telemetrySink }
+            : {}),
+        });
 
       console.log(
-        `[sandbox-runtime-release] ${runtimeRelease.status.toUpperCase()} promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}`,
+        `[sandbox-runtime-release] ${runtimeRelease.status.toUpperCase()} profile=${runtimeReleaseDefaults.evidenceProfile} promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}`,
       );
       if (runtimeRelease.historyArtifactPath) {
-        console.log(`  history: ${relative(rootDir, runtimeRelease.historyArtifactPath)}`);
+        console.log(
+          `  history: ${relative(rootDir, runtimeRelease.historyArtifactPath)}`,
+        );
       }
       if (runtimeRelease.persistedRun?.id) {
         console.log(`  persisted-run: ${runtimeRelease.persistedRun.id}`);

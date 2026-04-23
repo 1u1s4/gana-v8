@@ -1,4 +1,4 @@
-import type { EntityId, Repository } from './common.js';
+import type { EntityId, ISODateString, Repository } from './common.js';
 import type { AutomationCycleEntity } from './entities/automation-cycle.js';
 import type { AuditEventEntity } from './entities/audit-event.js';
 import type { AiRunEntity } from './entities/ai-run.js';
@@ -77,6 +77,22 @@ export interface AuditEventRepository extends Repository<AuditEventEntity> {
   findByAggregate(aggregateType: string, aggregateId: EntityId): Promise<AuditEventEntity[]>;
 }
 
+export interface RepositoryPruneOptions {
+  readonly cutoff: ISODateString;
+  readonly dryRun?: boolean;
+}
+
+export interface RepositoryPruneResult {
+  readonly cutoff: ISODateString;
+  readonly dryRun: boolean;
+  readonly prunableCount: number;
+  readonly deletedCount: number;
+}
+
+export interface SandboxCertificationRunPruneResult extends RepositoryPruneResult {
+  readonly preservedLatestCount: number;
+}
+
 export interface SandboxCertificationRunQuery {
   readonly profileName?: string;
   readonly packId?: string;
@@ -92,6 +108,7 @@ export interface SandboxCertificationRunRepository extends Repository<SandboxCer
     packId: string,
     verificationKind?: SandboxCertificationVerificationKind,
   ): Promise<SandboxCertificationRunEntity | null>;
+  pruneBefore(options: RepositoryPruneOptions): Promise<SandboxCertificationRunPruneResult>;
 }
 
 export interface OperationalTelemetryEventQuery {
@@ -109,6 +126,7 @@ export interface OperationalTelemetryEventQuery {
 
 export interface OperationalTelemetryEventRepository extends Repository<OperationalTelemetryEventEntity> {
   listByQuery(query?: OperationalTelemetryEventQuery): Promise<OperationalTelemetryEventEntity[]>;
+  pruneBefore(options: RepositoryPruneOptions): Promise<RepositoryPruneResult>;
 }
 
 export interface OperationalMetricSampleQuery {
@@ -126,6 +144,7 @@ export interface OperationalMetricSampleQuery {
 
 export interface OperationalMetricSampleRepository extends Repository<OperationalMetricSampleEntity> {
   listByQuery(query?: OperationalMetricSampleQuery): Promise<OperationalMetricSampleEntity[]>;
+  pruneBefore(options: RepositoryPruneOptions): Promise<RepositoryPruneResult>;
 }
 
 export interface LeagueCoveragePolicyRepository extends Repository<LeagueCoveragePolicyEntity> {

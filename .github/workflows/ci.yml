@@ -187,8 +187,6 @@ jobs:
       - name: Run runtime release certification
         env:
           SANDBOX_CERT_GIT_SHA: ${{ github.sha }}
-          SANDBOX_CERT_NOW: 2100-01-02T00:00:00.000Z
-          SANDBOX_CERT_LOOKBACK_HOURS: "900000"
         run: pnpm test:runtime:release
 
       - name: Upload runtime release evidence

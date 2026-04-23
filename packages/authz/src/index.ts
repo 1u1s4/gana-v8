@@ -23,6 +23,7 @@ export const authorizationCapabilities = [
   "publish:discord",
   "publish:webhook",
   "queue:operate",
+  "release:approve",
   "workflow:override",
   "*",
 ] as const;
@@ -44,6 +45,7 @@ const defaultCapabilitiesByRole: Readonly<Record<AuthorizationRole, readonly Aut
     "publish:discord",
     "publish:webhook",
     "queue:operate",
+    "release:approve",
     "workflow:override",
   ],
   automation: [

@@ -16,6 +16,7 @@ import {
   createParlay,
   createPrediction,
   createResearchBundle,
+  createSandboxCertificationRun,
   createTask,
   createTaskRun,
   createTeamCoveragePolicy,
@@ -225,14 +226,14 @@ const createPersistedSandboxCertificationRuns = () => [
   {
     id: "scr-runtime-1",
     profileName: "ci-smoke",
-    packId: "football-dual-smoke",
-    mode: "smoke",
+    packId: "runtime-release",
+    mode: "runtime-release",
     verificationKind: "runtime-release" as const,
     status: "failed" as const,
     promotionStatus: "blocked" as const,
     gitSha: "def456runtime",
-    baselineRef: "release/2026.08.15",
-    candidateRef: "release/2026.08.16",
+    baselineRef: "main",
+    candidateRef: "codex/runtime-release",
     artifactRef: "memory://certification/runtime-1.json",
     runtimeSignals: {
       latestRuntimeRelease: "release-2026.08.16",
@@ -251,6 +252,36 @@ const createPersistedSandboxCertificationRuns = () => [
     generatedAt: "2026-08-16T21:10:00.000Z",
   },
 ] as const;
+
+const createRuntimeReleaseRun = (input: {
+  readonly id: string;
+  readonly profileName: string;
+  readonly generatedAt: string;
+}) =>
+  createSandboxCertificationRun({
+    id: input.id,
+    verificationKind: "runtime-release",
+    profileName: input.profileName,
+    packId: "runtime-release",
+    mode: "runtime-release",
+    gitSha: "def456runtime",
+    baselineRef: "main",
+    candidateRef: "codex/runtime-release",
+    status: "passed",
+    promotionStatus: "review-required",
+    runtimeSignals: {
+      automationCycles: {
+        total: 3,
+      },
+    },
+    diffEntries: [],
+    summary: {
+      promotion: {
+        status: "review-required",
+      },
+    },
+    generatedAt: input.generatedAt,
+  });
 
 const createReleaseOpsSnapshot = () =>
   createOperationSnapshot({
@@ -970,6 +1001,12 @@ test("loadOperationSnapshotFromUnitOfWork loads ETL from Prisma-like sources and
     getById: async () => null,
     list: async () => [],
     delete: async () => {},
+    pruneBefore: async (options) => ({
+      cutoff: options.cutoff,
+      dryRun: options.dryRun ?? false,
+      prunableCount: 0,
+      deletedCount: 0,
+    }),
     listByQuery: async () => [
       {
         id: "repo-event-1",
@@ -989,6 +1026,12 @@ test("loadOperationSnapshotFromUnitOfWork loads ETL from Prisma-like sources and
     getById: async () => null,
     list: async () => [],
     delete: async () => {},
+    pruneBefore: async (options) => ({
+      cutoff: options.cutoff,
+      dryRun: options.dryRun ?? false,
+      prunableCount: 0,
+      deletedCount: 0,
+    }),
     listByQuery: async () => [
       {
         id: "repo-metric-1",
@@ -1741,8 +1784,7 @@ test("public api server exposes sandbox certification summaries and detail route
     assert.equal(listJson[0]?.packId, "football-dual-smoke");
     assert.equal(listJson[0]?.latestSyntheticIntegrity?.verificationKind, "synthetic-integrity");
     assert.equal(listJson[0]?.latestSyntheticIntegrity?.status, "passed");
-    assert.equal(listJson[0]?.latestRuntimeRelease?.verificationKind, "runtime-release");
-    assert.equal(listJson[0]?.latestRuntimeRelease?.promotionStatus, "blocked");
+    assert.equal(listJson[0]?.latestRuntimeRelease, null);
 
     const runsResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}`);
     assert.equal(runsResponse.status, 200);
@@ -1767,7 +1809,7 @@ test("public api server exposes sandbox certification summaries and detail route
     assert.equal(detailJson.status, "passed");
     assert.deepEqual(detailJson.diffEntries, []);
     assert.deepEqual(detailJson.allowedHosts, ["sandbox-ci.local"]);
-    assert.equal((detailJson as any).latestRuntimeRelease?.promotionStatus, "blocked");
+    assert.equal((detailJson as any).latestRuntimeRelease, null);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -1844,7 +1886,7 @@ test("public api filters sandbox certification runs and exposes run detail by ru
 
     const [runsResponse, detailResponse] = await Promise.all([
       fetch(
-        `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}?profileName=ci-smoke&packId=football-dual-smoke&verificationKind=runtime-release&status=failed`,
+        `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}?profileName=ci-smoke&packId=runtime-release&verificationKind=runtime-release&status=failed`,
       ),
       fetch(`${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}/scr-runtime-1`),
     ]);
@@ -1864,7 +1906,7 @@ test("public api filters sandbox certification runs and exposes run detail by ru
     assert.equal(runsJson[0]?.id, "scr-runtime-1");
     assert.equal(runsJson[0]?.verificationKind, "runtime-release");
     assert.equal(detailJson.id, "scr-runtime-1");
-    assert.equal(detailJson.packId, "football-dual-smoke");
+    assert.equal(detailJson.packId, "runtime-release");
     assert.equal(detailJson.verificationKind, "runtime-release");
     assert.equal(detailJson.diffEntries.length, 1);
   } finally {
@@ -1904,6 +1946,186 @@ test("public api filters telemetry events and metrics by query params", async ()
     assert.equal(eventsJson[0]?.name, "release.ops.quarantine");
     assert.equal(metricsJson.length, 1);
     assert.equal(metricsJson[0]?.name, "release_ops.quarantined_tasks");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api records runtime-release promotion decisions and exposes the latest decision in run detail", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await unitOfWork.sandboxCertificationRuns.save(
+    createRuntimeReleaseRun({
+      id: "scr-runtime-release-approval-1",
+      profileName: "pre-release",
+      generatedAt: "2026-04-22T01:10:00.000Z",
+    }),
+  );
+  const authentication = createPublicApiTokenAuthentication({
+    viewerToken: "viewer-token",
+    operatorToken: "operator-token",
+  });
+  const server = createPublicApiServer({
+    unitOfWork,
+    ...(authentication ? { auth: authentication } : {}),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const firstDecisionResponse = await fetch(
+      `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}/scr-runtime-release-approval-1/promotion-decision`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer operator-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          decision: "approved",
+          reason: "Release owner approved after evidence review",
+          evidenceRefs: ["https://example.com/runtime-release/1"],
+          occurredAt: "2026-04-22T01:30:00.000Z",
+        }),
+      },
+    );
+    assert.equal(firstDecisionResponse.status, 200);
+    const firstDecisionJson = (await firstDecisionResponse.json()) as {
+      latestPromotionDecision: { decision: string; reason: string; evidenceRefs: string[] } | null;
+      promotionDecisionHistory: Array<{ decision: string }>;
+    };
+    assert.equal(firstDecisionJson.latestPromotionDecision?.decision, "approved");
+    assert.equal(firstDecisionJson.latestPromotionDecision?.reason, "Release owner approved after evidence review");
+    assert.deepEqual(firstDecisionJson.latestPromotionDecision?.evidenceRefs, [
+      "https://example.com/runtime-release/1",
+    ]);
+    assert.equal(firstDecisionJson.promotionDecisionHistory.length, 1);
+
+    const secondDecisionResponse = await fetch(
+      `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}/scr-runtime-release-approval-1/promotion-decision`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer operator-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          decision: "rejected",
+          reason: "New blocking evidence found",
+          evidenceRefs: ["https://example.com/runtime-release/2"],
+          occurredAt: "2026-04-22T01:45:00.000Z",
+        }),
+      },
+    );
+    assert.equal(secondDecisionResponse.status, 200);
+
+    const detailResponse = await fetch(
+      `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}/scr-runtime-release-approval-1`,
+      {
+        headers: {
+          authorization: "Bearer viewer-token",
+        },
+      },
+    );
+    assert.equal(detailResponse.status, 200);
+    const detailJson = (await detailResponse.json()) as {
+      latestPromotionDecision: { decision: string; reason: string } | null;
+      promotionDecisionHistory: Array<{ decision: string }>;
+    };
+    assert.equal(detailJson.latestPromotionDecision?.decision, "rejected");
+    assert.equal(detailJson.latestPromotionDecision?.reason, "New blocking evidence found");
+    assert.deepEqual(
+      detailJson.promotionDecisionHistory.map((entry) => entry.decision),
+      ["rejected", "approved"],
+    );
+
+    const auditEvents = await unitOfWork.auditEvents.findByAggregate(
+      "sandbox-certification-run",
+      "scr-runtime-release-approval-1",
+    );
+    assert.equal(
+      auditEvents.filter((event) => event.eventType === "sandbox-certification-run.promotion-decision.recorded")
+        .length,
+      2,
+    );
+    const telemetryEvents = await unitOfWork.telemetryEvents.list();
+    const metricSamples = await unitOfWork.metricSamples.list();
+    assert.equal(
+      telemetryEvents.some((event) => event.name === "public_api.promotion-decision"),
+      true,
+    );
+    assert.equal(
+      metricSamples.some((sample) => sample.name === "public_api.promotion-decision.count"),
+      true,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api enforces release approval capability and ci-ephemeral protection for promotion decisions", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await unitOfWork.sandboxCertificationRuns.save(
+    createRuntimeReleaseRun({
+      id: "scr-runtime-release-ci-1",
+      profileName: "ci-ephemeral",
+      generatedAt: "2026-04-22T02:10:00.000Z",
+    }),
+  );
+  const authentication = createPublicApiTokenAuthentication({
+    viewerToken: "viewer-token",
+    operatorToken: "operator-token",
+  });
+  const server = createPublicApiServer({
+    unitOfWork,
+    ...(authentication ? { auth: authentication } : {}),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const viewerResponse = await fetch(
+      `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}/scr-runtime-release-ci-1/promotion-decision`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer viewer-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          decision: "approved",
+          reason: "viewer cannot approve",
+          evidenceRefs: [],
+        }),
+      },
+    );
+    assert.equal(viewerResponse.status, 403);
+
+    const operatorResponse = await fetch(
+      `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}/scr-runtime-release-ci-1/promotion-decision`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer operator-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          decision: "approved",
+          reason: "ci runs must not be approved manually",
+          evidenceRefs: [],
+        }),
+      },
+    );
+    assert.equal(operatorResponse.status, 409);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

@@ -16,12 +16,12 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/policy-engine build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/queue-adapters build && tsc -p tsconfig.json",
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/policy-engine build && pnpm --filter @gana-v8/authz build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/queue-adapters build && tsc -p tsconfig.json",
     "dev": "node ../../scripts/workspace-dev.mjs public-api",
     "serve": "pnpm run build && node dist/src/index.js",
     "lint": "node ../../scripts/workspace-lint.mjs .",
     "test": "pnpm run build && node --test dist/tests/**/*.test.js && node --input-type=module --eval \"import('./dist/src/index.js').then((module) => { if (module.workspaceInfo?.packageName !== '@gana-v8/public-api') throw new Error('workspaceInfo.packageName mismatch'); if (!Array.isArray(module.workspaceInfo?.dependencies)) throw new Error('workspaceInfo.dependencies should be an array'); console.log('test ok: @gana-v8/public-api'); })\"",
-    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/policy-engine build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/queue-adapters build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/policy-engine build && pnpm --filter @gana-v8/authz build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/queue-adapters build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {

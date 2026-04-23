@@ -10,18 +10,20 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-runtime-release-adopcion-operativa.md`
+No hay planes vigentes hoy en `docs/plans/falta/`.
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 
 ## Estado actual del backlog
 
 - El cierre principal de harness, release ops y runbooks ya quedo materializado en `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`.
-- El unico frente activo residual es la adopcion operativa de `runtime-release`: calibracion por entorno, retencion/pruning y formalizacion de overrides humanos.
+- El cierre complementario de adopcion operativa de `runtime-release` ya quedo materializado en `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`.
+- Si aparece un gap nuevo, debe abrirse como un nuevo archivo canonico en `docs/plans/falta/`.
 
 ## Planes relevantes en `completado/`
 
 - `gana-v8-harness-runtime-durable.md`
+- `gana-v8-runtime-release-adopcion-operativa.md`
 - `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 - `gana-v8-harness-core-y-claridad-agente.md`
 - `gana-v8-plan-cierre-sandbox-qa.md`
@@ -37,7 +39,7 @@ Un plan quedó en `falta/` cuando el repo ya tiene avance claro, pero todavía f
 
 ## Nota de mantenimiento
 
-Los planes dentro de `falta/` están escritos con enfoque `gap-first`: parten del estado actual confirmado, separan explícitamente lo ya cubierto de lo todavía pendiente y asignan cada gap a un solo plan. Cuando un plan deja de tener gaps centrales abiertos, debe moverse a `completado/`.
+Los planes dentro de `falta/` están escritos con enfoque `gap-first`: parten del estado actual confirmado, separan explícitamente lo ya cubierto de lo todavía pendiente y asignan cada gap a un solo plan. Cuando un plan deja de tener gaps centrales abiertos, debe moverse a `completado/`, dejando `falta/` vacio si no quedan frentes abiertos.
 
 Los 7 documentos originales que antes vivían en `falta/` se conservaron sin editar dentro de `archivado/2026-04-21-falta-originales/` para mantener trazabilidad histórica sin dejar múltiples fuentes activas compitiendo entre sí.
 

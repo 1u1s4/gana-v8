@@ -50,8 +50,9 @@ pnpm test:sandbox:certification
 
 ## Planes activos
 
-- `docs/plans/falta/gana-v8-runtime-release-adopcion-operativa.md`
+No hay planes activos hoy en `docs/plans/falta/`.
 
 Último cierre relevante:
 
+- `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`
 - `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`

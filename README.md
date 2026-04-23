@@ -105,7 +105,7 @@ La consola web de operación corre separada y consume solo `public-api`:
 pnpm --filter @gana-v8/operator-console serve:web
 ```
 
-La consola ahora también muestra `sandbox certification`, `promotion-gates` y la traza auditable de policy/capabilities por perfil usando `public-api`.
+La consola ahora también muestra `sandbox certification`, un inspector dedicado de `runtime-release`, `promotion-gates` y la traza auditable de policy/capabilities por perfil usando `public-api`.
 
 Variables clave:
 
@@ -146,6 +146,12 @@ Runbooks asociados:
 
 CI conserva la certificación sintética en `sandbox-certification` y agrega el gate MySQL-backed `runtime-release` para ejecutar el runtime durable de scheduler, dispatcher y recovery contra Prisma/MySQL real.
 
+`runtime-release` resuelve defaults operativos por perfil de evidencia:
+
+- `ci-ephemeral`: reloj congelado `2100-01-02T00:00:00.000Z`, `lookback=48h`, no overrideable.
+- `staging-shared`: reloj real, `lookback=72h`, aprobación humana del operador on-duty.
+- `pre-release`: reloj real, `lookback=168h`, aprobación humana del release owner.
+
 La reproducción local mínima de ese gate es:
 
 ```bash
@@ -154,6 +160,13 @@ pnpm db:migrate:deploy
 pnpm --filter @gana-v8/control-plane-runtime test
 pnpm test:runtime:release
 GANA_RUNTIME_PROFILE=ci-smoke pnpm test:e2e:hermes-smoke
+```
+
+Housekeeping de historia durable:
+
+```bash
+pnpm ops-history-retention -- --dry-run
+pnpm ops-history-retention -- --apply
 ```
 
 Runbooks operativos activos:
@@ -183,18 +196,19 @@ Runbooks operativos activos:
 
 ## Próximos pasos naturales
 
-- afinar retención y pruning de history/telemetry cuando el volumen operativo real lo exija
 - revisar thresholds de promoción y ventanas de evidencia con datos de operación reales
-- endurecer ergonomía y dashboards sobre los read models ya unificados de `public-api` y `operator-console`
+- endurecer dashboards históricos sobre los read models ya unificados de `public-api` y `operator-console`
+- automatizar archival/export adicional si el volumen operativo supera la retención online de 90 días
 
 ## Planes clave
 
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-runtime-release-adopcion-operativa.md`
+No hay planes activos hoy en `docs/plans/falta/`.
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`
 - `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-runtime-durable.md`
 - `docs/plans/completado/gana-v8-harness-core-y-claridad-agente.md`
