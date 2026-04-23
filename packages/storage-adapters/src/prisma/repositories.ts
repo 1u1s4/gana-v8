@@ -49,6 +49,9 @@ import type {
   SandboxCertificationRunPruneResult,
   SandboxCertificationRunQuery,
   SandboxCertificationRunRepository,
+  RuntimeReleaseSnapshotEntity,
+  RuntimeReleaseSnapshotQuery,
+  RuntimeReleaseSnapshotRepository,
   SandboxNamespaceRepository,
   SchedulerCursorEntity,
   SchedulerCursorRepository,
@@ -132,6 +135,9 @@ import {
   sandboxCertificationRunDomainToCreateInput,
   sandboxCertificationRunInclude,
   sandboxCertificationRunRecordToDomain,
+  runtimeReleaseSnapshotDomainToCreateInput,
+  runtimeReleaseSnapshotInclude,
+  runtimeReleaseSnapshotRecordToDomain,
   taskDomainToCreateInput,
   taskInclude,
   taskRecordToDomain,
@@ -180,6 +186,7 @@ export type PrismaClientLike = Pick<
   | "validation"
   | "auditEvent"
   | "sandboxCertificationRun"
+  | "runtimeReleaseSnapshot"
   | "operationalTelemetryEvent"
   | "operationalMetricSample"
   | "rawIngestionBatch"
@@ -1436,6 +1443,81 @@ export class PrismaSandboxCertificationRunRepository implements SandboxCertifica
       deletedCount,
       preservedLatestCount: preservedLatestIds.size,
     };
+  }
+}
+
+export class PrismaRuntimeReleaseSnapshotRepository implements RuntimeReleaseSnapshotRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: RuntimeReleaseSnapshotEntity): Promise<RuntimeReleaseSnapshotEntity> {
+    const record = await this.client.runtimeReleaseSnapshot.upsert({
+      where: { id: entity.id },
+      create: runtimeReleaseSnapshotDomainToCreateInput(entity),
+      update: runtimeReleaseSnapshotDomainToCreateInput(entity),
+      ...runtimeReleaseSnapshotInclude,
+    });
+    return runtimeReleaseSnapshotRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<RuntimeReleaseSnapshotEntity | null> {
+    const record = await retryPrismaReadOperation(() =>
+      this.client.runtimeReleaseSnapshot.findUnique({
+        where: { id },
+        ...runtimeReleaseSnapshotInclude,
+      }),
+    );
+    return record ? runtimeReleaseSnapshotRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<RuntimeReleaseSnapshotEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.runtimeReleaseSnapshot.findMany({
+        orderBy: { createdAt: "desc" },
+        ...runtimeReleaseSnapshotInclude,
+      }),
+    );
+    return records.map(runtimeReleaseSnapshotRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.runtimeReleaseSnapshot.delete({ where: { id } });
+  }
+
+  async listByQuery(query: RuntimeReleaseSnapshotQuery = {}): Promise<RuntimeReleaseSnapshotEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.runtimeReleaseSnapshot.findMany({
+        where: {
+          ...(query.evidenceProfile ? { evidenceProfile: query.evidenceProfile } : {}),
+          ...(query.refName ? { refName: query.refName } : {}),
+          ...(query.refRole ? { refRole: query.refRole } : {}),
+          ...(query.fingerprint ? { fingerprint: query.fingerprint } : {}),
+          ...(query.gitSha ? { gitSha: query.gitSha } : {}),
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        ...(query.limit ? { take: query.limit } : {}),
+        ...runtimeReleaseSnapshotInclude,
+      }),
+    );
+    return records.map(runtimeReleaseSnapshotRecordToDomain);
+  }
+
+  async findLatestByProfileRef(
+    evidenceProfile: string,
+    refName: string,
+    refRole?: RuntimeReleaseSnapshotEntity["refRole"],
+  ): Promise<RuntimeReleaseSnapshotEntity | null> {
+    const record = await retryPrismaReadOperation(() =>
+      this.client.runtimeReleaseSnapshot.findFirst({
+        where: {
+          evidenceProfile,
+          refName,
+          ...(refRole ? { refRole } : {}),
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        ...runtimeReleaseSnapshotInclude,
+      }),
+    );
+    return record ? runtimeReleaseSnapshotRecordToDomain(record) : null;
   }
 }
 

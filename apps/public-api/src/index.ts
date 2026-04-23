@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import {
   createServer,
@@ -532,6 +532,7 @@ export interface PublicApiSandboxCertificationSourceOptions {
   readonly goldensRoot?: string;
   readonly artifactsRoot?: string;
   readonly persistedRuns?: readonly SandboxCertificationRunReadModel[];
+  readonly persistedRuntimeReleaseSnapshots?: readonly RuntimeReleaseSnapshotReadModel[];
 }
 
 export interface SandboxCertificationDiffEntryReadModel {
@@ -598,6 +599,39 @@ export interface SandboxCertificationRunReadModel extends SandboxCertificationRu
   readonly diffEntries: readonly SandboxCertificationDiffEntryReadModel[];
 }
 
+export type RuntimeReleaseSnapshotRole = "baseline" | "candidate";
+
+export type RuntimeReleaseSnapshotSource = "persisted" | "summary" | "runtimeSignals" | "derived";
+
+export interface RuntimeReleaseSnapshotReadModel {
+  readonly id: string;
+  readonly role: RuntimeReleaseSnapshotRole;
+  readonly ref: string;
+  readonly source: RuntimeReleaseSnapshotSource;
+  readonly runId?: string;
+  readonly profileName?: string;
+  readonly fingerprint?: string;
+  readonly generatedAt?: string;
+  readonly artifactRef?: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+export type RuntimeReleaseCoverageStatus = "complete" | "partial" | "truncated" | "unknown";
+
+export interface RuntimeReleaseCoverageSectionReadModel {
+  readonly name: string;
+  readonly observedCount?: number;
+  readonly limit?: number;
+  readonly truncated?: boolean;
+}
+
+export interface RuntimeReleaseCoverageSummaryReadModel {
+  readonly status: RuntimeReleaseCoverageStatus;
+  readonly truncated: boolean | null;
+  readonly sections: readonly RuntimeReleaseCoverageSectionReadModel[];
+  readonly notes: readonly string[];
+}
+
 export interface SandboxCertificationPromotionDecisionReadModel {
   readonly decision: SandboxCertificationPromotionDecision;
   readonly reason: string;
@@ -608,6 +642,10 @@ export interface SandboxCertificationPromotionDecisionReadModel {
 }
 
 export interface SandboxCertificationRunDetailReadModel extends SandboxCertificationRunReadModel {
+  readonly baselineSnapshot: RuntimeReleaseSnapshotReadModel | null;
+  readonly candidateSnapshot: RuntimeReleaseSnapshotReadModel | null;
+  readonly coverageSummary: RuntimeReleaseCoverageSummaryReadModel | null;
+  readonly snapshotDiffFingerprint: string | null;
   readonly latestPromotionDecision: SandboxCertificationPromotionDecisionReadModel | null;
   readonly promotionDecisionHistory: readonly SandboxCertificationPromotionDecisionReadModel[];
 }
@@ -910,6 +948,10 @@ interface PersistedCertificationHistoryRepositoryCollectionLike {
       packId: string,
       verificationKind?: SandboxCertificationVerificationKind,
     ): Promise<unknown | null>;
+  };
+  readonly runtimeReleaseSnapshots?: {
+    listByRunId?(runId: string): Promise<readonly unknown[]>;
+    listByQuery?(query?: Record<string, unknown>): Promise<readonly unknown[]>;
   };
 }
 
@@ -2667,13 +2709,319 @@ const listSandboxCertificationPromotionDecisions = (
     (decision) => decision.occurredAt,
   );
 
+const createStableFingerprint = (value: unknown): string =>
+  `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
+
+const runtimeReleaseSnapshotObjectKeys = (
+  role: RuntimeReleaseSnapshotRole,
+): readonly string[] =>
+  role === "baseline"
+    ? ["baselineSnapshot", "baselineRuntimeSnapshot"]
+    : ["candidateSnapshot", "candidateRuntimeSnapshot"];
+
+const readNestedRecord = (
+  record: Readonly<Record<string, unknown>>,
+  ...keys: readonly string[]
+): Record<string, unknown> | null => {
+  let current: unknown = record;
+  for (const key of keys) {
+    const currentRecord = asRecord(current);
+    if (!currentRecord) {
+      return null;
+    }
+    current = currentRecord[key];
+  }
+
+  return asRecord(current);
+};
+
+const mapRuntimeReleaseSnapshotRecord = (
+  record: Record<string, unknown>,
+  fallback: {
+    readonly role: RuntimeReleaseSnapshotRole;
+    readonly run: SandboxCertificationRunReadModel;
+    readonly source: RuntimeReleaseSnapshotSource;
+  },
+): RuntimeReleaseSnapshotReadModel => {
+  const roleValue = readRecordString(record, "role", "snapshotRole", "kind", "type")?.trim().toLowerCase();
+  const role =
+    roleValue === "baseline" || roleValue === "candidate"
+      ? roleValue
+      : fallback.role;
+  const runId = readRecordString(record, "runId", "sandboxCertificationRunId", "certificationRunId") ?? fallback.run.id;
+  const metadata = readRecordObject(record, "metadata", "summary", "payload") ?? {};
+  const ref =
+    readRecordString(record, "ref", "gitRef", "sourceRef", "runtimeRef") ??
+    (role === "baseline" ? fallback.run.baselineRef : fallback.run.candidateRef) ??
+    fallback.run.gitSha;
+  const fingerprint = readRecordString(record, "fingerprint", "snapshotFingerprint", "hash", "checksum");
+  const generatedAt = readRecordIsoString(record, "generatedAt", "createdAt", "capturedAt");
+  const artifactRef = readRecordString(record, "artifactRef", "artifactPath", "uri", "url");
+
+  return {
+    id: readRecordString(record, "id", "snapshotId") ?? `${runId}:${role}`,
+    role,
+    ref,
+    source: fallback.source,
+    runId,
+    profileName:
+      readRecordString(record, "profileName", "profile", "evidenceProfile") ??
+      fallback.run.profileName,
+    ...(fingerprint ? { fingerprint } : {}),
+    ...(generatedAt ? { generatedAt } : {}),
+    ...(artifactRef ? { artifactRef } : {}),
+    metadata,
+  };
+};
+
+const findRuntimeReleaseSnapshotRecord = (
+  run: SandboxCertificationRunReadModel,
+  role: RuntimeReleaseSnapshotRole,
+): { readonly record: Record<string, unknown>; readonly source: RuntimeReleaseSnapshotSource } | null => {
+  for (const key of runtimeReleaseSnapshotObjectKeys(role)) {
+    const summaryRecord = asRecord(run.summary[key]);
+    if (summaryRecord) {
+      return { record: summaryRecord, source: "summary" };
+    }
+
+    const signalRecord = asRecord(run.runtimeSignals[key]);
+    if (signalRecord) {
+      return { record: signalRecord, source: "runtimeSignals" };
+    }
+  }
+
+  const summarySnapshot =
+    readNestedRecord(run.summary, "runtimeReleaseSnapshots", role) ??
+    readNestedRecord(run.summary, "snapshots", role);
+  if (summarySnapshot) {
+    return { record: summarySnapshot, source: "summary" };
+  }
+
+  const runtimeSignalSnapshot =
+    readNestedRecord(run.runtimeSignals, "runtimeReleaseSnapshots", role) ??
+    readNestedRecord(run.runtimeSignals, "snapshots", role);
+  if (runtimeSignalSnapshot) {
+    return { record: runtimeSignalSnapshot, source: "runtimeSignals" };
+  }
+
+  return null;
+};
+
+const deriveRuntimeReleaseSnapshot = (
+  run: SandboxCertificationRunReadModel,
+  role: RuntimeReleaseSnapshotRole,
+): RuntimeReleaseSnapshotReadModel | null => {
+  if (run.verificationKind !== "runtime-release") {
+    return null;
+  }
+
+  const snapshotRecord = findRuntimeReleaseSnapshotRecord(run, role);
+  if (snapshotRecord) {
+    return mapRuntimeReleaseSnapshotRecord(snapshotRecord.record, {
+      role,
+      run,
+      source: snapshotRecord.source,
+    });
+  }
+
+  const ref = role === "baseline" ? run.baselineRef : run.candidateRef;
+  if (!ref) {
+    return null;
+  }
+
+  return {
+    id: `${run.id}:${role}`,
+    role,
+    ref,
+    source: "derived",
+    runId: run.id,
+    profileName: run.profileName,
+    metadata: {},
+  };
+};
+
+const normalizeRuntimeReleaseCoverageStatus = (
+  value: unknown,
+  truncated: boolean | null,
+): RuntimeReleaseCoverageStatus => {
+  const normalized = asString(value)?.trim().toLowerCase();
+  if (
+    normalized === "complete" ||
+    normalized === "partial" ||
+    normalized === "truncated" ||
+    normalized === "unknown"
+  ) {
+    return normalized;
+  }
+
+  if (truncated === true) {
+    return "truncated";
+  }
+
+  return "unknown";
+};
+
+const normalizeRuntimeReleaseCoverageSections = (
+  value: unknown,
+): readonly RuntimeReleaseCoverageSectionReadModel[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      const record = asRecord(entry);
+      const name = asString(record?.name);
+      if (!record || !name) {
+        return [];
+      }
+
+      const observedCount = asNumber(record.observedCount ?? record.count ?? record.total);
+      const limit = asNumber(record.limit ?? record.take);
+      const truncated = asBoolean(record.truncated);
+      return [
+        {
+          name,
+          ...(observedCount !== null ? { observedCount } : {}),
+          ...(limit !== null ? { limit } : {}),
+          ...(truncated !== null ? { truncated } : {}),
+        } satisfies RuntimeReleaseCoverageSectionReadModel,
+      ];
+    });
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  return Object.entries(record).flatMap(([name, entry]) => {
+    const entryRecord = asRecord(entry);
+    if (!entryRecord) {
+      return [];
+    }
+
+    const observedCount = asNumber(entryRecord.observedCount ?? entryRecord.count ?? entryRecord.total);
+    const limit = asNumber(entryRecord.limit ?? entryRecord.take);
+    const truncated = asBoolean(entryRecord.truncated);
+    return [
+      {
+        name,
+        ...(observedCount !== null ? { observedCount } : {}),
+        ...(limit !== null ? { limit } : {}),
+        ...(truncated !== null ? { truncated } : {}),
+      } satisfies RuntimeReleaseCoverageSectionReadModel,
+    ];
+  });
+};
+
+const normalizeRuntimeReleaseCoverageSummary = (
+  run: SandboxCertificationRunReadModel,
+): RuntimeReleaseCoverageSummaryReadModel | null => {
+  if (run.verificationKind !== "runtime-release") {
+    return null;
+  }
+
+  const coverageRecord =
+    readRecordObject(run.summary, "coverageSummary", "coverage") ??
+    readRecordObject(run.runtimeSignals, "coverageSummary", "coverage");
+  if (coverageRecord) {
+    const truncated = asBoolean(coverageRecord.truncated);
+    const sections = normalizeRuntimeReleaseCoverageSections(coverageRecord.sections);
+    return {
+      status: normalizeRuntimeReleaseCoverageStatus(coverageRecord.status, truncated),
+      truncated,
+      sections,
+      notes: asStringArray(coverageRecord.notes),
+    };
+  }
+
+  const sections = ["automationCycles", "tasks", "taskRuns", "auditEvents"].flatMap((name) => {
+    const signal = asRecord(run.runtimeSignals[name]);
+    const observedCount = asNumber(signal?.total);
+    return observedCount === null
+      ? []
+      : [
+          {
+            name,
+            observedCount,
+          } satisfies RuntimeReleaseCoverageSectionReadModel,
+        ];
+  });
+
+  return {
+    status: "unknown",
+    truncated: null,
+    sections,
+    notes: ["Coverage and truncation were not reported by this runtime-release run."],
+  };
+};
+
+const resolveRuntimeReleaseSnapshotDiffFingerprint = (
+  run: SandboxCertificationRunReadModel,
+  baselineSnapshot: RuntimeReleaseSnapshotReadModel | null,
+  candidateSnapshot: RuntimeReleaseSnapshotReadModel | null,
+): string | null => {
+  if (run.verificationKind !== "runtime-release") {
+    return null;
+  }
+
+  const explicit =
+    asString(run.summary.snapshotDiffFingerprint) ??
+    asString(run.summary.diffFingerprint) ??
+    asString(run.runtimeSignals.snapshotDiffFingerprint) ??
+    asString(run.runtimeSignals.diffFingerprint);
+  if (explicit) {
+    return explicit;
+  }
+
+  if (!baselineSnapshot && !candidateSnapshot && run.diffEntries.length === 0) {
+    return null;
+  }
+
+  return createStableFingerprint({
+    baselineFingerprint: baselineSnapshot?.fingerprint ?? null,
+    baselineRef: baselineSnapshot?.ref ?? run.baselineRef ?? null,
+    candidateFingerprint: candidateSnapshot?.fingerprint ?? null,
+    candidateRef: candidateSnapshot?.ref ?? run.candidateRef ?? null,
+    diffEntries: run.diffEntries,
+  });
+};
+
+const selectRuntimeReleaseSnapshotsForRun = (
+  snapshots: readonly RuntimeReleaseSnapshotReadModel[],
+  run: SandboxCertificationRunReadModel,
+): {
+  readonly baselineSnapshot: RuntimeReleaseSnapshotReadModel | null;
+  readonly candidateSnapshot: RuntimeReleaseSnapshotReadModel | null;
+} => {
+  const matchingSnapshots = snapshots.filter((snapshot) => !snapshot.runId || snapshot.runId === run.id);
+  return {
+    baselineSnapshot:
+      matchingSnapshots.find((snapshot) => snapshot.role === "baseline") ??
+      deriveRuntimeReleaseSnapshot(run, "baseline"),
+    candidateSnapshot:
+      matchingSnapshots.find((snapshot) => snapshot.role === "candidate") ??
+      deriveRuntimeReleaseSnapshot(run, "candidate"),
+  };
+};
+
 const createSandboxCertificationRunDetail = (
   run: SandboxCertificationRunReadModel,
   auditEvents: readonly AuditEventEntity[] = [],
+  runtimeReleaseSnapshots: readonly RuntimeReleaseSnapshotReadModel[] = [],
 ): SandboxCertificationRunDetailReadModel => {
   const promotionDecisionHistory = listSandboxCertificationPromotionDecisions(auditEvents, run.id);
+  const { baselineSnapshot, candidateSnapshot } = selectRuntimeReleaseSnapshotsForRun(
+    runtimeReleaseSnapshots,
+    run,
+  );
   return {
     ...run,
+    baselineSnapshot,
+    candidateSnapshot,
+    coverageSummary: normalizeRuntimeReleaseCoverageSummary(run),
+    snapshotDiffFingerprint: resolveRuntimeReleaseSnapshotDiffFingerprint(
+      run,
+      baselineSnapshot,
+      candidateSnapshot,
+    ),
     latestPromotionDecision: promotionDecisionHistory[0] ?? null,
     promotionDecisionHistory,
   };
@@ -3454,6 +3802,38 @@ const withPersistedSandboxCertificationRuns = async (
   };
 };
 
+const loadRuntimeReleaseSnapshotsForRun = async (
+  run: SandboxCertificationRunReadModel,
+  options: PublicApiSandboxCertificationSourceOptions | undefined,
+  unitOfWork?: StorageUnitOfWork,
+): Promise<readonly RuntimeReleaseSnapshotReadModel[]> => {
+  if (run.verificationKind !== "runtime-release") {
+    return [];
+  }
+
+  const optionSnapshots =
+    options?.persistedRuntimeReleaseSnapshots?.filter((snapshot) => !snapshot.runId || snapshot.runId === run.id) ?? [];
+  if (optionSnapshots.length > 0) {
+    return optionSnapshots;
+  }
+
+  if (!unitOfWork) {
+    return [];
+  }
+
+  const repositorySnapshots = await loadPersistedRuntimeReleaseSnapshotsFromRepositories(
+    unitOfWork as StorageUnitOfWork & PersistedCertificationHistoryRepositoryCollectionLike,
+    run,
+  );
+  if (repositorySnapshots.length > 0) {
+    return repositorySnapshots;
+  }
+
+  return isPrismaSnapshotUnitOfWorkLike(unitOfWork)
+    ? loadPersistedRuntimeReleaseSnapshotsFromPrisma(unitOfWork.client, run)
+    : [];
+};
+
 export const authorizePublicApiRequest = (
   request: IncomingMessage,
   method: string,
@@ -3596,10 +3976,19 @@ export async function handlePublicApiRequest(
               auditEvent.aggregateType === "sandbox-certification-run" &&
               auditEvent.aggregateId === sandboxCertificationRunDetail.runId,
           );
+      const runtimeReleaseSnapshots = await loadRuntimeReleaseSnapshotsForRun(
+        certificationRun,
+        sandboxCertificationOptions,
+        options.unitOfWork,
+      );
       writeJsonResponse(
         response,
         200,
-        createSandboxCertificationRunDetail(certificationRun, promotionDecisionAuditEvents),
+        createSandboxCertificationRunDetail(
+          certificationRun,
+          promotionDecisionAuditEvents,
+          runtimeReleaseSnapshots,
+        ),
       );
       return;
     }
@@ -3785,10 +4174,19 @@ export async function handlePublicApiRequest(
         "sandbox-certification-run",
         certificationRun.id,
       );
+      const runtimeReleaseSnapshots = await loadRuntimeReleaseSnapshotsForRun(
+        certificationRun,
+        options.sandboxCertification,
+        options.unitOfWork,
+      );
       writeJsonResponse(
         response,
         200,
-        createSandboxCertificationRunDetail(certificationRun, promotionDecisionAuditEvents),
+        createSandboxCertificationRunDetail(
+          certificationRun,
+          promotionDecisionAuditEvents,
+          runtimeReleaseSnapshots,
+        ),
       );
       return;
     }
@@ -5185,6 +5583,28 @@ const mapSandboxCertificationRunRecord = (
   };
 };
 
+const inferRuntimeReleaseSnapshotRole = (
+  record: Record<string, unknown>,
+  run: SandboxCertificationRunReadModel,
+): RuntimeReleaseSnapshotRole | null => {
+  const roleValue = readRecordString(record, "role", "snapshotRole", "kind", "type")?.trim().toLowerCase();
+  if (roleValue === "baseline" || roleValue === "candidate") {
+    return roleValue;
+  }
+
+  const id = readRecordString(record, "id", "snapshotId")?.toLowerCase() ?? "";
+  const ref = readRecordString(record, "ref", "gitRef", "sourceRef", "runtimeRef");
+  if (id.includes("baseline") || (ref && run.baselineRef && ref === run.baselineRef)) {
+    return "baseline";
+  }
+
+  if (id.includes("candidate") || (ref && run.candidateRef && ref === run.candidateRef)) {
+    return "candidate";
+  }
+
+  return null;
+};
+
 const mapTelemetryEventRecord = (
   record: Record<string, unknown>,
 ): TelemetryEventReadModel | null => {
@@ -5294,6 +5714,40 @@ const loadPersistedSandboxCertificationRunsFromRepositories = async (
   );
 };
 
+const loadPersistedRuntimeReleaseSnapshotsFromRepositories = async (
+  unitOfWork: PersistedCertificationHistoryRepositoryCollectionLike,
+  run: SandboxCertificationRunReadModel,
+): Promise<readonly RuntimeReleaseSnapshotReadModel[]> => {
+  const repository = unitOfWork.runtimeReleaseSnapshots;
+  if (!repository) {
+    return [];
+  }
+
+  const rows = repository.listByRunId
+    ? await repository.listByRunId(run.id)
+    : repository.listByQuery
+      ? await repository.listByQuery({
+          runId: run.id,
+          sandboxCertificationRunId: run.id,
+          limit: 10,
+        })
+      : [];
+
+  return rows.flatMap((row) => {
+    const record = asRecord(row);
+    const role = record ? inferRuntimeReleaseSnapshotRole(record, run) : null;
+    return record && role
+      ? [
+          mapRuntimeReleaseSnapshotRecord(record, {
+            role,
+            run,
+            source: "persisted",
+          }),
+        ]
+      : [];
+  });
+};
+
 const loadPersistedTelemetryEventsFromRepositories = async (
   unitOfWork: PersistedTelemetryRepositoryCollectionLike,
 ): Promise<readonly TelemetryEventReadModel[]> => {
@@ -5352,6 +5806,44 @@ const loadPersistedSandboxCertificationRunsFromPrisma = async (
     }),
     (run) => run.generatedAt ?? run.id,
   );
+};
+
+const loadPersistedRuntimeReleaseSnapshotsFromPrisma = async (
+  client: PrismaClientLike,
+  run: SandboxCertificationRunReadModel,
+): Promise<readonly RuntimeReleaseSnapshotReadModel[]> => {
+  if (!(await prismaTableExists(client, "RuntimeReleaseSnapshot"))) {
+    return [];
+  }
+
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
+      "SELECT * FROM RuntimeReleaseSnapshot WHERE sandboxCertificationRunId = ? OR runId = ? LIMIT 20",
+      run.id,
+      run.id,
+    );
+  } catch {
+    rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
+      "SELECT * FROM RuntimeReleaseSnapshot LIMIT 100",
+    );
+  }
+
+  return rows.flatMap((row) => {
+    const role = inferRuntimeReleaseSnapshotRole(row, run);
+    const rowRunId = readRecordString(row, "runId", "sandboxCertificationRunId", "certificationRunId");
+    if (!role || (rowRunId && rowRunId !== run.id)) {
+      return [];
+    }
+
+    return [
+      mapRuntimeReleaseSnapshotRecord(row, {
+        role,
+        run,
+        source: "persisted",
+      }),
+    ];
+  });
 };
 
 const loadPersistedTelemetryEventsFromPrisma = async (

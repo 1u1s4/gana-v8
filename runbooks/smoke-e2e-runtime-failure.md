@@ -8,7 +8,7 @@ Diagnosticar fallos del smoke end-to-end de Hermes y separar problemas de compil
 
 - Falla `pnpm test:e2e:hermes-smoke`.
 - Falla el job `e2e-smoke` en CI.
-- Un cambio en `hermes-scheduler`, `hermes-dispatcher`, `hermes-recovery` o `control-plane-runtime` rompe la ruta de smoke.
+- Un cambio en `hermes-scheduler`, `hermes-dispatcher`, `hermes-recovery` o `control-plane-runtime` rompe la ruta de smoke de procesos vivos.
 
 ## Precondiciones
 
@@ -39,9 +39,10 @@ pnpm --filter @gana-v8/control-plane-runtime test
 
 ## Evidencia esperada
 
-- El smoke valida el runtime compartido y compila `@gana-v8/hermes-scheduler`, `@gana-v8/hermes-dispatcher` y `@gana-v8/hermes-recovery`.
+- El smoke levanta o ejercita procesos vivos equivalentes de `@gana-v8/hermes-scheduler`, `@gana-v8/hermes-dispatcher` y `@gana-v8/hermes-recovery`, además de validar el runtime compartido.
 - Si falla, el error queda localizado en build, import/export contract o runtime durable.
 - La misma base permite decidir si el problema es del smoke wrapper o del runtime real.
+- Si la corrida solo valida imports/compilación, marcar la evidencia como degradada y no tratarla como smoke end-to-end completo.
 
 ## Decisiones humanas
 

@@ -238,6 +238,19 @@ const createPersistedSandboxCertificationRuns = () => [
     runtimeSignals: {
       latestRuntimeRelease: "release-2026.08.16",
       workerHealth: "degraded",
+      coverageSummary: {
+        status: "truncated",
+        truncated: true,
+        sections: [
+          {
+            name: "tasks",
+            observedCount: 500,
+            limit: 500,
+            truncated: true,
+          },
+        ],
+        notes: ["Task evidence reached the query limit."],
+      },
     },
     diffEntryCount: 1,
     diffEntries: [
@@ -248,7 +261,22 @@ const createPersistedSandboxCertificationRuns = () => [
         actual: "degraded",
       },
     ],
-    summary: { releaseDecision: "blocked" },
+    summary: {
+      releaseDecision: "blocked",
+      baselineSnapshot: {
+        id: "rrs-baseline-1",
+        ref: "main",
+        profileName: "ci-smoke",
+        fingerprint: "snapshot-main-fingerprint",
+      },
+      candidateSnapshot: {
+        id: "rrs-candidate-1",
+        ref: "codex/runtime-release",
+        profileName: "ci-smoke",
+        fingerprint: "snapshot-candidate-fingerprint",
+      },
+      snapshotDiffFingerprint: "snapshot-diff-fingerprint-1",
+    },
     generatedAt: "2026-08-16T21:10:00.000Z",
   },
 ] as const;
@@ -1900,6 +1928,10 @@ test("public api filters sandbox certification runs and exposes run detail by ru
       packId: string;
       verificationKind: string;
       diffEntries: unknown[];
+      baselineSnapshot: { ref: string; fingerprint?: string } | null;
+      candidateSnapshot: { ref: string; fingerprint?: string } | null;
+      coverageSummary: { status: string; truncated: boolean | null };
+      snapshotDiffFingerprint: string | null;
     };
 
     assert.equal(runsJson.length, 1);
@@ -1909,6 +1941,13 @@ test("public api filters sandbox certification runs and exposes run detail by ru
     assert.equal(detailJson.packId, "runtime-release");
     assert.equal(detailJson.verificationKind, "runtime-release");
     assert.equal(detailJson.diffEntries.length, 1);
+    assert.equal(detailJson.baselineSnapshot?.ref, "main");
+    assert.equal(detailJson.baselineSnapshot?.fingerprint, "snapshot-main-fingerprint");
+    assert.equal(detailJson.candidateSnapshot?.ref, "codex/runtime-release");
+    assert.equal(detailJson.candidateSnapshot?.fingerprint, "snapshot-candidate-fingerprint");
+    assert.equal(detailJson.coverageSummary.status, "truncated");
+    assert.equal(detailJson.coverageSummary.truncated, true);
+    assert.equal(detailJson.snapshotDiffFingerprint, "snapshot-diff-fingerprint-1");
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

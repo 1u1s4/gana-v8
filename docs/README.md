@@ -11,7 +11,7 @@ Este directorio es el mapa canónico de documentación del repo. Su función es 
 - [`plans/completado/`](./plans/completado/) contiene planes cuyo resultado principal ya quedó materializado de forma sustancial.
 - [`plans/archivado/`](./plans/archivado/) contiene snapshots y planes históricos preservados para trazabilidad, no para trabajo activo.
 - [`agentic-handoff.md`](./agentic-handoff.md) contiene el contrato operativo para subagentes, handoff entre sesiones y aislamiento por frente.
-- [`../runbooks/`](../runbooks/) contiene procedimientos operativos ejecutables. Punto de entrada actual: [`sandbox-certification.md`](../runbooks/sandbox-certification.md).
+- [`../runbooks/`](../runbooks/) contiene procedimientos operativos ejecutables. Punto de entrada recomendado para corridas costosas: [`expensive-verification-triage.md`](../runbooks/expensive-verification-triage.md). Para certificación sintética, usar [`sandbox-certification.md`](../runbooks/sandbox-certification.md). Para snapshots baseline/candidate de `runtime-release`, cobertura/truncación y smoke Hermes de procesos vivos, usar [`release-review-promotion.md`](../runbooks/release-review-promotion.md) y [`smoke-e2e-runtime-failure.md`](../runbooks/smoke-e2e-runtime-failure.md).
 - [`../README.md`](../README.md) sigue siendo el entrypoint general del repo para comandos, workspaces y superficies operativas.
 
 ## Regla de precedencia

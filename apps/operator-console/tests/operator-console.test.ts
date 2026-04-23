@@ -175,9 +175,33 @@ const createRuntimeReleaseRun = (input: {
       automationCycles: {
         total: 2,
       },
+      coverageSummary: {
+        status: "partial",
+        truncated: false,
+        sections: [
+          {
+            name: "automationCycles",
+            observedCount: 2,
+            truncated: false,
+          },
+        ],
+      },
     },
     diffEntries: [],
     summary: {
+      baselineSnapshot: {
+        id: "rrs-console-baseline",
+        ref: "main",
+        profileName: input.profileName,
+        fingerprint: "console-baseline-fingerprint",
+      },
+      candidateSnapshot: {
+        id: "rrs-console-candidate",
+        ref: "codex/runtime-release",
+        profileName: input.profileName,
+        fingerprint: "console-candidate-fingerprint",
+      },
+      snapshotDiffFingerprint: "console-snapshot-diff-fingerprint",
       promotion: {
         status: "review-required",
       },
@@ -509,7 +533,22 @@ test("operator console surfaces runtime-release approval runs in a dedicated pan
         runtimeSignals: {},
         diffEntryCount: 0,
         diffEntries: [],
-        summary: {},
+        summary: {
+          baselineSnapshot: {
+            ref: "main",
+            profileName: "pre-release",
+            fingerprint: "console-panel-baseline",
+          },
+          candidateSnapshot: {
+            ref: "codex/runtime-release",
+            profileName: "pre-release",
+            fingerprint: "console-panel-candidate",
+          },
+          coverageSummary: {
+            status: "complete",
+            truncated: false,
+          },
+        },
         generatedAt: "2026-04-22T01:00:00.000Z",
       },
     ],
@@ -521,6 +560,8 @@ test("operator console surfaces runtime-release approval runs in a dedicated pan
   assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /pre-release\/runtime-release/);
   assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /review-required/);
   assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /codex\/runtime-release/);
+  assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /console-panel-baseline/);
+  assert.match(runtimeReleasePanel?.lines.join("\n") ?? "", /coverage complete \| truncation no/);
 });
 
 test("operator console surfaces fixture pipeline readiness from persisted research read models", () => {
@@ -1042,6 +1083,7 @@ test("operator console web server serves dashboard assets and proxies fixture ac
     assert.match(appJs, /Task Inspector/);
     assert.match(appJs, /AI Run Inspector/);
     assert.match(appJs, /Runtime Release Inspector/);
+    assert.match(appJs, /Runtime snapshots/);
     assert.match(appJs, /Approve/);
 
     const payloadResponse = await fetch(`${baseUrl}/api/console`);

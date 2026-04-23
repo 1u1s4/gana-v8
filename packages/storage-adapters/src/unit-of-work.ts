@@ -14,6 +14,7 @@ import type {
   OperationalTelemetryEventRepository,
   ParlayRepository,
   PredictionRepository,
+  RuntimeReleaseSnapshotRepository,
   ResearchAssignmentRepository,
   ResearchBundleRepository,
   ResearchClaimRepository,
@@ -45,6 +46,7 @@ import {
   InMemoryOperationalTelemetryEventRepository,
   InMemoryParlayRepository,
   InMemoryPredictionRepository,
+  InMemoryRuntimeReleaseSnapshotRepository,
   InMemoryResearchAssignmentRepository,
   InMemoryResearchBundleRepository,
   InMemoryResearchClaimRepository,
@@ -75,6 +77,7 @@ import {
   PrismaOperationalTelemetryEventRepository,
   PrismaParlayRepository,
   PrismaPredictionRepository,
+  PrismaRuntimeReleaseSnapshotRepository,
   PrismaResearchAssignmentRepository,
   PrismaResearchBundleRepository,
   PrismaResearchClaimRepository,
@@ -114,6 +117,7 @@ export interface StorageUnitOfWork {
   validations: ValidationRepository;
   auditEvents: AuditEventRepository;
   sandboxCertificationRuns: SandboxCertificationRunRepository;
+  runtimeReleaseSnapshots: RuntimeReleaseSnapshotRepository;
   telemetryEvents: OperationalTelemetryEventRepository;
   metricSamples: OperationalMetricSampleRepository;
   leagueCoveragePolicies: LeagueCoveragePolicyRepository;
@@ -151,6 +155,7 @@ export const createInMemoryUnitOfWork = (): InMemoryUnitOfWork => ({
   validations: new InMemoryValidationRepository(),
   auditEvents: new InMemoryAuditEventRepository(),
   sandboxCertificationRuns: new InMemorySandboxCertificationRunRepository(),
+  runtimeReleaseSnapshots: new InMemoryRuntimeReleaseSnapshotRepository(),
   telemetryEvents: new InMemoryOperationalTelemetryEventRepository(),
   metricSamples: new InMemoryOperationalMetricSampleRepository(),
   leagueCoveragePolicies: new InMemoryLeagueCoveragePolicyRepository(),
@@ -185,6 +190,7 @@ export const createPrismaUnitOfWork = (
   validations: new PrismaValidationRepository(client),
   auditEvents: new PrismaAuditEventRepository(client),
   sandboxCertificationRuns: new PrismaSandboxCertificationRunRepository(client),
+  runtimeReleaseSnapshots: new PrismaRuntimeReleaseSnapshotRepository(client),
   telemetryEvents: new PrismaOperationalTelemetryEventRepository(client),
   metricSamples: new PrismaOperationalMetricSampleRepository(client),
   leagueCoveragePolicies: new PrismaLeagueCoveragePolicyRepository(client),
