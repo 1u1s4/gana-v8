@@ -23,6 +23,12 @@ import type {
   LineupParticipantRepository,
   LineupSnapshotEntity,
   LineupSnapshotRepository,
+  OperationalMetricSampleEntity,
+  OperationalMetricSampleQuery,
+  OperationalMetricSampleRepository,
+  OperationalTelemetryEventEntity,
+  OperationalTelemetryEventQuery,
+  OperationalTelemetryEventRepository,
   ParlayEntity,
   ParlayRepository,
   PredictionEntity,
@@ -40,6 +46,9 @@ import type {
   ResearchSourceEntity,
   ResearchSourceRepository,
   SandboxNamespace,
+  SandboxCertificationRunEntity,
+  SandboxCertificationRunQuery,
+  SandboxCertificationRunRepository,
   SandboxNamespaceRepository,
   SchedulerCursorEntity,
   SchedulerCursorRepository,
@@ -52,6 +61,11 @@ import type {
   ValidationEntity,
   ValidationRepository,
 } from "@gana-v8/domain-core";
+
+const sortByIsoDescending = <T>(
+  items: readonly T[],
+  selector: (item: T) => string,
+): T[] => [...items].sort((left, right) => selector(right).localeCompare(selector(left)));
 
 class InMemoryRepository<T extends AuditableEntity> {
   protected readonly items = new Map<EntityId, T>();
@@ -178,6 +192,81 @@ export class InMemoryAuditEventRepository
       (item) =>
         item.aggregateType === aggregateType && item.aggregateId === aggregateId,
     );
+  }
+}
+
+export class InMemorySandboxCertificationRunRepository
+  extends InMemoryRepository<SandboxCertificationRunEntity>
+  implements SandboxCertificationRunRepository
+{
+  async listByQuery(query: SandboxCertificationRunQuery = {}): Promise<SandboxCertificationRunEntity[]> {
+    const items = sortByIsoDescending(await this.list(), (item) => item.generatedAt).filter((item) =>
+      (query.profileName ? item.profileName === query.profileName : true) &&
+      (query.packId ? item.packId === query.packId : true) &&
+      (query.verificationKind ? item.verificationKind === query.verificationKind : true) &&
+      (query.status ? item.status === query.status : true),
+    );
+
+    return query.limit ? items.slice(0, query.limit) : items;
+  }
+
+  async findLatestByProfilePack(
+    profileName: string,
+    packId: string,
+    verificationKind?: SandboxCertificationRunEntity["verificationKind"],
+  ): Promise<SandboxCertificationRunEntity | null> {
+    return (
+      (
+        await this.listByQuery({
+          profileName,
+          packId,
+          ...(verificationKind ? { verificationKind } : {}),
+          limit: 1,
+        })
+      )[0] ?? null
+    );
+  }
+}
+
+export class InMemoryOperationalTelemetryEventRepository
+  extends InMemoryRepository<OperationalTelemetryEventEntity>
+  implements OperationalTelemetryEventRepository
+{
+  async listByQuery(query: OperationalTelemetryEventQuery = {}): Promise<OperationalTelemetryEventEntity[]> {
+    const items = sortByIsoDescending(await this.list(), (item) => item.occurredAt).filter((item) =>
+      (query.traceId ? item.traceId === query.traceId : true) &&
+      (query.taskId ? item.taskId === query.taskId : true) &&
+      (query.taskRunId ? item.taskRunId === query.taskRunId : true) &&
+      (query.automationCycleId ? item.automationCycleId === query.automationCycleId : true) &&
+      (query.sandboxCertificationRunId ? item.sandboxCertificationRunId === query.sandboxCertificationRunId : true) &&
+      (query.severity ? item.severity === query.severity : true) &&
+      (query.name ? item.name === query.name : true) &&
+      (query.occurredAfter ? item.occurredAt >= query.occurredAfter : true) &&
+      (query.occurredBefore ? item.occurredAt <= query.occurredBefore : true),
+    );
+
+    return query.limit ? items.slice(0, query.limit) : items;
+  }
+}
+
+export class InMemoryOperationalMetricSampleRepository
+  extends InMemoryRepository<OperationalMetricSampleEntity>
+  implements OperationalMetricSampleRepository
+{
+  async listByQuery(query: OperationalMetricSampleQuery = {}): Promise<OperationalMetricSampleEntity[]> {
+    const items = sortByIsoDescending(await this.list(), (item) => item.recordedAt).filter((item) =>
+      (query.traceId ? item.traceId === query.traceId : true) &&
+      (query.taskId ? item.taskId === query.taskId : true) &&
+      (query.taskRunId ? item.taskRunId === query.taskRunId : true) &&
+      (query.automationCycleId ? item.automationCycleId === query.automationCycleId : true) &&
+      (query.sandboxCertificationRunId ? item.sandboxCertificationRunId === query.sandboxCertificationRunId : true) &&
+      (query.name ? item.name === query.name : true) &&
+      (query.type ? item.type === query.type : true) &&
+      (query.recordedAfter ? item.recordedAt >= query.recordedAfter : true) &&
+      (query.recordedBefore ? item.recordedAt <= query.recordedBefore : true),
+    );
+
+    return query.limit ? items.slice(0, query.limit) : items;
   }
 }
 

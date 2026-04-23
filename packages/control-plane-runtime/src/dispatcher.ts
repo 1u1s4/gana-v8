@@ -2,6 +2,10 @@ import {
   createAutomationCycle,
   type AutomationCycleStageEntity,
 } from "@gana-v8/domain-core";
+import {
+  createObservabilityKit,
+  createPrismaDurableObservabilitySink,
+} from "@gana-v8/observability";
 import type { PrismaClient } from "@prisma/client";
 import {
   createIngestionTaskEnvelope,
@@ -588,6 +592,7 @@ export const runDispatcherCycle = async (
   const leaseOwner = options.leaseOwner ?? defaultLeaseOwner("dispatcher");
   const maxClaims = Math.max(1, options.maxClaims ?? 5);
   const client = await createConnectedVerifiedPrismaClient({ databaseUrl });
+  let observability: ReturnType<typeof createObservabilityKit> | null = null;
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
@@ -612,10 +617,49 @@ export const runDispatcherCycle = async (
         },
       }),
     );
+    observability = createObservabilityKit({
+      context: {
+        correlationId: cycle.id,
+        traceId: `${cycle.id}:dispatcher`,
+        workspace: "hermes-dispatcher",
+        labels: {
+          cycleKind: "dispatcher",
+          leaseOwner,
+        },
+      },
+      refs: {
+        automationCycleId: cycle.id,
+      },
+      sink: createPrismaDurableObservabilitySink(client),
+    });
+    observability.log("dispatcher cycle started", {
+      data: {
+        maxClaims,
+      },
+      refs: {
+        automationCycleId: cycle.id,
+      },
+      timestamp: toIso(now),
+    });
+    observability.setGauge("runtime.dispatcher.max_claims", maxClaims, {
+      refs: {
+        automationCycleId: cycle.id,
+      },
+      recordedAt: toIso(now),
+    });
 
     try {
       const manifestId = await findManifestToDispatch(unitOfWork, toIso(now));
       if (!manifestId) {
+        observability.log("dispatcher cycle completed without work", {
+          data: {
+            reason: "No ready manifest-owned tasks were available.",
+          },
+          refs: {
+            automationCycleId: cycle.id,
+          },
+          timestamp: toIso(now),
+        });
         const finishedCycle = await unitOfWork.automationCycles.save(
           updateCycle(cycle, {
             status: "succeeded",
@@ -636,9 +680,14 @@ export const runDispatcherCycle = async (
             },
             metadata: {
               reason: "No ready manifest-owned tasks were available.",
+              observability: {
+                durableEvents: observability.sinkCapabilities.eventsDurable,
+                durableMetrics: observability.sinkCapabilities.metricsDurable,
+              },
             },
           }),
         );
+        await observability.flush();
 
         return {
           cycle: finishedCycle,
@@ -790,6 +839,26 @@ export const runDispatcherCycle = async (
         firstClaimError || parlayStatus === "failed" ? "failed" : "succeeded";
       const parlayGeneratedAt = asOptionalString(parlayMetadata.generatedAt);
       const parlayError = asOptionalString(parlayMetadata.error);
+      const succeededExecutionCount = executions.filter((execution) => execution.status === "succeeded").length;
+      const failedExecutionCount = executions.filter((execution) => execution.status === "failed").length;
+      observability.setGauge("runtime.dispatcher.executions.succeeded", succeededExecutionCount, {
+        refs: {
+          automationCycleId: cycle.id,
+        },
+        recordedAt: toIso(now),
+      });
+      observability.setGauge("runtime.dispatcher.executions.failed", failedExecutionCount, {
+        refs: {
+          automationCycleId: cycle.id,
+        },
+        recordedAt: toIso(now),
+      });
+      observability.setGauge("runtime.dispatcher.manifest_tasks", manifestTasks.length, {
+        refs: {
+          automationCycleId: cycle.id,
+        },
+        recordedAt: toIso(now),
+      });
       const finalCycle = await unitOfWork.automationCycles.save(
         updateCycle(cycle, {
           status: cycleStatus,
@@ -823,9 +892,28 @@ export const runDispatcherCycle = async (
             parlayMetadata,
             sandboxReplayTaskIds: sandboxReplayTasks.map((task) => task.id),
             successfulPredictionTaskIds,
+            observability: {
+              durableEvents: observability.sinkCapabilities.eventsDurable,
+              durableMetrics: observability.sinkCapabilities.metricsDurable,
+            },
           },
         }),
       );
+      observability.log("dispatcher cycle completed", {
+        data: {
+          manifestId,
+          cycleStatus,
+          parlayStatus,
+          succeededExecutionCount,
+          failedExecutionCount,
+          taskCount: manifestTasks.length,
+        },
+        refs: {
+          automationCycleId: finalCycle.id,
+        },
+        timestamp: toIso(now),
+      });
+      await observability.flush();
 
       return {
         cycle: finalCycle,
@@ -834,6 +922,18 @@ export const runDispatcherCycle = async (
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unexpected dispatcher cycle error";
+      if (observability) {
+        observability.log("dispatcher cycle failed", {
+          severity: "error",
+          data: {
+            error: message,
+          },
+          refs: {
+            automationCycleId: cycle.id,
+          },
+          timestamp: toIso(now),
+        });
+      }
       const failedCycle = await unitOfWork.automationCycles.save(
         updateCycle(cycle, {
           status: "failed",
@@ -856,6 +956,9 @@ export const runDispatcherCycle = async (
           },
         }),
       );
+      if (observability) {
+        await observability.flush();
+      }
 
       return {
         cycle: failedCycle,

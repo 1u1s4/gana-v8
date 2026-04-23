@@ -1,5 +1,9 @@
 import { createAutomationCycle } from "@gana-v8/domain-core";
 import {
+  createObservabilityKit,
+  createPrismaDurableObservabilitySink,
+} from "@gana-v8/observability";
+import {
   createPrismaUnitOfWork,
   createConnectedVerifiedPrismaClient,
 } from "@gana-v8/storage-adapters";
@@ -38,6 +42,7 @@ export const runRecoveryCycle = async (
   let recoveryCycle: ReturnType<typeof createAutomationCycle> | null = null;
   let partialSummary: ReturnType<typeof createAutomationCycle>["summary"] | undefined;
   let partialMetadata: Record<string, unknown> | undefined;
+  let observability: ReturnType<typeof createObservabilityKit> | null = null;
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
@@ -57,6 +62,33 @@ export const runRecoveryCycle = async (
         },
       }),
     );
+    observability = createObservabilityKit({
+      context: {
+        correlationId: recoveryCycle.id,
+        traceId: `${recoveryCycle.id}:recovery`,
+        workspace: "hermes-recovery",
+        labels: {
+          cycleKind: "recovery",
+          leaseOwner,
+        },
+      },
+      refs: {
+        automationCycleId: recoveryCycle.id,
+      },
+      sink: createPrismaDurableObservabilitySink(client),
+    });
+    observability.log("recovery cycle started", {
+      data: {
+        leaseOwner,
+        leaseRecoveryLimit,
+        redriveLimit,
+        renewLeaseMs,
+      },
+      refs: {
+        automationCycleId: recoveryCycle.id,
+      },
+      timestamp: toIso(now),
+    });
 
     const tasksBefore = await unitOfWork.tasks.list();
     const queueSummaryBefore = await queue.summary();
@@ -69,6 +101,18 @@ export const runRecoveryCycle = async (
         return leftDeadline.localeCompare(rightDeadline);
       })
       .slice(0, leaseRecoveryLimit);
+    observability.setGauge("runtime.recovery.expired_lease_candidates", expiredLeaseCandidates.length, {
+      refs: {
+        automationCycleId: recoveryCycle.id,
+      },
+      recordedAt: toIso(now),
+    });
+    observability.setGauge("runtime.recovery.queue.quarantined", queueSummaryBefore.quarantined, {
+      refs: {
+        automationCycleId: recoveryCycle.id,
+      },
+      recordedAt: toIso(now),
+    });
 
     const recoveredLeaseTaskIds: string[] = [];
     const renewedLeaseTaskIds: string[] = [];
@@ -88,6 +132,17 @@ export const runRecoveryCycle = async (
             action: "skip-expired-lease",
             taskId: expiredTask.id,
             reason: "Task could not be reclaimed because its status changed during recovery.",
+          });
+          observability.log("recovery skipped expired lease candidate", {
+            severity: "warn",
+            data: {
+              reason: "Task status changed during recovery.",
+            },
+            refs: {
+              automationCycleId: recoveryCycle.id,
+              taskId: expiredTask.id,
+            },
+            timestamp: toIso(now),
           });
           continue;
         }
@@ -117,6 +172,26 @@ export const runRecoveryCycle = async (
             taskRunId: quarantined.taskRun.id,
             reason,
           });
+          observability.incrementCounter("runtime.recovery.quarantined", 1, {
+            refs: {
+              automationCycleId: recoveryCycle.id,
+              taskId: quarantined.task.id,
+              taskRunId: quarantined.taskRun.id,
+            },
+            recordedAt: toIso(now),
+          });
+          observability.log("recovery quarantined expired lease", {
+            severity: "warn",
+            data: {
+              reason,
+            },
+            refs: {
+              automationCycleId: recoveryCycle.id,
+              taskId: quarantined.task.id,
+              taskRunId: quarantined.taskRun.id,
+            },
+            timestamp: toIso(now),
+          });
           continue;
         }
 
@@ -143,6 +218,14 @@ export const runRecoveryCycle = async (
             taskRunId: redriven.taskRun.id,
             retryScheduledFor: redriven.task.scheduledFor ?? null,
           });
+          observability.incrementCounter("runtime.recovery.redriven", 1, {
+            refs: {
+              automationCycleId: recoveryCycle.id,
+              taskId: redriven.task.id,
+              taskRunId: redriven.taskRun.id,
+            },
+            recordedAt: toIso(now),
+          });
         }
       } catch (error) {
         const message =
@@ -152,6 +235,17 @@ export const runRecoveryCycle = async (
           action: "error-expired-lease",
           taskId: expiredTask.id,
           error: message,
+        });
+        observability.log("recovery encountered expired lease error", {
+          severity: "error",
+          data: {
+            error: message,
+          },
+          refs: {
+            automationCycleId: recoveryCycle.id,
+            taskId: expiredTask.id,
+          },
+          timestamp: toIso(now),
         });
       }
     }
@@ -186,6 +280,13 @@ export const runRecoveryCycle = async (
             taskId: requeued.id,
             previousStatus: task.status,
           });
+          observability.incrementCounter("runtime.recovery.requeued_terminal_tasks", 1, {
+            refs: {
+              automationCycleId: recoveryCycle.id,
+              taskId: requeued.id,
+            },
+            recordedAt: toIso(now),
+          });
         } catch (error) {
           const message =
             error instanceof Error ? error.message : `Unexpected requeue error for task ${task.id}`;
@@ -194,6 +295,17 @@ export const runRecoveryCycle = async (
             action: "error-requeue-terminal-task",
             taskId: task.id,
             error: message,
+          });
+          observability.log("recovery encountered terminal requeue error", {
+            severity: "error",
+            data: {
+              error: message,
+            },
+            refs: {
+              automationCycleId: recoveryCycle.id,
+              taskId: task.id,
+            },
+            timestamp: toIso(now),
           });
         }
       }
@@ -252,6 +364,29 @@ export const runRecoveryCycle = async (
       recoveryActions,
       ...(recoveryErrors.length > 0 ? { recoveryErrors } : {}),
     };
+    observability.log("recovery cycle completed", {
+      severity: recoveryErrors.length > 0 ? "warn" : "info",
+      data: {
+        manualReviewTaskCount: dedupeStrings(manualReviewTaskIds).length,
+        quarantinedTaskCount: dedupeStrings(quarantinedTaskIds).length,
+        redrivenTaskCount: dedupeStrings(redrivenTaskIds).length,
+      },
+      refs: {
+        automationCycleId: recoveryCycle.id,
+      },
+      timestamp: toIso(now),
+    });
+    await observability.flush();
+    partialMetadata = {
+      ...partialMetadata,
+      telemetry: {
+        durableEvents: observability.sinkCapabilities.eventsDurable,
+        durableMetrics: observability.sinkCapabilities.metricsDurable,
+        failures: observability.failures(),
+        metrics: observability.metrics.snapshot(),
+        snapshot: observability.eventLog.snapshot(),
+      },
+    };
 
     const finalCycle = await unitOfWork.automationCycles.save(
       updateCycle(recoveryCycle, {
@@ -274,6 +409,29 @@ export const runRecoveryCycle = async (
 
     const finishedAt = toIso(new Date());
     const message = error instanceof Error ? error.message : "Unexpected recovery error";
+    if (observability) {
+      observability.log("recovery cycle failed", {
+        severity: "error",
+        data: {
+          error: message,
+        },
+        refs: {
+          automationCycleId: recoveryCycle.id,
+        },
+        timestamp: finishedAt,
+      });
+      await observability.flush();
+      partialMetadata = {
+        ...(partialMetadata ?? {}),
+        telemetry: {
+          durableEvents: observability.sinkCapabilities.eventsDurable,
+          durableMetrics: observability.sinkCapabilities.metricsDurable,
+          failures: observability.failures(),
+          metrics: observability.metrics.snapshot(),
+          snapshot: observability.eventLog.snapshot(),
+        },
+      };
+    }
     const failedCycle = await createPrismaUnitOfWork(client).automationCycles.save(
       updateCycle(recoveryCycle, {
         status: "failed",

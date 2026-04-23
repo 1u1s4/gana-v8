@@ -22,6 +22,12 @@ import type {
   LineupParticipantRepository,
   LineupSnapshotEntity,
   LineupSnapshotRepository,
+  OperationalMetricSampleEntity,
+  OperationalMetricSampleQuery,
+  OperationalMetricSampleRepository,
+  OperationalTelemetryEventEntity,
+  OperationalTelemetryEventQuery,
+  OperationalTelemetryEventRepository,
   ParlayEntity,
   ParlayRepository,
   PredictionEntity,
@@ -39,6 +45,9 @@ import type {
   ResearchSourceEntity,
   ResearchSourceRepository,
   SandboxNamespace,
+  SandboxCertificationRunEntity,
+  SandboxCertificationRunQuery,
+  SandboxCertificationRunRepository,
   SandboxNamespaceRepository,
   SchedulerCursorEntity,
   SchedulerCursorRepository,
@@ -87,6 +96,12 @@ import {
   lineupSnapshotDomainToCreateInput,
   lineupSnapshotInclude,
   lineupSnapshotRecordToDomain,
+  operationalMetricSampleDomainToCreateInput,
+  operationalMetricSampleInclude,
+  operationalMetricSampleRecordToDomain,
+  operationalTelemetryEventDomainToCreateInput,
+  operationalTelemetryEventInclude,
+  operationalTelemetryEventRecordToDomain,
   parlayDomainToCreateInput,
   parlayInclude,
   parlayRecordToDomain,
@@ -111,6 +126,9 @@ import {
   researchSourceDomainToCreateInput,
   researchSourceInclude,
   researchSourceRecordToDomain,
+  sandboxCertificationRunDomainToCreateInput,
+  sandboxCertificationRunInclude,
+  sandboxCertificationRunRecordToDomain,
   taskDomainToCreateInput,
   taskInclude,
   taskRecordToDomain,
@@ -135,6 +153,7 @@ import { retryPrismaReadOperation } from "./client.js";
 
 export type PrismaClientLike = Pick<
   PrismaClient,
+  | "$queryRawUnsafe"
   | "fixture"
   | "automationCycle"
   | "fixtureWorkflow"
@@ -157,6 +176,10 @@ export type PrismaClientLike = Pick<
   | "parlayLeg"
   | "validation"
   | "auditEvent"
+  | "sandboxCertificationRun"
+  | "operationalTelemetryEvent"
+  | "operationalMetricSample"
+  | "rawIngestionBatch"
   | "leagueCoveragePolicy"
   | "teamCoveragePolicy"
   | "dailyAutomationPolicy"
@@ -1236,6 +1259,218 @@ export class PrismaAuditEventRepository implements AuditEventRepository {
       }),
     );
     return records.map(auditEventRecordToDomain);
+  }
+}
+
+export class PrismaSandboxCertificationRunRepository implements SandboxCertificationRunRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: SandboxCertificationRunEntity): Promise<SandboxCertificationRunEntity> {
+    const record = await this.client.sandboxCertificationRun.upsert({
+      where: { id: entity.id },
+      create: sandboxCertificationRunDomainToCreateInput(entity),
+      update: sandboxCertificationRunDomainToCreateInput(entity),
+      ...sandboxCertificationRunInclude,
+    });
+    return sandboxCertificationRunRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<SandboxCertificationRunEntity | null> {
+    const record = await retryPrismaReadOperation(() =>
+      this.client.sandboxCertificationRun.findUnique({
+        where: { id },
+        ...sandboxCertificationRunInclude,
+      }),
+    );
+    return record ? sandboxCertificationRunRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<SandboxCertificationRunEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.sandboxCertificationRun.findMany({
+        orderBy: { generatedAt: "desc" },
+        ...sandboxCertificationRunInclude,
+      }),
+    );
+    return records.map(sandboxCertificationRunRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.sandboxCertificationRun.delete({ where: { id } });
+  }
+
+  async listByQuery(query: SandboxCertificationRunQuery = {}): Promise<SandboxCertificationRunEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.sandboxCertificationRun.findMany({
+        where: {
+          ...(query.profileName ? { profileName: query.profileName } : {}),
+          ...(query.packId ? { packId: query.packId } : {}),
+          ...(query.verificationKind
+            ? { verificationKind: query.verificationKind.replaceAll("-", "_") as never }
+            : {}),
+          ...(query.status ? { status: query.status } : {}),
+        },
+        orderBy: { generatedAt: "desc" },
+        ...(query.limit ? { take: query.limit } : {}),
+        ...sandboxCertificationRunInclude,
+      }),
+    );
+    return records.map(sandboxCertificationRunRecordToDomain);
+  }
+
+  async findLatestByProfilePack(
+    profileName: string,
+    packId: string,
+    verificationKind?: SandboxCertificationRunEntity["verificationKind"],
+  ): Promise<SandboxCertificationRunEntity | null> {
+    const record = await retryPrismaReadOperation(() =>
+      this.client.sandboxCertificationRun.findFirst({
+        where: {
+          profileName,
+          packId,
+          ...(verificationKind ? { verificationKind: verificationKind.replaceAll("-", "_") as never } : {}),
+        },
+        orderBy: { generatedAt: "desc" },
+        ...sandboxCertificationRunInclude,
+      }),
+    );
+    return record ? sandboxCertificationRunRecordToDomain(record) : null;
+  }
+}
+
+export class PrismaOperationalTelemetryEventRepository implements OperationalTelemetryEventRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: OperationalTelemetryEventEntity): Promise<OperationalTelemetryEventEntity> {
+    const record = await this.client.operationalTelemetryEvent.upsert({
+      where: { id: entity.id },
+      create: operationalTelemetryEventDomainToCreateInput(entity),
+      update: operationalTelemetryEventDomainToCreateInput(entity),
+      ...operationalTelemetryEventInclude,
+    });
+    return operationalTelemetryEventRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<OperationalTelemetryEventEntity | null> {
+    const record = await retryPrismaReadOperation(() =>
+      this.client.operationalTelemetryEvent.findUnique({
+        where: { id },
+        ...operationalTelemetryEventInclude,
+      }),
+    );
+    return record ? operationalTelemetryEventRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<OperationalTelemetryEventEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.operationalTelemetryEvent.findMany({
+        orderBy: { occurredAt: "desc" },
+        ...operationalTelemetryEventInclude,
+      }),
+    );
+    return records.map(operationalTelemetryEventRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.operationalTelemetryEvent.delete({ where: { id } });
+  }
+
+  async listByQuery(query: OperationalTelemetryEventQuery = {}): Promise<OperationalTelemetryEventEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.operationalTelemetryEvent.findMany({
+        where: {
+          ...(query.traceId ? { traceId: query.traceId } : {}),
+          ...(query.taskId ? { taskId: query.taskId } : {}),
+          ...(query.taskRunId ? { taskRunId: query.taskRunId } : {}),
+          ...(query.automationCycleId ? { automationCycleId: query.automationCycleId } : {}),
+          ...(query.sandboxCertificationRunId
+            ? { sandboxCertificationRunId: query.sandboxCertificationRunId }
+            : {}),
+          ...(query.severity ? { severity: query.severity } : {}),
+          ...(query.name ? { name: query.name } : {}),
+          ...((query.occurredAfter || query.occurredBefore)
+            ? {
+                occurredAt: {
+                  ...(query.occurredAfter ? { gte: new Date(query.occurredAfter) } : {}),
+                  ...(query.occurredBefore ? { lte: new Date(query.occurredBefore) } : {}),
+                },
+              }
+            : {}),
+        },
+        orderBy: { occurredAt: "desc" },
+        ...(query.limit ? { take: query.limit } : {}),
+        ...operationalTelemetryEventInclude,
+      }),
+    );
+    return records.map(operationalTelemetryEventRecordToDomain);
+  }
+}
+
+export class PrismaOperationalMetricSampleRepository implements OperationalMetricSampleRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: OperationalMetricSampleEntity): Promise<OperationalMetricSampleEntity> {
+    const record = await this.client.operationalMetricSample.upsert({
+      where: { id: entity.id },
+      create: operationalMetricSampleDomainToCreateInput(entity),
+      update: operationalMetricSampleDomainToCreateInput(entity),
+      ...operationalMetricSampleInclude,
+    });
+    return operationalMetricSampleRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<OperationalMetricSampleEntity | null> {
+    const record = await retryPrismaReadOperation(() =>
+      this.client.operationalMetricSample.findUnique({
+        where: { id },
+        ...operationalMetricSampleInclude,
+      }),
+    );
+    return record ? operationalMetricSampleRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<OperationalMetricSampleEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.operationalMetricSample.findMany({
+        orderBy: { recordedAt: "desc" },
+        ...operationalMetricSampleInclude,
+      }),
+    );
+    return records.map(operationalMetricSampleRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.operationalMetricSample.delete({ where: { id } });
+  }
+
+  async listByQuery(query: OperationalMetricSampleQuery = {}): Promise<OperationalMetricSampleEntity[]> {
+    const records = await retryPrismaReadOperation(() =>
+      this.client.operationalMetricSample.findMany({
+        where: {
+          ...(query.traceId ? { traceId: query.traceId } : {}),
+          ...(query.taskId ? { taskId: query.taskId } : {}),
+          ...(query.taskRunId ? { taskRunId: query.taskRunId } : {}),
+          ...(query.automationCycleId ? { automationCycleId: query.automationCycleId } : {}),
+          ...(query.sandboxCertificationRunId
+            ? { sandboxCertificationRunId: query.sandboxCertificationRunId }
+            : {}),
+          ...(query.name ? { name: query.name } : {}),
+          ...(query.type ? { type: query.type } : {}),
+          ...((query.recordedAfter || query.recordedBefore)
+            ? {
+                recordedAt: {
+                  ...(query.recordedAfter ? { gte: new Date(query.recordedAfter) } : {}),
+                  ...(query.recordedBefore ? { lte: new Date(query.recordedBefore) } : {}),
+                },
+              }
+            : {}),
+        },
+        orderBy: { recordedAt: "desc" },
+        ...(query.limit ? { take: query.limit } : {}),
+        ...operationalMetricSampleInclude,
+      }),
+    );
+    return records.map(operationalMetricSampleRecordToDomain);
   }
 }
 

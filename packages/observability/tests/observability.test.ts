@@ -9,6 +9,8 @@ import {
   finishSpan,
   InMemoryEventLog,
   MetricsRegistry,
+  persistMetricSnapshot,
+  persistTelemetryEvent,
   startSpan,
   withTelemetryLabels,
 } from "../src/index.js";
@@ -194,4 +196,87 @@ test("operational observability summary reports workers, retry pressure, backfil
   assert.equal(summary.backfills.some((entry) => entry.area === "fixtures" && entry.status === "needed"), true);
   assert.equal(summary.traceability.tasksWithTraceId, 1);
   assert.equal(summary.alerts.some((alert) => alert.includes("backfill fixtures")), true);
+});
+
+test("durable telemetry helpers persist logs, spans, and metrics through repositories", async () => {
+  const telemetryEvents: unknown[] = [];
+  const metricSamples: unknown[] = [];
+  const context = createTelemetryContext({ correlationId: "corr-durable", traceId: "trace-durable" });
+  const log = createLogEvent({
+    context,
+    data: { taskId: "task-1" },
+    message: "task quarantined",
+    severity: "warn",
+    timestamp: "2026-04-22T12:00:00.000Z",
+  });
+  const span = finishSpan(
+    startSpan({
+      context,
+      name: "runtime-release",
+      startedAt: "2026-04-22T12:01:00.000Z",
+    }),
+    {
+      endedAt: "2026-04-22T12:02:00.000Z",
+      status: "ok",
+    },
+  );
+
+  await persistTelemetryEvent({
+    sink: {
+      telemetryEvents: {
+        async save(entity) {
+          telemetryEvents.push(entity);
+          return entity;
+        },
+      },
+      metricSamples: {
+        async save(entity) {
+          metricSamples.push(entity);
+          return entity;
+        },
+      },
+    },
+    event: log,
+    refs: { sandboxCertificationRunId: "cert-run-1", taskId: "task-1" },
+  });
+  await persistTelemetryEvent({
+    sink: {
+      telemetryEvents: {
+        async save(entity) {
+          telemetryEvents.push(entity);
+          return entity;
+        },
+      },
+      metricSamples: {
+        async save(entity) {
+          metricSamples.push(entity);
+          return entity;
+        },
+      },
+    },
+    event: span,
+    refs: { automationCycleId: "cycle-1", sandboxCertificationRunId: "cert-run-1" },
+  });
+  await persistMetricSnapshot({
+    sink: {
+      telemetryEvents: {
+        async save(entity) {
+          telemetryEvents.push(entity);
+          return entity;
+        },
+      },
+      metricSamples: {
+        async save(entity) {
+          metricSamples.push(entity);
+          return entity;
+        },
+      },
+    },
+    metric: { name: "runtime-release.duration", type: "gauge", value: 60000 },
+    refs: { sandboxCertificationRunId: "cert-run-1" },
+    recordedAt: "2026-04-22T12:02:00.000Z",
+  });
+
+  assert.equal(telemetryEvents.length, 2);
+  assert.equal(metricSamples.length, 1);
 });

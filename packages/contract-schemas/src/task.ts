@@ -15,6 +15,7 @@ export const taskStatusSchema = z.enum([
   "running",
   "succeeded",
   "failed",
+  "quarantined",
   "cancelled",
 ]);
 

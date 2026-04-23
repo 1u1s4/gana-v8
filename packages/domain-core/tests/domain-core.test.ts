@@ -11,7 +11,10 @@ import {
   createLeagueCoveragePolicy,
   createOpaqueTaskId,
   createOpaqueTaskRunId,
+  createOperationalMetricSample,
+  createOperationalTelemetryEvent,
   createPrediction,
+  createSandboxCertificationRun,
   createSandboxNamespace,
   createTaskRun,
   createTeamCoveragePolicy,
@@ -86,6 +89,55 @@ test("task runs and audit events get default timestamps", () => {
   assert.equal(taskRun.taskId, "task-1");
   assert.equal(auditEvent.aggregateId, "task-1");
   assert.ok(auditEvent.occurredAt);
+});
+
+test("release ops aggregates clone metadata and keep new durability fields", () => {
+  const certificationRun = createSandboxCertificationRun({
+    id: "cert-run-1",
+    verificationKind: "runtime-release",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "abc123",
+    baselineRef: "main",
+    candidateRef: "codex/release-ops-integration",
+    status: "passed",
+    promotionStatus: "promotable",
+    goldenFingerprint: "golden-1",
+    evidenceFingerprint: "evidence-1",
+    artifactRef: "db://sandbox-certification/cert-run-1",
+    runtimeSignals: { taskCount: 4, automationCycleId: "cycle-1" },
+    diffEntries: [{ path: "$.stats.fixtureCount", kind: "changed", expected: 2, actual: 2 }],
+    summary: { promotion: { status: "promotable" } },
+    generatedAt: "2026-04-22T12:00:00.000Z",
+  });
+  const telemetryEvent = createOperationalTelemetryEvent({
+    id: "telemetry-1",
+    kind: "span",
+    name: "sandbox.runtime-release",
+    severity: "info",
+    traceId: "trace-1",
+    automationCycleId: "cycle-1",
+    sandboxCertificationRunId: certificationRun.id,
+    occurredAt: "2026-04-22T12:00:00.000Z",
+    finishedAt: "2026-04-22T12:01:00.000Z",
+    durationMs: 60000,
+    attributes: { profileName: "ci-smoke" },
+  });
+  const metricSample = createOperationalMetricSample({
+    id: "metric-1",
+    name: "sandbox.certification.diff_entries",
+    type: "gauge",
+    value: 0,
+    labels: { profileName: "ci-smoke" },
+    sandboxCertificationRunId: certificationRun.id,
+    recordedAt: "2026-04-22T12:01:00.000Z",
+  });
+
+  assert.equal(certificationRun.verificationKind, "runtime-release");
+  assert.equal(certificationRun.promotionStatus, "promotable");
+  assert.equal(telemetryEvent.sandboxCertificationRunId, certificationRun.id);
+  assert.equal(metricSample.labels.profileName, "ci-smoke");
 });
 
 test("opaque task ids stay stable and use tsk/trn prefixes", () => {

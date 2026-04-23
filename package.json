@@ -23,6 +23,7 @@
     "test:e2e:hermes-smoke": "node tests/e2e/hermes-smoke.mjs",
     "test:sandbox": "pnpm test:sandbox:certification",
     "test:sandbox:certification": "node tests/sandbox/certification.mjs",
+    "test:runtime:release": "node tests/sandbox/runtime-release.mjs",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",

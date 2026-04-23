@@ -11,15 +11,21 @@ import { createOperationalSummary, type
   type CoverageDailyScopeReadModel,
   getDailyAutomationPolicy,
   listCoverageDailyScope,
+  type ManualReviewReadModel,
   type OperationSnapshot,
   type OperationalLogEntry,
   type OperationalSummary,
   type ProviderStateReadModel,
   type PublicApiHealth,
   type PublicApiReadinessReadModel,
+  type QuarantineReadModel,
   type RawIngestionBatchReadModel,
   type SandboxCertificationDetailReadModel,
   type SandboxCertificationReadModel,
+  type SandboxCertificationRunReadModel,
+  type RecoveryReadModel,
+  type TelemetryEventReadModel,
+  type TelemetryMetricReadModel,
   type ValidationSummary,
   type OddsSnapshotReadModel,
   publicApiEndpointPaths,
@@ -118,6 +124,11 @@ export interface OperatorConsoleSnapshot {
   readonly etl: OperatorConsoleEtlSummary;
   readonly operationalSummary: OperationalSummary;
   readonly operationalLogs: readonly OperationalLogEntry[];
+  readonly manualReviews: readonly ManualReviewReadModel[];
+  readonly quarantines: readonly QuarantineReadModel[];
+  readonly recovery: readonly RecoveryReadModel[];
+  readonly telemetryEvents: readonly TelemetryEventReadModel[];
+  readonly telemetryMetrics: readonly TelemetryMetricReadModel[];
   readonly validationSummary: ValidationSummary;
   readonly health: PublicApiHealth;
   readonly leagueCoveragePolicies: readonly OperatorConsoleCoveragePolicy[];
@@ -130,6 +141,7 @@ export interface OperatorConsoleSnapshot {
   } | null;
   readonly coverageDailyScope: readonly CoverageDailyScopeReadModel[];
   readonly sandboxCertification: readonly OperatorConsoleSandboxCertification[];
+  readonly certificationRuns: readonly SandboxCertificationRunReadModel[];
 }
 
 export interface OperatorConsolePanel {
@@ -495,7 +507,15 @@ const isOperationalDataEmpty = (snapshot: OperatorConsoleSnapshot): boolean =>
 
 export function createOperatorConsoleSnapshotFromOperation(
   operationSnapshot: OperationSnapshot,
-  certification: readonly OperatorConsoleSandboxCertification[] = [],
+  input: {
+    readonly certification?: readonly OperatorConsoleSandboxCertification[];
+    readonly certificationRuns?: readonly SandboxCertificationRunReadModel[];
+    readonly manualReviews?: readonly ManualReviewReadModel[];
+    readonly quarantines?: readonly QuarantineReadModel[];
+    readonly recovery?: readonly RecoveryReadModel[];
+    readonly telemetryEvents?: readonly TelemetryEventReadModel[];
+    readonly telemetryMetrics?: readonly TelemetryMetricReadModel[];
+  } = {},
 ): OperatorConsoleSnapshot {
   const tasks: OperatorConsoleTask[] = operationSnapshot.tasks.map((task) => ({
     id: task.id,
@@ -525,7 +545,7 @@ export function createOperatorConsoleSnapshotFromOperation(
   const dailyAutomationPolicy = getDailyAutomationPolicy(operationSnapshot);
   const readiness =
     operationSnapshot.readiness ??
-    createFallbackReadiness(operationSnapshot.generatedAt, operationSnapshot.health, certification);
+    createFallbackReadiness(operationSnapshot.generatedAt, operationSnapshot.health, input.certification ?? []);
   const automationCycles = operationSnapshot.automationCycles ?? [];
 
   return {
@@ -669,6 +689,17 @@ export function createOperatorConsoleSnapshotFromOperation(
 
       return right.timestamp.localeCompare(left.timestamp);
     }),
+    manualReviews: input.manualReviews ?? (operationSnapshot as OperationSnapshot & { readonly manualReviews?: readonly ManualReviewReadModel[] }).manualReviews ?? [],
+    quarantines: input.quarantines ?? (operationSnapshot as OperationSnapshot & { readonly quarantines?: readonly QuarantineReadModel[] }).quarantines ?? [],
+    recovery: input.recovery ?? (operationSnapshot as OperationSnapshot & { readonly recovery?: readonly RecoveryReadModel[] }).recovery ?? [],
+    telemetryEvents:
+      input.telemetryEvents ??
+      (operationSnapshot as OperationSnapshot & { readonly telemetryEvents?: readonly TelemetryEventReadModel[] }).telemetryEvents ??
+      [],
+    telemetryMetrics:
+      input.telemetryMetrics ??
+      (operationSnapshot as OperationSnapshot & { readonly telemetryMetrics?: readonly TelemetryMetricReadModel[] }).telemetryMetrics ??
+      [],
     validationSummary: operationSnapshot.validationSummary,
     health: operationSnapshot.health,
     leagueCoveragePolicies: (operationSnapshot.leagueCoveragePolicies ?? []).map((policy) => ({
@@ -692,7 +723,8 @@ export function createOperatorConsoleSnapshotFromOperation(
         }
       : null,
     coverageDailyScope,
-    sandboxCertification: [...certification],
+    sandboxCertification: [...(input.certification ?? [])],
+    certificationRuns: [...(input.certificationRuns ?? [])],
   };
 }
 
@@ -766,6 +798,7 @@ export function createOperatorConsoleSnapshot(
           queued: 0,
           running: 0,
           failed: 0,
+          quarantined: 0,
           succeeded: 0,
           cancelled: 0,
         },
@@ -825,6 +858,11 @@ export function createOperatorConsoleSnapshot(
         validation: validationSummary,
       },
     operationalLogs: input.operationalLogs ?? [],
+    manualReviews: input.manualReviews ?? [],
+    quarantines: input.quarantines ?? [],
+    recovery: input.recovery ?? [],
+    telemetryEvents: input.telemetryEvents ?? [],
+    telemetryMetrics: input.telemetryMetrics ?? [],
     validationSummary,
     health:
       input.health ??
@@ -849,6 +887,7 @@ export function createOperatorConsoleSnapshot(
     dailyAutomationPolicy: input.dailyAutomationPolicy ?? null,
     coverageDailyScope: input.coverageDailyScope ?? [],
     sandboxCertification: input.sandboxCertification ?? [],
+    certificationRuns: input.certificationRuns ?? [],
   };
 }
 
@@ -898,6 +937,13 @@ export function buildOperatorConsoleModel(
         (certification) =>
           `promotion:${certification.profileName}/${certification.packId} ${certification.promotion?.status ?? "unknown"}`,
       ),
+    ...snapshot.manualReviews.map(
+      (review) => `manual-review:${review.taskId} ${review.source} ${review.reason}`,
+    ),
+    ...snapshot.telemetryEvents
+      .filter((event) => event.severity === "warn" || event.severity === "error")
+      .slice(0, 3)
+      .map((event) => `telemetry:${event.name} ${event.severity}${event.message ? ` ${event.message}` : ""}`),
   ];
 
   const panels: OperatorConsolePanel[] = [
@@ -914,6 +960,10 @@ export function buildOperatorConsoleModel(
         `Predictions: ${snapshot.predictions.length}`,
         `Parlays: ${snapshot.parlays.length}`,
         `Automation cycles: ${snapshot.automationCycles.length}`,
+        `Manual review: ${snapshot.manualReviews.length}`,
+        `Quarantines: ${snapshot.quarantines.length}`,
+        `Recovery cycles: ${snapshot.recovery.length}`,
+        `Telemetry events: ${snapshot.telemetryEvents.length}`,
       ],
     },
     {
@@ -1016,8 +1066,28 @@ export function buildOperatorConsoleModel(
           ? ["No sandbox certification evidence loaded."]
           : snapshot.sandboxCertification.map(
               (certification) =>
-                `${certification.profileName}/${certification.packId} | ${certification.status} | promotion ${certification.promotion?.status ?? "unknown"} | diff ${certification.diffEntryCount} | replay ${certification.replayEventCount} | generated ${certification.generatedAt ?? "missing"}`,
+                `${certification.profileName}/${certification.packId} | ${certification.status} | promotion ${certification.promotion?.status ?? "unknown"} | synthetic ${certification.latestSyntheticIntegrity?.status ?? "n/a"} | runtime ${certification.latestRuntimeRelease?.promotionStatus ?? certification.latestRuntimeRelease?.status ?? "n/a"} | diff ${certification.diffEntryCount} | replay ${certification.replayEventCount} | generated ${certification.generatedAt ?? "missing"}`,
             ),
+    },
+    {
+      title: "Release ops",
+      lines: [
+        `Manual review queue: ${snapshot.manualReviews.length}`,
+        ...snapshot.manualReviews.map(
+          (review) =>
+            `${review.taskId} | ${review.taskKind} | ${review.source} | ${review.reason}`,
+        ),
+        `Quarantines: ${snapshot.quarantines.length}`,
+        ...snapshot.quarantines.map(
+          (entry) =>
+            `${entry.taskId} | ${entry.taskKind} | ${entry.source} | attempts ${entry.attempts}/${entry.maxAttempts} | ${entry.reason}`,
+        ),
+        `Recovery cycles: ${snapshot.recovery.length}`,
+        ...snapshot.recovery.map(
+          (entry) =>
+            `${entry.cycleId} | ${entry.status} | expired ${entry.expiredLeaseCount} | quarantined ${entry.quarantinedTaskCount} | manual review ${entry.manualReviewTaskCount}`,
+        ),
+      ],
     },
     {
       title: "Observability",
@@ -1034,6 +1104,26 @@ export function buildOperatorConsoleModel(
         ),
         `Retries: retrying ${snapshot.operationalSummary.observability.retries.retryingNow} | quarantined ${snapshot.operationalSummary.observability.retries.quarantined} | exhausted ${snapshot.operationalSummary.observability.retries.exhausted}`,
         `Traceability: tasks ${Math.round(snapshot.operationalSummary.observability.traceability.taskTraceCoverageRate * 100)}% | providers ${Math.round(snapshot.operationalSummary.observability.traceability.aiRunRequestCoverageRate * 100)}%`,
+      ],
+    },
+    {
+      title: "Telemetry",
+      lines: [
+        `Events: ${snapshot.telemetryEvents.length}`,
+        ...snapshot.telemetryEvents.map(
+          (event) =>
+            `${event.occurredAt} | ${event.kind} | ${event.severity} | ${event.name}${event.message ? ` | ${event.message}` : ""}`,
+        ),
+        `Metric samples: ${snapshot.telemetryMetrics.length}`,
+        ...snapshot.telemetryMetrics.map(
+          (metric) =>
+            `${metric.recordedAt} | ${metric.name} | ${metric.type} | ${metric.value}`,
+        ),
+        `Certification runs: ${snapshot.certificationRuns.length}`,
+        ...snapshot.certificationRuns.map(
+          (run) =>
+            `${run.profileName}/${run.packId} | ${run.verificationKind} | ${run.status}${run.promotionStatus ? ` | ${run.promotionStatus}` : ""} | ${run.gitSha}`,
+        ),
       ],
     },
     {
@@ -1314,9 +1404,24 @@ const readJsonResponse = async <T>(response: Response): Promise<T> => {
 export const loadOperatorConsoleWebPayload = async (
   options: OperatorConsoleRemoteOptions,
 ): Promise<OperatorConsoleWebPayload> => {
-  const [snapshotResponse, certificationResponse] = await Promise.all([
+  const [
+    snapshotResponse,
+    certificationResponse,
+    certificationRunsResponse,
+    manualReviewResponse,
+    quarantinesResponse,
+    recoveryResponse,
+    telemetryEventsResponse,
+    telemetryMetricsResponse,
+  ] = await Promise.all([
     requestPublicApi(options, publicApiEndpointPaths.snapshot),
     requestPublicApi(options, publicApiEndpointPaths.sandboxCertification),
+    requestPublicApi(options, publicApiEndpointPaths.sandboxCertificationRuns),
+    requestPublicApi(options, publicApiEndpointPaths.manualReview),
+    requestPublicApi(options, publicApiEndpointPaths.quarantines),
+    requestPublicApi(options, publicApiEndpointPaths.recovery),
+    requestPublicApi(options, publicApiEndpointPaths.telemetryEvents),
+    requestPublicApi(options, publicApiEndpointPaths.telemetryMetrics),
   ]);
   if (!snapshotResponse.ok) {
     const failure = await readJsonResponse<Record<string, unknown>>(snapshotResponse);
@@ -1330,7 +1435,39 @@ export const loadOperatorConsoleWebPayload = async (
     certificationResponse.ok
       ? await readJsonResponse<readonly OperatorConsoleSandboxCertification[]>(certificationResponse)
       : [];
-  const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot, certification);
+  const certificationRuns =
+    certificationRunsResponse.ok
+      ? await readJsonResponse<readonly SandboxCertificationRunReadModel[]>(certificationRunsResponse)
+      : [];
+  const manualReviews =
+    manualReviewResponse.ok
+      ? await readJsonResponse<readonly ManualReviewReadModel[]>(manualReviewResponse)
+      : [];
+  const quarantines =
+    quarantinesResponse.ok
+      ? await readJsonResponse<readonly QuarantineReadModel[]>(quarantinesResponse)
+      : [];
+  const recovery =
+    recoveryResponse.ok
+      ? await readJsonResponse<readonly RecoveryReadModel[]>(recoveryResponse)
+      : [];
+  const telemetryEvents =
+    telemetryEventsResponse.ok
+      ? await readJsonResponse<readonly TelemetryEventReadModel[]>(telemetryEventsResponse)
+      : [];
+  const telemetryMetrics =
+    telemetryMetricsResponse.ok
+      ? await readJsonResponse<readonly TelemetryMetricReadModel[]>(telemetryMetricsResponse)
+      : [];
+  const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot, {
+    certification,
+    certificationRuns,
+    manualReviews,
+    quarantines,
+    recovery,
+    telemetryEvents,
+    telemetryMetrics,
+  });
 
   return {
     generatedAt: snapshot.generatedAt,
@@ -1915,7 +2052,7 @@ const renderCertificationList = (payload) => {
       '<strong>' + escapeHtml(certification.profileName) + ' / ' + escapeHtml(certification.packId) + '</strong>' +
       '<div>' + formatBadge(certification.status) + '</div>' +
       '<div class="subtle">Mode ' + escapeHtml(certification.mode) + ' | replay ' + escapeHtml(certification.replayEventCount) + ' | fixtures ' + escapeHtml(certification.fixtureCount) + '</div>' +
-      '<div class="subtle">Generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + ' | diff ' + escapeHtml(certification.diffEntryCount) + ' | promotion ' + escapeHtml(certification.promotion?.status || 'unknown') + '</div>' +
+      '<div class="subtle">Generated ' + escapeHtml(formatDateTime(certification.generatedAt)) + ' | diff ' + escapeHtml(certification.diffEntryCount) + ' | synthetic ' + escapeHtml(certification.latestSyntheticIntegrity?.status || 'n/a') + ' | runtime ' + escapeHtml(certification.latestRuntimeRelease?.promotionStatus || certification.latestRuntimeRelease?.status || 'n/a') + ' | promotion ' + escapeHtml(certification.promotion?.status || 'unknown') + '</div>' +
       '<div class="list-actions">' +
         '<button class="fixture-action" type="button" data-console-action="inspect-certification" data-certification-profile="' + escapeHtml(certification.profileName) + '" data-certification-pack="' + escapeHtml(certification.packId) + '" data-tone="neutral">Inspect</button>' +
       '</div>' +
@@ -2433,9 +2570,24 @@ export const createOperatorConsoleWebServer = (
       }
 
       if (method === "GET" && requestUrl.pathname === "/api/console") {
-        const [snapshotResponse, certificationResponse] = await Promise.all([
+        const [
+          snapshotResponse,
+          certificationResponse,
+          certificationRunsResponse,
+          manualReviewResponse,
+          quarantinesResponse,
+          recoveryResponse,
+          telemetryEventsResponse,
+          telemetryMetricsResponse,
+        ] = await Promise.all([
           requestPublicApi(options, publicApiEndpointPaths.snapshot),
           requestPublicApi(options, publicApiEndpointPaths.sandboxCertification),
+          requestPublicApi(options, publicApiEndpointPaths.sandboxCertificationRuns),
+          requestPublicApi(options, publicApiEndpointPaths.manualReview),
+          requestPublicApi(options, publicApiEndpointPaths.quarantines),
+          requestPublicApi(options, publicApiEndpointPaths.recovery),
+          requestPublicApi(options, publicApiEndpointPaths.telemetryEvents),
+          requestPublicApi(options, publicApiEndpointPaths.telemetryMetrics),
         ]);
         if (!snapshotResponse.ok) {
           const failure = await readJsonResponse<Record<string, unknown>>(snapshotResponse);
@@ -2448,7 +2600,39 @@ export const createOperatorConsoleWebServer = (
           certificationResponse.ok
             ? await readJsonResponse<readonly OperatorConsoleSandboxCertification[]>(certificationResponse)
             : [];
-        const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot, certification);
+        const certificationRuns =
+          certificationRunsResponse.ok
+            ? await readJsonResponse<readonly SandboxCertificationRunReadModel[]>(certificationRunsResponse)
+            : [];
+        const manualReviews =
+          manualReviewResponse.ok
+            ? await readJsonResponse<readonly ManualReviewReadModel[]>(manualReviewResponse)
+            : [];
+        const quarantines =
+          quarantinesResponse.ok
+            ? await readJsonResponse<readonly QuarantineReadModel[]>(quarantinesResponse)
+            : [];
+        const recovery =
+          recoveryResponse.ok
+            ? await readJsonResponse<readonly RecoveryReadModel[]>(recoveryResponse)
+            : [];
+        const telemetryEvents =
+          telemetryEventsResponse.ok
+            ? await readJsonResponse<readonly TelemetryEventReadModel[]>(telemetryEventsResponse)
+            : [];
+        const telemetryMetrics =
+          telemetryMetricsResponse.ok
+            ? await readJsonResponse<readonly TelemetryMetricReadModel[]>(telemetryMetricsResponse)
+            : [];
+        const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot, {
+          certification,
+          certificationRuns,
+          manualReviews,
+          quarantines,
+          recovery,
+          telemetryEvents,
+          telemetryMetrics,
+        });
         const payload: OperatorConsoleWebPayload = {
           generatedAt: snapshot.generatedAt,
           snapshot,

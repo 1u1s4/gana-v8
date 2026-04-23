@@ -2,6 +2,12 @@ import type { EntityId, Repository } from './common.js';
 import type { AutomationCycleEntity } from './entities/automation-cycle.js';
 import type { AuditEventEntity } from './entities/audit-event.js';
 import type { AiRunEntity } from './entities/ai-run.js';
+import type {
+  OperationalMetricSampleEntity,
+  OperationalMetricType,
+  OperationalTelemetryEventEntity,
+  OperationalTelemetrySeverity,
+} from './entities/operational-telemetry.js';
 import type { DailyAutomationPolicyEntity } from './entities/daily-automation-policy.js';
 import type { AvailabilitySnapshotEntity } from './entities/availability-snapshot.js';
 import type { FeatureSnapshotEntity } from './entities/feature-snapshot.js';
@@ -11,6 +17,11 @@ import type { LeagueCoveragePolicyEntity } from './entities/league-coverage-poli
 import type { LineupParticipantEntity, LineupSnapshotEntity } from './entities/lineup-snapshot.js';
 import type { ParlayEntity } from './entities/parlay.js';
 import type { PredictionEntity } from './entities/prediction.js';
+import type {
+  SandboxCertificationRunEntity,
+  SandboxCertificationRunStatus,
+  SandboxCertificationVerificationKind,
+} from './entities/sandbox-certification-run.js';
 import type { SchedulerCursorEntity } from './entities/scheduler-cursor.js';
 import type {
   ResearchAssignmentEntity,
@@ -64,6 +75,57 @@ export interface ValidationRepository extends Repository<ValidationEntity> {
 
 export interface AuditEventRepository extends Repository<AuditEventEntity> {
   findByAggregate(aggregateType: string, aggregateId: EntityId): Promise<AuditEventEntity[]>;
+}
+
+export interface SandboxCertificationRunQuery {
+  readonly profileName?: string;
+  readonly packId?: string;
+  readonly verificationKind?: SandboxCertificationVerificationKind;
+  readonly status?: SandboxCertificationRunStatus;
+  readonly limit?: number;
+}
+
+export interface SandboxCertificationRunRepository extends Repository<SandboxCertificationRunEntity> {
+  listByQuery(query?: SandboxCertificationRunQuery): Promise<SandboxCertificationRunEntity[]>;
+  findLatestByProfilePack(
+    profileName: string,
+    packId: string,
+    verificationKind?: SandboxCertificationVerificationKind,
+  ): Promise<SandboxCertificationRunEntity | null>;
+}
+
+export interface OperationalTelemetryEventQuery {
+  readonly traceId?: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly sandboxCertificationRunId?: string;
+  readonly severity?: OperationalTelemetrySeverity;
+  readonly name?: string;
+  readonly occurredAfter?: string;
+  readonly occurredBefore?: string;
+  readonly limit?: number;
+}
+
+export interface OperationalTelemetryEventRepository extends Repository<OperationalTelemetryEventEntity> {
+  listByQuery(query?: OperationalTelemetryEventQuery): Promise<OperationalTelemetryEventEntity[]>;
+}
+
+export interface OperationalMetricSampleQuery {
+  readonly traceId?: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly sandboxCertificationRunId?: string;
+  readonly name?: string;
+  readonly type?: OperationalMetricType;
+  readonly recordedAfter?: string;
+  readonly recordedBefore?: string;
+  readonly limit?: number;
+}
+
+export interface OperationalMetricSampleRepository extends Repository<OperationalMetricSampleEntity> {
+  listByQuery(query?: OperationalMetricSampleQuery): Promise<OperationalMetricSampleEntity[]>;
 }
 
 export interface LeagueCoveragePolicyRepository extends Repository<LeagueCoveragePolicyEntity> {

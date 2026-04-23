@@ -10,13 +10,19 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
+- `gana-v8-runtime-release-adopcion-operativa.md`
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
+
+## Estado actual del backlog
+
+- El cierre principal de harness, release ops y runbooks ya quedo materializado en `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`.
+- El unico frente activo residual es la adopcion operativa de `runtime-release`: calibracion por entorno, retencion/pruning y formalizacion de overrides humanos.
 
 ## Planes relevantes en `completado/`
 
 - `gana-v8-harness-runtime-durable.md`
+- `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 - `gana-v8-harness-core-y-claridad-agente.md`
 - `gana-v8-plan-cierre-sandbox-qa.md`
 - `gana-v8-plan-cierre-plataforma-operacion.md`

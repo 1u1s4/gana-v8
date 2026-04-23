@@ -73,11 +73,110 @@ export interface HistogramMetric {
 export type MetricSnapshot = CounterMetric | GaugeMetric | HistogramMetric;
 export type TelemetryEvent = LogEvent | SpanEvent;
 
+export interface DurableTelemetryRefs {
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly sandboxCertificationRunId?: string;
+}
+
+export interface PersistedTelemetryEvent {
+  readonly id: string;
+  readonly kind: "log" | "span";
+  readonly name: string;
+  readonly severity: TelemetrySeverity;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly sandboxCertificationRunId?: string;
+  readonly occurredAt: string;
+  readonly finishedAt?: string;
+  readonly durationMs?: number;
+  readonly message?: string;
+  readonly attributes: Record<string, unknown>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface PersistedMetricSample {
+  readonly id: string;
+  readonly name: string;
+  readonly type: MetricType;
+  readonly value: number;
+  readonly labels: Record<string, string>;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly sandboxCertificationRunId?: string;
+  readonly recordedAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface DurableTelemetrySink {
+  readonly telemetryEvents: {
+    save(entity: PersistedTelemetryEvent): Promise<PersistedTelemetryEvent>;
+  };
+  readonly metricSamples: {
+    save(entity: PersistedMetricSample): Promise<PersistedMetricSample>;
+  };
+}
+
+export type TelemetryEntityRefs = DurableTelemetryRefs;
+
+export interface ObservabilityMetricWrite {
+  readonly metric: MetricSnapshot;
+  readonly observedValue?: number;
+  readonly context: TelemetryContext;
+  readonly refs?: TelemetryEntityRefs;
+  readonly recordedAt?: string;
+}
+
+export interface ObservabilitySinkCapabilities {
+  readonly eventsDurable: boolean;
+  readonly metricsDurable: boolean;
+}
+
+export interface ObservabilitySink {
+  readonly capabilities: ObservabilitySinkCapabilities;
+  appendEvent(event: TelemetryEvent, options?: { readonly refs?: TelemetryEntityRefs }): Promise<void> | void;
+  appendMetric(input: ObservabilityMetricWrite): Promise<void> | void;
+}
+
 const cloneLabels = (labels?: Readonly<Record<string, string>>): Readonly<Record<string, string>> => ({ ...(labels ?? {}) });
 
 const cloneRecord = <T extends Record<string, unknown>>(value?: T): Readonly<T> => ({ ...(value ?? ({} as T)) });
 
 const metricKey = (name: string, type: MetricType): string => `${type}:${name}`;
+
+const cloneRefs = (refs?: TelemetryEntityRefs): TelemetryEntityRefs => ({
+  ...(refs?.taskId ? { taskId: refs.taskId } : {}),
+  ...(refs?.taskRunId ? { taskRunId: refs.taskRunId } : {}),
+  ...(refs?.automationCycleId ? { automationCycleId: refs.automationCycleId } : {}),
+  ...(refs?.sandboxCertificationRunId ? { sandboxCertificationRunId: refs.sandboxCertificationRunId } : {}),
+});
+
+const mergeRefs = (base?: TelemetryEntityRefs, override?: TelemetryEntityRefs): TelemetryEntityRefs => ({
+  ...cloneRefs(base),
+  ...cloneRefs(override),
+});
+
+const mergeContext = (base: TelemetryContext, override?: Partial<TelemetryContext>): TelemetryContext =>
+  createTelemetryContext({
+    ...base,
+    ...(override ?? {}),
+    labels: {
+      ...base.labels,
+      ...(override?.labels ?? {}),
+    },
+  });
+
+const pruneUndefined = <T extends Record<string, unknown>>(value: T): T =>
+  Object.fromEntries(Object.entries(value).filter(([, candidate]) => candidate !== undefined)) as T;
 
 export const createTelemetryContext = (input?: Partial<TelemetryContext>): TelemetryContext => ({
   correlationId: input?.correlationId ?? randomUUID(),
@@ -232,65 +331,492 @@ export class MetricsRegistry {
   }
 }
 
-export const createObservabilityKit = (input?: { readonly context?: Partial<TelemetryContext> }) => {
+const telemetryEventName = (event: TelemetryEvent): string =>
+  event.kind === "span" ? event.name : "log";
+
+const telemetryEventSeverity = (event: TelemetryEvent): TelemetrySeverity =>
+  event.kind === "span" ? (event.status === "error" ? "error" : "info") : event.severity;
+
+const telemetryEventOccurredAt = (event: TelemetryEvent): string =>
+  event.kind === "span" ? event.startedAt : event.timestamp;
+
+const telemetryEventFinishedAt = (event: TelemetryEvent): string | undefined =>
+  event.kind === "span" ? event.endedAt : undefined;
+
+const telemetryEventDurationMs = (event: TelemetryEvent): number | undefined =>
+  event.kind === "span" ? event.durationMs : undefined;
+
+const telemetryEventMessage = (event: TelemetryEvent): string =>
+  event.kind === "span" ? event.name : event.message;
+
+const telemetryEventAttributes = (event: TelemetryEvent): Record<string, unknown> =>
+  event.kind === "span"
+    ? {
+        attributes: event.attributes,
+        correlationId: event.correlationId,
+        parentSpanId: event.parentSpanId ?? null,
+        spanId: event.spanId,
+        status: event.status,
+      }
+    : {
+        context: event.context,
+        data: event.data,
+      };
+
+export const persistTelemetryEvent = async (input: {
+  readonly sink: DurableTelemetrySink;
+  readonly event: TelemetryEvent;
+  readonly refs?: DurableTelemetryRefs;
+}): Promise<PersistedTelemetryEvent> => {
+  const occurredAt = telemetryEventOccurredAt(input.event);
+  const finishedAt = telemetryEventFinishedAt(input.event);
+  const durationMs = telemetryEventDurationMs(input.event);
+
+  return input.sink.telemetryEvents.save({
+    id: input.event.id,
+    kind: input.event.kind,
+    name: telemetryEventName(input.event),
+    severity: telemetryEventSeverity(input.event),
+    traceId: input.event.kind === "span" ? input.event.traceId : input.event.context.traceId,
+    correlationId: input.event.kind === "span" ? input.event.correlationId : input.event.context.correlationId,
+    ...(input.refs?.taskId ? { taskId: input.refs.taskId } : {}),
+    ...(input.refs?.taskRunId ? { taskRunId: input.refs.taskRunId } : {}),
+    ...(input.refs?.automationCycleId ? { automationCycleId: input.refs.automationCycleId } : {}),
+    ...(input.refs?.sandboxCertificationRunId
+      ? { sandboxCertificationRunId: input.refs.sandboxCertificationRunId }
+      : {}),
+    occurredAt,
+    ...(finishedAt ? { finishedAt } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    message: telemetryEventMessage(input.event),
+    attributes: telemetryEventAttributes(input.event),
+    createdAt: occurredAt,
+    updatedAt: finishedAt ?? occurredAt,
+  });
+};
+
+const metricSampleValue = (metric: MetricSnapshot): number =>
+  metric.type === "histogram" ? metric.average : metric.value;
+
+export const persistMetricSnapshot = async (input: {
+  readonly sink: DurableTelemetrySink;
+  readonly metric: MetricSnapshot;
+  readonly refs?: DurableTelemetryRefs;
+  readonly recordedAt?: string;
+  readonly observedValue?: number;
+  readonly context?: TelemetryContext;
+}): Promise<PersistedMetricSample> => {
+  const recordedAt = input.recordedAt ?? new Date().toISOString();
+  const labels = input.context
+    ? {
+        ...input.context.labels,
+        ...(input.context.workspace ? { workspace: input.context.workspace } : {}),
+      }
+    : {};
+
+  return input.sink.metricSamples.save({
+    id: randomUUID(),
+    name: input.metric.name,
+    type: input.metric.type,
+    value: input.observedValue ?? metricSampleValue(input.metric),
+    labels,
+    ...(input.context?.traceId ? { traceId: input.context.traceId } : {}),
+    ...(input.context?.correlationId ? { correlationId: input.context.correlationId } : {}),
+    ...(input.refs?.taskId ? { taskId: input.refs.taskId } : {}),
+    ...(input.refs?.taskRunId ? { taskRunId: input.refs.taskRunId } : {}),
+    ...(input.refs?.automationCycleId ? { automationCycleId: input.refs.automationCycleId } : {}),
+    ...(input.refs?.sandboxCertificationRunId
+      ? { sandboxCertificationRunId: input.refs.sandboxCertificationRunId }
+      : {}),
+    recordedAt,
+    createdAt: recordedAt,
+    updatedAt: recordedAt,
+  });
+};
+
+type PrismaCreateDelegate<TRecord> = {
+  create(args: { readonly data: Record<string, unknown> }): Promise<TRecord>;
+};
+
+const asPrismaCreateDelegate = <TRecord>(value: unknown): PrismaCreateDelegate<TRecord> | null => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("create" in value) ||
+    typeof (value as { readonly create?: unknown }).create !== "function"
+  ) {
+    return null;
+  }
+
+  return value as PrismaCreateDelegate<TRecord>;
+};
+
+export const createNoopObservabilitySink = (): ObservabilitySink => ({
+  capabilities: {
+    eventsDurable: false,
+    metricsDurable: false,
+  },
+  appendEvent() {},
+  appendMetric() {},
+});
+
+export const createPrismaDurableObservabilitySink = (
+  delegateHost: unknown,
+): ObservabilitySink => {
+  const candidate = typeof delegateHost === "object" && delegateHost !== null
+    ? (delegateHost as Record<string, unknown>)
+    : {};
+  const telemetryDelegate = asPrismaCreateDelegate<PersistedTelemetryEvent>(candidate.operationalTelemetryEvent);
+  const metricDelegate = asPrismaCreateDelegate<PersistedMetricSample>(candidate.operationalMetricSample);
+
+  const sink: DurableTelemetrySink = {
+    telemetryEvents: {
+      async save(entity) {
+        if (!telemetryDelegate) {
+          return entity;
+        }
+
+        await telemetryDelegate.create({
+          data: pruneUndefined({
+            ...entity,
+            attributes: entity.attributes,
+          }),
+        });
+        return entity;
+      },
+    },
+    metricSamples: {
+      async save(entity) {
+        if (!metricDelegate) {
+          return entity;
+        }
+
+        await metricDelegate.create({
+          data: pruneUndefined({
+            ...entity,
+            labels: entity.labels,
+          }),
+        });
+        return entity;
+      },
+    },
+  };
+
+  return {
+    capabilities: {
+      eventsDurable: telemetryDelegate !== null,
+      metricsDurable: metricDelegate !== null,
+    },
+    appendEvent(event, options) {
+      if (!telemetryDelegate) {
+        return;
+      }
+
+      return persistTelemetryEvent({
+        sink,
+        event,
+        ...(options?.refs ? { refs: options.refs } : {}),
+      }).then(() => undefined);
+    },
+    appendMetric(input) {
+      if (!metricDelegate) {
+        return;
+      }
+
+      return persistMetricSnapshot({
+        sink,
+        metric: input.metric,
+        context: input.context,
+        ...(input.refs ? { refs: input.refs } : {}),
+        ...(input.recordedAt ? { recordedAt: input.recordedAt } : {}),
+        ...(input.observedValue !== undefined ? { observedValue: input.observedValue } : {}),
+      }).then(() => undefined);
+    },
+  };
+};
+
+export const createObservabilityKit = (input?: {
+  readonly context?: Partial<TelemetryContext>;
+  readonly refs?: TelemetryEntityRefs;
+  readonly sink?: ObservabilitySink;
+}) => {
   const eventLog = new InMemoryEventLog();
   const metrics = new MetricsRegistry();
   const baseContext = createTelemetryContext(input?.context);
+  const baseRefs = cloneRefs(input?.refs);
+  const sink = input?.sink;
+  const pendingWrites = new Set<Promise<void>>();
+  const writeFailures: string[] = [];
+
+  const trackWrite = (candidate: Promise<void> | void) => {
+    if (!candidate || typeof (candidate as Promise<void>).then !== "function") {
+      return;
+    }
+
+    let tracked: Promise<void>;
+    tracked = Promise.resolve(candidate)
+      .catch((error) => {
+        writeFailures.push(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        pendingWrites.delete(tracked);
+      });
+    pendingWrites.add(tracked);
+  };
+
+  const appendEvent = (event: TelemetryEvent, refs?: TelemetryEntityRefs) => {
+    eventLog.append(event);
+    if (!sink) {
+      return;
+    }
+
+    trackWrite(sink.appendEvent(event, { refs: mergeRefs(baseRefs, refs) }));
+  };
+
+  const recordMetric = (
+    metric: MetricSnapshot,
+    observedValue: number,
+    options?: {
+      readonly context?: Partial<TelemetryContext>;
+      readonly refs?: TelemetryEntityRefs;
+      readonly recordedAt?: string;
+    },
+  ) => {
+    if (!sink) {
+      return;
+    }
+
+    trackWrite(
+      sink.appendMetric({
+        metric,
+        observedValue,
+        context: mergeContext(baseContext, options?.context),
+        refs: mergeRefs(baseRefs, options?.refs),
+        ...(options?.recordedAt ? { recordedAt: options.recordedAt } : {}),
+      }),
+    );
+  };
 
   return {
     eventLog,
     metrics,
+    sinkCapabilities: sink?.capabilities ?? createNoopObservabilitySink().capabilities,
     context(): TelemetryContext {
       return createTelemetryContext(baseContext);
     },
-    log(message: string, options?: Omit<Parameters<typeof createLogEvent>[0], "message">) {
+    failures(): readonly string[] {
+      return [...writeFailures];
+    },
+    async flush(): Promise<void> {
+      while (pendingWrites.size > 0) {
+        await Promise.all([...pendingWrites]);
+      }
+    },
+    log(
+      message: string,
+      options?: Omit<Parameters<typeof createLogEvent>[0], "message"> & { readonly refs?: TelemetryEntityRefs },
+    ) {
       const event = createLogEvent({
         ...options,
-        context: {
-          ...baseContext,
-          ...(options?.context ?? {}),
-          labels: {
-            ...baseContext.labels,
-            ...(options?.context?.labels ?? {}),
-          },
-        },
+        context: mergeContext(baseContext, options?.context),
         message,
       });
-      eventLog.append(event);
-      metrics.increment(`logs.${event.severity}`);
+      appendEvent(event, options?.refs);
+      const counterValue = metrics.increment(`logs.${event.severity}`);
+      recordMetric(
+        {
+          name: `logs.${event.severity}`,
+          type: "counter",
+          value: counterValue,
+        },
+        counterValue,
+        {
+          context: event.context,
+          ...(options?.refs ? { refs: options.refs } : {}),
+          recordedAt: event.timestamp,
+        },
+      );
       return event;
+    },
+    incrementCounter(
+      name: string,
+      value = 1,
+      options?: {
+        readonly context?: Partial<TelemetryContext>;
+        readonly refs?: TelemetryEntityRefs;
+        readonly recordedAt?: string;
+      },
+    ): number {
+      const next = metrics.increment(name, value);
+      recordMetric(
+        {
+          name,
+          type: "counter",
+          value: next,
+        },
+        next,
+        options,
+      );
+      return next;
+    },
+    setGauge(
+      name: string,
+      value: number,
+      options?: {
+        readonly context?: Partial<TelemetryContext>;
+        readonly refs?: TelemetryEntityRefs;
+        readonly recordedAt?: string;
+      },
+    ): number {
+      const next = metrics.setGauge(name, value);
+      recordMetric(
+        {
+          name,
+          type: "gauge",
+          value: next,
+        },
+        value,
+        options,
+      );
+      return next;
+    },
+    recordHistogram(
+      name: string,
+      value: number,
+      options?: {
+        readonly context?: Partial<TelemetryContext>;
+        readonly refs?: TelemetryEntityRefs;
+        readonly recordedAt?: string;
+      },
+    ): MetricSnapshot | null {
+      metrics.recordHistogram(name, value);
+      const metric = metrics.getMetric(name, "histogram");
+      if (metric) {
+        recordMetric(metric, value, options);
+      }
+      return metric;
     },
     runSpan<T>(
       name: string,
       fn: (span: ReturnType<typeof startSpan>) => T,
-      options?: Omit<Parameters<typeof startSpan>[0], "name">,
+      options?: Omit<Parameters<typeof startSpan>[0], "name"> & { readonly refs?: TelemetryEntityRefs },
     ): T {
       const span = startSpan({
         ...options,
-        context: {
-          ...baseContext,
-          ...(options?.context ?? {}),
-          labels: {
-            ...baseContext.labels,
-            ...(options?.context?.labels ?? {}),
-          },
-        },
+        context: mergeContext(baseContext, options?.context),
         name,
       });
 
       try {
         const result = fn(span);
-        eventLog.append(finishSpan(span));
-        metrics.increment("spans.completed");
+        appendEvent(finishSpan(span), options?.refs);
+        const counterValue = metrics.increment("spans.completed");
+        recordMetric(
+          {
+            name: "spans.completed",
+            type: "counter",
+            value: counterValue,
+          },
+          counterValue,
+          {
+            context: {
+              correlationId: span.correlationId,
+              labels: {},
+              spanId: span.spanId,
+              traceId: span.traceId,
+            },
+            ...(options?.refs ? { refs: options.refs } : {}),
+          },
+        );
         return result;
       } catch (error) {
-        eventLog.append(
+        appendEvent(
           finishSpan(span, {
             attributes: { error: error instanceof Error ? error.message : String(error) },
             status: "error",
           }),
+          options?.refs,
         );
-        metrics.increment("spans.failed");
+        const counterValue = metrics.increment("spans.failed");
+        recordMetric(
+          {
+            name: "spans.failed",
+            type: "counter",
+            value: counterValue,
+          },
+          counterValue,
+          {
+            context: {
+              correlationId: span.correlationId,
+              labels: {},
+              spanId: span.spanId,
+              traceId: span.traceId,
+            },
+            ...(options?.refs ? { refs: options.refs } : {}),
+          },
+        );
+        throw error;
+      }
+    },
+    async runAsyncSpan<T>(
+      name: string,
+      fn: (span: ReturnType<typeof startSpan>) => Promise<T>,
+      options?: Omit<Parameters<typeof startSpan>[0], "name"> & { readonly refs?: TelemetryEntityRefs },
+    ): Promise<T> {
+      const span = startSpan({
+        ...options,
+        context: mergeContext(baseContext, options?.context),
+        name,
+      });
+
+      try {
+        const result = await fn(span);
+        appendEvent(finishSpan(span), options?.refs);
+        const counterValue = metrics.increment("spans.completed");
+        recordMetric(
+          {
+            name: "spans.completed",
+            type: "counter",
+            value: counterValue,
+          },
+          counterValue,
+          {
+            context: {
+              correlationId: span.correlationId,
+              labels: {},
+              spanId: span.spanId,
+              traceId: span.traceId,
+            },
+            ...(options?.refs ? { refs: options.refs } : {}),
+          },
+        );
+        return result;
+      } catch (error) {
+        appendEvent(
+          finishSpan(span, {
+            attributes: { error: error instanceof Error ? error.message : String(error) },
+            status: "error",
+          }),
+          options?.refs,
+        );
+        const counterValue = metrics.increment("spans.failed");
+        recordMetric(
+          {
+            name: "spans.failed",
+            type: "counter",
+            value: counterValue,
+          },
+          counterValue,
+          {
+            context: {
+              correlationId: span.correlationId,
+              labels: {},
+              spanId: span.spanId,
+              traceId: span.traceId,
+            },
+            ...(options?.refs ? { refs: options.refs } : {}),
+          },
+        );
         throw error;
       }
     },

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  auditTrailRecordToAuditEvent,
   buildAuditTrailSummary,
   collectLineageIds,
   createAuditEntry,
   createLineageRef,
   InMemoryAuditTrail,
   linkLineage,
+  persistAuditTrailRecord,
 } from "../src/index.js";
 
 test("audit trail records append-only entries with observability events", () => {
@@ -81,4 +83,51 @@ test("audit entry builder generates consistent summaries across entries", () => 
   });
   assert.equal(first.event.message, "audit:approval:approved");
   assert.equal(second.event.data.subjectType, "prompt");
+});
+
+test("durable audit trail persistence writes audit events and telemetry correlations", async () => {
+  const auditEvents: unknown[] = [];
+  const telemetryEvents: unknown[] = [];
+  const record = createAuditEntry({
+    action: "executed",
+    actor: { displayName: "release-operator", id: "user-2", type: "operator" },
+    context: { correlationId: "corr-release", traceId: "trace-release" },
+    details: { status: "review-required" },
+    subject: { id: "cert-run-1", type: "approval" },
+    summary: "runtime release reviewed",
+    tags: ["release", "runtime"],
+  });
+
+  const auditEvent = auditTrailRecordToAuditEvent(record);
+  assert.equal(auditEvent.traceId, "trace-release");
+  assert.equal(auditEvent.subjectType, "approval");
+
+  await persistAuditTrailRecord({
+    sink: {
+      auditEvents: {
+        async save(entity) {
+          auditEvents.push(entity);
+          return entity;
+        },
+      },
+      telemetry: {
+        telemetryEvents: {
+          async save(entity) {
+            telemetryEvents.push(entity);
+            return entity;
+          },
+        },
+        metricSamples: {
+          async save(entity) {
+            return entity;
+          },
+        },
+      },
+    },
+    record,
+    refs: { sandboxCertificationRunId: "cert-run-1" },
+  });
+
+  assert.equal(auditEvents.length, 1);
+  assert.equal(telemetryEvents.length, 1);
 });

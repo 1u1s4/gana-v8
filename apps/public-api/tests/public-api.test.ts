@@ -204,6 +204,170 @@ const createSandboxCertificationFixture = async (input: {
   return { goldensRoot, artifactsRoot };
 };
 
+const createPersistedSandboxCertificationRuns = () => [
+  {
+    id: "scr-synthetic-1",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    verificationKind: "synthetic-integrity" as const,
+    status: "passed" as const,
+    gitSha: "abc123synthetic",
+    goldenFingerprint: "golden-fingerprint-1",
+    evidenceFingerprint: "evidence-fingerprint-1",
+    artifactRef: "memory://certification/synthetic-1.json",
+    runtimeSignals: {},
+    diffEntryCount: 0,
+    diffEntries: [],
+    summary: { syntheticIntegrity: "passed" },
+    generatedAt: "2026-08-16T20:30:00.000Z",
+  },
+  {
+    id: "scr-runtime-1",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    verificationKind: "runtime-release" as const,
+    status: "failed" as const,
+    promotionStatus: "blocked" as const,
+    gitSha: "def456runtime",
+    baselineRef: "release/2026.08.15",
+    candidateRef: "release/2026.08.16",
+    artifactRef: "memory://certification/runtime-1.json",
+    runtimeSignals: {
+      latestRuntimeRelease: "release-2026.08.16",
+      workerHealth: "degraded",
+    },
+    diffEntryCount: 1,
+    diffEntries: [
+      {
+        path: "$.runtime.signals.workerHealth",
+        kind: "changed" as const,
+        expected: "ok",
+        actual: "degraded",
+      },
+    ],
+    summary: { releaseDecision: "blocked" },
+    generatedAt: "2026-08-16T21:10:00.000Z",
+  },
+] as const;
+
+const createReleaseOpsSnapshot = () =>
+  createOperationSnapshot({
+    generatedAt: "2026-08-16T21:15:00.000Z",
+    fixtures: [
+      createFixture({
+        id: "fx-release-ops-1",
+        sport: "football",
+        competition: "Liga Nacional",
+        homeTeam: "Comunicaciones",
+        awayTeam: "Municipal",
+        scheduledAt: "2026-08-16T22:00:00.000Z",
+        status: "scheduled",
+        metadata: {},
+      }),
+    ],
+    tasks: [
+      createTask({
+        id: "task-release-ops-1",
+        kind: "prediction",
+        status: "quarantined",
+        priority: 90,
+        payload: {
+          fixtureId: "fx-release-ops-1",
+          workflowId: "wf-release-ops-1",
+          traceId: "trace-release-ops-1",
+          correlationId: "corr-release-ops-1",
+        },
+        attempts: [
+          { startedAt: "2026-08-16T20:45:00.000Z", finishedAt: "2026-08-16T20:55:00.000Z", error: "Recovered expired lease after 3 attempts; manual review required." },
+          { startedAt: "2026-08-16T20:56:00.000Z", finishedAt: "2026-08-16T21:05:00.000Z", error: "Recovered expired lease after 3 attempts; manual review required." },
+          { startedAt: "2026-08-16T21:06:00.000Z", finishedAt: "2026-08-16T21:10:00.000Z", error: "Recovered expired lease after 3 attempts; manual review required." },
+        ],
+        maxAttempts: 3,
+        lastErrorMessage: "Recovered expired lease after 3 attempts; manual review required.",
+        createdAt: "2026-08-16T20:45:00.000Z",
+        updatedAt: "2026-08-16T21:10:00.000Z",
+      }),
+    ],
+    taskRuns: [
+      createTaskRun({
+        id: "trn-release-ops-1",
+        taskId: "task-release-ops-1",
+        attemptNumber: 3,
+        status: "failed",
+        startedAt: "2026-08-16T21:06:00.000Z",
+        finishedAt: "2026-08-16T21:10:00.000Z",
+        error: "Recovered expired lease after 3 attempts; manual review required.",
+      }),
+    ],
+    automationCycles: [
+      {
+        id: "cycle-recovery-1",
+        leaseOwner: "recovery-worker-1",
+        source: "hermes-recovery",
+        status: "succeeded",
+        startedAt: "2026-08-16T21:08:00.000Z",
+        completedAt: "2026-08-16T21:12:00.000Z",
+        fixtureIds: ["fx-release-ops-1"],
+        taskIds: ["task-release-ops-1"],
+        stages: [],
+        summary: {
+          researchTaskCount: 0,
+          predictionTaskCount: 1,
+          parlayCount: 0,
+          validationTaskCount: 0,
+          expiredLeaseCount: 1,
+          recoveredLeaseCount: 1,
+          renewedLeaseCount: 1,
+          redrivenTaskCount: 0,
+          quarantinedTaskCount: 1,
+          manualReviewTaskCount: 1,
+        },
+        metadata: {
+          quarantinedTaskIds: ["task-release-ops-1"],
+          manualReviewTaskIds: ["task-release-ops-1"],
+          recoveryActions: [
+            {
+              action: "quarantine-expired-lease",
+              taskId: "task-release-ops-1",
+              taskRunId: "trn-release-ops-1",
+              reason: "Recovered expired lease after 3 attempts; manual review required.",
+            },
+          ],
+        },
+      },
+    ],
+    telemetryEvents: [
+      {
+        id: "tel-event-1",
+        kind: "log",
+        name: "release.ops.quarantine",
+        severity: "warn",
+        source: "hermes-recovery",
+        occurredAt: "2026-08-16T21:10:00.000Z",
+        taskId: "task-release-ops-1",
+        taskRunId: "trn-release-ops-1",
+        automationCycleId: "cycle-recovery-1",
+        message: "Task moved to quarantine for manual review.",
+        attributes: { queue: "prediction" },
+      },
+    ],
+    telemetryMetrics: [
+      {
+        id: "metric-sample-1",
+        name: "release_ops.quarantined_tasks",
+        type: "gauge",
+        value: 1,
+        labels: { queue: "prediction" },
+        source: "hermes-recovery",
+        taskId: "task-release-ops-1",
+        automationCycleId: "cycle-recovery-1",
+        recordedAt: "2026-08-16T21:12:00.000Z",
+      },
+    ],
+  });
+
 const createFixtureResearchReadModel = (fixtureId: string) => ({
   fixtureId,
   status: "publishable" as const,
@@ -743,6 +907,111 @@ test("public api health reports live ingestion freshness and recent failures", (
   assert.match(failures?.detail ?? "", /1 recent failed\/quarantined/i);
 });
 
+test("loadOperationSnapshotFromUnitOfWork loads ETL from Prisma-like sources and telemetry from repos", async () => {
+  const unitOfWork = createInMemoryUnitOfWork() as ReturnType<typeof createInMemoryUnitOfWork> & {
+    client: {
+      rawIngestionBatch: {
+        findMany: () => Promise<Array<{
+          id: string;
+          endpointFamily: string;
+          providerCode: string;
+          extractionStatus: string;
+          extractionTime: Date;
+          recordCount: number;
+        }>>;
+      };
+      $queryRawUnsafe: (sql: string, ...values: unknown[]) => Promise<unknown[]>;
+    };
+    telemetryEvents: {
+      listByQuery: () => Promise<unknown[]>;
+    };
+    metricSamples: {
+      listByQuery: () => Promise<unknown[]>;
+    };
+  };
+
+  unitOfWork.client = {
+    rawIngestionBatch: {
+      findMany: async () => [
+        {
+          id: "raw-batch-prisma-1",
+          endpointFamily: "fixtures",
+          providerCode: "api-football",
+          extractionStatus: "succeeded",
+          extractionTime: new Date("2026-08-16T20:40:00.000Z"),
+          recordCount: 12,
+        },
+      ],
+    },
+    $queryRawUnsafe: async (sql: string) => {
+      if (sql.includes("information_schema.tables")) {
+        return [];
+      }
+
+      if (sql.includes("FROM OddsSnapshot")) {
+        return [
+          {
+            id: "odds-snapshot-prisma-1",
+            fixtureId: "fx-release-ops-1",
+            providerFixtureId: "provider-fixture-1",
+            bookmakerKey: "bet365",
+            marketKey: "h2h",
+            capturedAt: new Date("2026-08-16T20:42:00.000Z"),
+            selectionCount: 3,
+          },
+        ];
+      }
+
+      return [];
+    },
+  };
+  unitOfWork.telemetryEvents = {
+    save: async (entity) => entity,
+    getById: async () => null,
+    list: async () => [],
+    delete: async () => {},
+    listByQuery: async () => [
+      {
+        id: "repo-event-1",
+        kind: "log",
+        name: "telemetry.repo.loaded",
+        severity: "info",
+        occurredAt: "2026-08-16T20:45:00.000Z",
+        createdAt: "2026-08-16T20:45:00.000Z",
+        updatedAt: "2026-08-16T20:45:00.000Z",
+        source: "repo",
+        attributes: { from: "repo" },
+      },
+    ],
+  };
+  unitOfWork.metricSamples = {
+    save: async (entity) => entity,
+    getById: async () => null,
+    list: async () => [],
+    delete: async () => {},
+    listByQuery: async () => [
+      {
+        id: "repo-metric-1",
+        name: "telemetry_repo_loaded_total",
+        type: "counter",
+        value: 1,
+        labels: { source: "repo" },
+        recordedAt: "2026-08-16T20:46:00.000Z",
+        createdAt: "2026-08-16T20:46:00.000Z",
+        updatedAt: "2026-08-16T20:46:00.000Z",
+        source: "repo",
+      },
+    ],
+  };
+
+  const snapshot = await loadOperationSnapshotFromUnitOfWork(unitOfWork);
+
+  assert.equal(snapshot.rawBatches[0]?.id, "raw-batch-prisma-1");
+  assert.equal(snapshot.oddsSnapshots[0]?.id, "odds-snapshot-prisma-1");
+  assert.equal(snapshot.telemetryEvents[0]?.name, "telemetry.repo.loaded");
+  assert.equal(snapshot.telemetryMetrics[0]?.name, "telemetry_repo_loaded_total");
+});
+
 test("public api enriches AI run read models with provider request ids, fallback reason, and compatibility fields", () => {
   const failedAiRun = createAiRun({
     id: "airun-failed",
@@ -843,6 +1112,15 @@ test("public api derives an operational summary from tasks, task runs, etl batch
   assert.equal(typeof summary.observability.traceability.taskTraceCoverageRate, "number");
   assert.equal(summary.policy.status === "ready" || summary.policy.status === "degraded" || summary.policy.status === "blocked", true);
   assert.equal(typeof summary.policy.publishAllowed, "boolean");
+});
+
+test("public api operational summary counts quarantined tasks explicitly", () => {
+  const snapshot = createReleaseOpsSnapshot();
+
+  const summary = createOperationalSummary(snapshot);
+
+  assert.equal(summary.taskCounts.quarantined, 1);
+  assert.equal(summary.observability.retries.quarantined, 1);
 });
 
 test("public api builds task log entries sorted by newest timestamp", () => {
@@ -1434,11 +1712,13 @@ test("public api server enforces bearer tokens for reads when auth is configured
 
 test("public api server exposes sandbox certification summaries and detail routes", async () => {
   const { goldensRoot, artifactsRoot } = await createSandboxCertificationFixture({ status: "passed" });
+  const persistedRuns = createPersistedSandboxCertificationRuns();
   const server = createPublicApiServer({
     snapshot: createDemoOperationSnapshot(),
     sandboxCertification: {
       goldensRoot,
       artifactsRoot,
+      persistedRuns,
     },
   });
 
@@ -1451,9 +1731,29 @@ test("public api server exposes sandbox certification summaries and detail route
 
     const listResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.sandboxCertification}`);
     assert.equal(listResponse.status, 200);
-    const listJson = (await listResponse.json()) as Array<{ status: string; packId: string }>;
+    const listJson = (await listResponse.json()) as Array<{
+      status: string;
+      packId: string;
+      latestSyntheticIntegrity: { verificationKind: string; status: string } | null;
+      latestRuntimeRelease: { verificationKind: string; promotionStatus?: string } | null;
+    }>;
     assert.equal(listJson[0]?.status, "passed");
     assert.equal(listJson[0]?.packId, "football-dual-smoke");
+    assert.equal(listJson[0]?.latestSyntheticIntegrity?.verificationKind, "synthetic-integrity");
+    assert.equal(listJson[0]?.latestSyntheticIntegrity?.status, "passed");
+    assert.equal(listJson[0]?.latestRuntimeRelease?.verificationKind, "runtime-release");
+    assert.equal(listJson[0]?.latestRuntimeRelease?.promotionStatus, "blocked");
+
+    const runsResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}`);
+    assert.equal(runsResponse.status, 200);
+    const runsJson = (await runsResponse.json()) as Array<{
+      verificationKind: string;
+      status: string;
+      promotionStatus?: string;
+    }>;
+    assert.equal(runsJson.length, 2);
+    assert.equal(runsJson[0]?.verificationKind, "runtime-release");
+    assert.equal(runsJson[0]?.promotionStatus, "blocked");
 
     const detailResponse = await fetch(
       `${baseUrl}${publicApiEndpointPaths.sandboxCertification}/ci-smoke/football-dual-smoke`,
@@ -1467,6 +1767,143 @@ test("public api server exposes sandbox certification summaries and detail route
     assert.equal(detailJson.status, "passed");
     assert.deepEqual(detailJson.diffEntries, []);
     assert.deepEqual(detailJson.allowedHosts, ["sandbox-ci.local"]);
+    assert.equal((detailJson as any).latestRuntimeRelease?.promotionStatus, "blocked");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api exposes manual review, quarantine, recovery, and telemetry read models from snapshots", async () => {
+  const snapshot = createReleaseOpsSnapshot();
+  const server = createPublicApiServer({ snapshot });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const [manualReviewResponse, quarantinesResponse, recoveryResponse, telemetryEventsResponse, telemetryMetricsResponse] =
+      await Promise.all([
+        fetch(`${baseUrl}${publicApiEndpointPaths.manualReview}`),
+        fetch(`${baseUrl}${publicApiEndpointPaths.quarantines}`),
+        fetch(`${baseUrl}${publicApiEndpointPaths.recovery}`),
+        fetch(`${baseUrl}${publicApiEndpointPaths.telemetryEvents}`),
+        fetch(`${baseUrl}${publicApiEndpointPaths.telemetryMetrics}`),
+      ]);
+
+    assert.equal(manualReviewResponse.status, 200);
+    assert.equal(quarantinesResponse.status, 200);
+    assert.equal(recoveryResponse.status, 200);
+    assert.equal(telemetryEventsResponse.status, 200);
+    assert.equal(telemetryMetricsResponse.status, 200);
+
+    const manualReviewJson = (await manualReviewResponse.json()) as Array<{ taskId: string; source: string }>;
+    const quarantinesJson = (await quarantinesResponse.json()) as Array<{ taskId: string; manualReviewRequired: boolean }>;
+    const recoveryJson = (await recoveryResponse.json()) as Array<{ cycleId: string; manualReviewTaskCount: number }>;
+    const telemetryEventsJson = (await telemetryEventsResponse.json()) as Array<{ name: string; severity: string }>;
+    const telemetryMetricsJson = (await telemetryMetricsResponse.json()) as Array<{ name: string; type: string }>;
+
+    assert.equal(manualReviewJson[0]?.taskId, "task-release-ops-1");
+    assert.equal(manualReviewJson[0]?.source, "recovery");
+    assert.equal(quarantinesJson[0]?.taskId, "task-release-ops-1");
+    assert.equal(quarantinesJson[0]?.manualReviewRequired, true);
+    assert.equal(recoveryJson[0]?.cycleId, "cycle-recovery-1");
+    assert.equal(recoveryJson[0]?.manualReviewTaskCount, 1);
+    assert.equal(telemetryEventsJson[0]?.name, "release.ops.quarantine");
+    assert.equal(telemetryEventsJson[0]?.severity, "warn");
+    assert.equal(telemetryMetricsJson[0]?.name, "release_ops.quarantined_tasks");
+    assert.equal(telemetryMetricsJson[0]?.type, "gauge");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api filters sandbox certification runs and exposes run detail by runId", async () => {
+  const { goldensRoot, artifactsRoot } = await createSandboxCertificationFixture({ status: "passed" });
+  const server = createPublicApiServer({
+    snapshot: createOperationSnapshot(),
+    sandboxCertification: {
+      goldensRoot,
+      artifactsRoot,
+      persistedRuns: createPersistedSandboxCertificationRuns(),
+    },
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const [runsResponse, detailResponse] = await Promise.all([
+      fetch(
+        `${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}?profileName=ci-smoke&packId=football-dual-smoke&verificationKind=runtime-release&status=failed`,
+      ),
+      fetch(`${baseUrl}${publicApiEndpointPaths.sandboxCertificationRuns}/scr-runtime-1`),
+    ]);
+
+    assert.equal(runsResponse.status, 200);
+    assert.equal(detailResponse.status, 200);
+
+    const runsJson = (await runsResponse.json()) as Array<{ id: string; verificationKind: string; status: string }>;
+    const detailJson = (await detailResponse.json()) as {
+      id: string;
+      packId: string;
+      verificationKind: string;
+      diffEntries: unknown[];
+    };
+
+    assert.equal(runsJson.length, 1);
+    assert.equal(runsJson[0]?.id, "scr-runtime-1");
+    assert.equal(runsJson[0]?.verificationKind, "runtime-release");
+    assert.equal(detailJson.id, "scr-runtime-1");
+    assert.equal(detailJson.packId, "football-dual-smoke");
+    assert.equal(detailJson.verificationKind, "runtime-release");
+    assert.equal(detailJson.diffEntries.length, 1);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("public api filters telemetry events and metrics by query params", async () => {
+  const snapshot = createReleaseOpsSnapshot();
+  const server = createPublicApiServer({ snapshot });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
+
+    const [eventsResponse, metricsResponse] = await Promise.all([
+      fetch(
+        `${baseUrl}${publicApiEndpointPaths.telemetryEvents}?taskId=task-release-ops-1&automationCycleId=cycle-recovery-1&severity=warn&name=release.ops.quarantine&from=2026-08-16T21:00:00.000Z&to=2026-08-16T21:11:00.000Z`,
+      ),
+      fetch(
+        `${baseUrl}${publicApiEndpointPaths.telemetryMetrics}?taskId=task-release-ops-1&automationCycleId=cycle-recovery-1&name=release_ops.quarantined_tasks&from=2026-08-16T21:00:00.000Z&to=2026-08-16T21:13:00.000Z`,
+      ),
+    ]);
+
+    assert.equal(eventsResponse.status, 200);
+    assert.equal(metricsResponse.status, 200);
+
+    const eventsJson = (await eventsResponse.json()) as Array<{ id: string; name: string }>;
+    const metricsJson = (await metricsResponse.json()) as Array<{ id: string; name: string }>;
+
+    assert.equal(eventsJson.length, 1);
+    assert.equal(eventsJson[0]?.name, "release.ops.quarantine");
+    assert.equal(metricsJson.length, 1);
+    assert.equal(metricsJson[0]?.name, "release_ops.quarantined_tasks");
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -1538,6 +1975,25 @@ test("public api server accepts POST fixture ops actions when backed by a unit o
     assert.equal(fixtureOpsJson.workflow.manualSelectionStatus, "selected");
     assert.equal(fixtureOpsJson.workflow.selectionOverride, "force-include");
     assert.equal(fixtureOpsJson.scoringEligibility.eligible, true);
+
+    const telemetryEvents = await unitOfWork.telemetryEvents.list();
+    const metricSamples = await unitOfWork.metricSamples.list();
+    assert.equal(
+      telemetryEvents.some((event) => event.name === "public_api.manual-selection"),
+      true,
+    );
+    assert.equal(
+      telemetryEvents.some((event) => event.name === "public_api.selection-override"),
+      true,
+    );
+    assert.equal(
+      metricSamples.some((sample) => sample.name === "public_api.manual-selection.count"),
+      true,
+    );
+    assert.equal(
+      metricSamples.some((sample) => sample.name === "public_api.selection-override.count"),
+      true,
+    );
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -1659,6 +2115,25 @@ test("public api server can quarantine running tasks and requeue them through qu
     const taskRunsJson = (await taskRunsResponse.json()) as Array<{ id: string; status: string; error?: string }>;
     assert.equal(taskRunsJson[0]?.id, claim.taskRun.id);
     assert.equal(taskRunsJson[0]?.status, "failed");
+
+    const telemetryEvents = await unitOfWork.telemetryEvents.list();
+    const metricSamples = await unitOfWork.metricSamples.list();
+    assert.equal(
+      telemetryEvents.some((event) => event.name === "public_api.task-quarantine"),
+      true,
+    );
+    assert.equal(
+      telemetryEvents.some((event) => event.name === "public_api.task-requeue"),
+      true,
+    );
+    assert.equal(
+      metricSamples.some((sample) => sample.name === "public_api.task-quarantine.count"),
+      true,
+    );
+    assert.equal(
+      metricSamples.some((sample) => sample.name === "public_api.task-requeue.count"),
+      true,
+    );
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

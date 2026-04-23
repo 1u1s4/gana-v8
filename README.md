@@ -137,9 +137,34 @@ También podés correr un certificado puntual con el runner:
 pnpm --filter @gana-v8/sandbox-runner certify -- --mode smoke --profile ci-smoke --pack football-dual-smoke --golden fixtures/replays/goldens/ci-smoke/football-dual-smoke.json --artifact .artifacts/sandbox-certification/ci-smoke/football-dual-smoke.evidence.json
 ```
 
-Runbook:
+Runbooks asociados:
 
 - `runbooks/sandbox-certification.md`
+- `runbooks/sandbox-certification-drift.md`
+
+## Release ops y runbooks
+
+CI conserva la certificación sintética en `sandbox-certification` y agrega el gate MySQL-backed `runtime-release` para ejecutar el runtime durable de scheduler, dispatcher y recovery contra Prisma/MySQL real.
+
+La reproducción local mínima de ese gate es:
+
+```bash
+pnpm db:generate
+pnpm db:migrate:deploy
+pnpm --filter @gana-v8/control-plane-runtime test
+pnpm test:runtime:release
+GANA_RUNTIME_PROFILE=ci-smoke pnpm test:e2e:hermes-smoke
+```
+
+Runbooks operativos activos:
+
+- `runbooks/release-review-promotion.md`
+- `runbooks/rollback.md`
+- `runbooks/recovery-redrive.md`
+- `runbooks/quarantine-manual-review.md`
+- `runbooks/observability-traceability-incident.md`
+- `runbooks/public-api-operator-console-read-model-staleness.md`
+- `runbooks/smoke-e2e-runtime-failure.md`
 
 ## Base de datos por defecto
 
@@ -158,18 +183,19 @@ Runbook:
 
 ## Próximos pasos naturales
 
-- ampliar evidencia de promotion readiness y runbooks operativos
-- ampliar smoke/integration coverage sobre la topología scheduler/dispatcher/recovery
-- conectar CI para ejecutar `pnpm install && pnpm verify`
+- afinar retención y pruning de history/telemetry cuando el volumen operativo real lo exija
+- revisar thresholds de promoción y ventanas de evidencia con datos de operación reales
+- endurecer ergonomía y dashboards sobre los read models ya unificados de `public-api` y `operator-console`
 
 ## Planes clave
 
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-harness-verificacion-release-ops-y-runbooks.md`
+- `docs/plans/falta/gana-v8-runtime-release-adopcion-operativa.md`
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-runtime-durable.md`
 - `docs/plans/completado/gana-v8-harness-core-y-claridad-agente.md`
 - `docs/plans/completado/gana-v8-plan-cierre-plataforma-operacion.md`

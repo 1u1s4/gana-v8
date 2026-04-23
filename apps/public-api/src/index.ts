@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import {
   createServer,
@@ -30,6 +31,8 @@ import {
   createAuditEvent,
   createFixture,
   createFixtureWorkflow,
+  createOperationalMetricSample,
+  createOperationalTelemetryEvent,
   createParlay,
   createPrediction,
   createTask,
@@ -174,6 +177,7 @@ export interface OperationalSummary {
     readonly queued: number;
     readonly running: number;
     readonly failed: number;
+    readonly quarantined: number;
     readonly succeeded: number;
     readonly cancelled: number;
   };
@@ -325,6 +329,12 @@ export interface AutomationCycleReadModel {
     readonly predictionTaskCount: number;
     readonly parlayCount: number;
     readonly validationTaskCount: number;
+    readonly expiredLeaseCount?: number;
+    readonly recoveredLeaseCount?: number;
+    readonly renewedLeaseCount?: number;
+    readonly redrivenTaskCount?: number;
+    readonly quarantinedTaskCount?: number;
+    readonly manualReviewTaskCount?: number;
   };
   readonly metadata: Record<string, unknown>;
 }
@@ -402,6 +412,11 @@ export interface OperationSnapshot {
   readonly providerStates: readonly ProviderStateReadModel[];
   readonly rawBatches: readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots: readonly OddsSnapshotReadModel[];
+  readonly manualReviews: readonly ManualReviewReadModel[];
+  readonly quarantines: readonly QuarantineReadModel[];
+  readonly recovery: readonly RecoveryReadModel[];
+  readonly telemetryEvents: readonly TelemetryEventReadModel[];
+  readonly telemetryMetrics: readonly TelemetryMetricReadModel[];
   readonly predictions: readonly PredictionEntity[];
   readonly parlays: readonly ParlayEntity[];
   readonly validations: readonly ValidationEntity[];
@@ -426,6 +441,9 @@ export interface PublicApiHandlers {
   readonly taskRuns: () => readonly TaskRunEntity[];
   readonly taskRunById: (taskRunId: string) => TaskRunEntity | null;
   readonly taskRunsByTaskId: (taskId: string) => readonly TaskRunEntity[];
+  readonly manualReviews: () => readonly ManualReviewReadModel[];
+  readonly quarantines: () => readonly QuarantineReadModel[];
+  readonly recovery: () => readonly RecoveryReadModel[];
   readonly liveIngestionRuns: () => readonly LiveIngestionRunReadModel[];
   readonly liveIngestionRunByTaskId: (taskId: string) => LiveIngestionRunReadModel | null;
   readonly aiRuns: () => readonly AiRunReadModel[];
@@ -434,6 +452,8 @@ export interface PublicApiHandlers {
   readonly providerStateByProvider: (provider: string) => ProviderStateReadModel | null;
   readonly rawBatches: () => readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots: () => readonly OddsSnapshotReadModel[];
+  readonly telemetryEvents: () => readonly TelemetryEventReadModel[];
+  readonly telemetryMetrics: () => readonly TelemetryMetricReadModel[];
   readonly operationalSummary: () => OperationalSummary;
   readonly operationalLogs: () => readonly OperationalLogEntry[];
   readonly predictions: () => readonly PredictionEntity[];
@@ -497,6 +517,7 @@ export interface PublicApiResponse {
 export interface PublicApiSandboxCertificationSourceOptions {
   readonly goldensRoot?: string;
   readonly artifactsRoot?: string;
+  readonly persistedRuns?: readonly SandboxCertificationRunReadModel[];
 }
 
 export interface SandboxCertificationDiffEntryReadModel {
@@ -521,6 +542,8 @@ export interface SandboxCertificationReadModel {
   readonly goldenPath: string;
   readonly artifactPath?: string;
   readonly promotion?: SandboxPromotionReportReadModel;
+  readonly latestSyntheticIntegrity: SandboxCertificationRunSummaryReadModel | null;
+  readonly latestRuntimeRelease: SandboxCertificationRunSummaryReadModel | null;
 }
 
 export interface SandboxCertificationDetailReadModel extends SandboxCertificationReadModel {
@@ -528,6 +551,37 @@ export interface SandboxCertificationDetailReadModel extends SandboxCertificatio
   readonly allowedHosts: readonly string[];
   readonly diffEntries: readonly SandboxCertificationDiffEntryReadModel[];
   readonly policyTrace?: SandboxPolicyTraceReadModel;
+}
+
+export type SandboxCertificationVerificationKind = "synthetic-integrity" | "runtime-release";
+
+export type SandboxCertificationRunStatus = "passed" | "failed";
+
+export type SandboxCertificationPromotionStatus = "blocked" | "review-required" | "promotable";
+
+export interface SandboxCertificationRunSummaryReadModel {
+  readonly id: string;
+  readonly verificationKind: SandboxCertificationVerificationKind;
+  readonly status: SandboxCertificationRunStatus;
+  readonly generatedAt?: string;
+  readonly promotionStatus?: SandboxCertificationPromotionStatus;
+  readonly gitSha?: string;
+  readonly baselineRef?: string;
+  readonly candidateRef?: string;
+  readonly goldenFingerprint?: string;
+  readonly evidenceFingerprint?: string;
+  readonly artifactRef?: string;
+  readonly runtimeSignals: Readonly<Record<string, unknown>>;
+  readonly diffEntryCount: number;
+  readonly summary: Readonly<Record<string, unknown>>;
+}
+
+export interface SandboxCertificationRunReadModel extends SandboxCertificationRunSummaryReadModel {
+  readonly profileName: string;
+  readonly packId: string;
+  readonly mode: string;
+  readonly gitSha: string;
+  readonly diffEntries: readonly SandboxCertificationDiffEntryReadModel[];
 }
 
 export interface SandboxPromotionGateReadModel {
@@ -634,6 +688,107 @@ export interface LiveIngestionRunReadModel {
   };
 }
 
+export interface TelemetryEventReadModel {
+  readonly id: string;
+  readonly kind: "log" | "span";
+  readonly name: string;
+  readonly severity: "debug" | "info" | "warn" | "error";
+  readonly source: string;
+  readonly occurredAt: string;
+  readonly finishedAt?: string;
+  readonly durationMs?: number;
+  readonly message?: string;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly sandboxCertificationRunId?: string;
+  readonly attributes: Readonly<Record<string, unknown>>;
+}
+
+export interface TelemetryMetricReadModel {
+  readonly id: string;
+  readonly name: string;
+  readonly type: "counter" | "gauge" | "histogram";
+  readonly value: number;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly source: string;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly sandboxCertificationRunId?: string;
+  readonly recordedAt: string;
+}
+
+export type QueueIssueSource = "operator" | "recovery" | "runtime" | "unknown";
+
+export interface ManualReviewReadModel {
+  readonly id: string;
+  readonly taskId: string;
+  readonly taskKind: string;
+  readonly taskStatus: TaskEntity["status"];
+  readonly taskRunId?: string;
+  readonly fixtureId?: string;
+  readonly reason: string;
+  readonly source: QueueIssueSource;
+  readonly requiredAt: string;
+  readonly workflowId?: string;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly recoveryCycleId?: string;
+}
+
+export interface QuarantineReadModel {
+  readonly taskId: string;
+  readonly taskKind: string;
+  readonly taskStatus: TaskEntity["status"];
+  readonly taskRunId?: string;
+  readonly fixtureId?: string;
+  readonly reason: string;
+  readonly source: QueueIssueSource;
+  readonly quarantinedAt: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly canRequeue: boolean;
+  readonly workflowId?: string;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly recoveryCycleId?: string;
+  readonly manualReviewRequired: boolean;
+}
+
+export interface RecoveryActionReadModel {
+  readonly action: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly reason?: string;
+  readonly error?: string;
+  readonly retryScheduledFor?: string | null;
+  readonly previousStatus?: string;
+}
+
+export interface RecoveryReadModel {
+  readonly cycleId: string;
+  readonly source: string;
+  readonly status: AutomationCycleReadModel["status"];
+  readonly leaseOwner: string;
+  readonly startedAt: string;
+  readonly completedAt?: string;
+  readonly expiredLeaseCount: number;
+  readonly recoveredLeaseCount: number;
+  readonly renewedLeaseCount: number;
+  readonly redrivenTaskCount: number;
+  readonly quarantinedTaskCount: number;
+  readonly manualReviewTaskCount: number;
+  readonly affectedTaskIds: readonly string[];
+  readonly affectedFixtureIds: readonly string[];
+  readonly actions: readonly RecoveryActionReadModel[];
+  readonly errors: readonly string[];
+}
+
 export interface TaskReadModel extends TaskEntity {
   readonly manifestId?: string;
   readonly workflowId?: string;
@@ -661,12 +816,18 @@ export const publicApiEndpointPaths = {
   fixtures: "/fixtures",
   tasks: "/tasks",
   taskRuns: "/task-runs",
+  manualReview: "/manual-review",
+  quarantines: "/quarantines",
+  recovery: "/recovery",
   liveIngestionRuns: "/live-ingestion-runs",
   sandboxCertification: "/sandbox-certification",
+  sandboxCertificationRuns: "/sandbox-certification/runs",
   aiRuns: "/ai-runs",
   providerStates: "/provider-states",
   rawBatches: "/raw-batches",
   oddsSnapshots: "/odds-snapshots",
+  telemetryEvents: "/telemetry/events",
+  telemetryMetrics: "/telemetry/metrics",
   operationalSummary: "/operational-summary",
   operationalLogs: "/operational-logs",
   coverageLeagues: "/coverage/leagues",
@@ -710,6 +871,26 @@ interface FixtureResearchRepositoryCollectionLike {
   readonly featureSnapshots?: {
     list(): Promise<FeatureSnapshotEntity[]>;
     findLatestByFixtureId?(fixtureId: string): Promise<FeatureSnapshotEntity | null>;
+  };
+}
+
+interface PersistedCertificationHistoryRepositoryCollectionLike {
+  readonly sandboxCertificationRuns?: {
+    listByQuery(query?: Record<string, unknown>): Promise<readonly unknown[]>;
+    findLatestByProfilePack?(
+      profileName: string,
+      packId: string,
+      verificationKind?: SandboxCertificationVerificationKind,
+    ): Promise<unknown | null>;
+  };
+}
+
+interface PersistedTelemetryRepositoryCollectionLike {
+  readonly telemetryEvents?: {
+    listByQuery(query?: Record<string, unknown>): Promise<readonly unknown[]>;
+  };
+  readonly metricSamples?: {
+    listByQuery(query?: Record<string, unknown>): Promise<readonly unknown[]>;
   };
 }
 
@@ -1200,6 +1381,11 @@ export interface CreateOperationSnapshotInput {
   readonly providerStates?: readonly ProviderStateReadModel[];
   readonly rawBatches?: readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
+  readonly manualReviews?: readonly ManualReviewReadModel[];
+  readonly quarantines?: readonly QuarantineReadModel[];
+  readonly recovery?: readonly RecoveryReadModel[];
+  readonly telemetryEvents?: readonly TelemetryEventReadModel[];
+  readonly telemetryMetrics?: readonly TelemetryMetricReadModel[];
   readonly predictions?: readonly PredictionEntity[];
   readonly parlays?: readonly ParlayEntity[];
   readonly validations?: readonly ValidationEntity[];
@@ -1227,6 +1413,25 @@ export function createOperationSnapshot(
   const predictions = [...(input.predictions ?? [])];
   const parlays = [...(input.parlays ?? [])];
   const validations = [...(input.validations ?? [])];
+  const manualReviews =
+    input.manualReviews ??
+    createManualReviewReadModels({
+      automationCycles,
+      tasks,
+      taskRuns,
+    });
+  const quarantines =
+    input.quarantines ??
+    createQuarantineReadModels({
+      automationCycles,
+      tasks,
+      taskRuns,
+    });
+  const recovery =
+    input.recovery ??
+    createRecoveryReadModels(automationCycles);
+  const telemetryEvents = [...(input.telemetryEvents ?? [])];
+  const telemetryMetrics = [...(input.telemetryMetrics ?? [])];
   const validationSummary = summarizeValidations(validations);
 
   return {
@@ -1245,6 +1450,11 @@ export function createOperationSnapshot(
     providerStates,
     rawBatches,
     oddsSnapshots,
+    manualReviews,
+    quarantines,
+    recovery,
+    telemetryEvents,
+    telemetryMetrics,
     predictions,
     parlays,
     validations,
@@ -1311,6 +1521,11 @@ export function createEmptyOperationSnapshot(
     providerStates: [],
     rawBatches: [],
     oddsSnapshots: [],
+    manualReviews: [],
+    quarantines: [],
+    recovery: [],
+    telemetryEvents: [],
+    telemetryMetrics: [],
     predictions: [],
     parlays: [],
     validations: [],
@@ -1492,6 +1707,236 @@ const createTaskReadModel = (
   };
 };
 
+const isRecoveryAutomationCycle = (cycle: AutomationCycleReadModel): boolean =>
+  cycle.source === "hermes-recovery" || cycle.source === "recovery";
+
+const getTaskFixtureId = (task: Pick<TaskEntity, "payload">): string | undefined =>
+  typeof task.payload.fixtureId === "string" ? task.payload.fixtureId : undefined;
+
+const listRecoveryCyclesNewestFirst = (
+  cycles: readonly AutomationCycleReadModel[],
+): AutomationCycleReadModel[] =>
+  sortByIsoDescending(
+    cycles.filter(isRecoveryAutomationCycle),
+    (cycle) => cycle.completedAt ?? cycle.startedAt,
+  );
+
+const getRecoveryMetadataTaskIds = (
+  metadata: Record<string, unknown>,
+  key: string,
+): readonly string[] => {
+  const value = metadata[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
+};
+
+const getLatestTaskRunForTask = (
+  taskRuns: readonly TaskRunEntity[],
+  taskId: string,
+): TaskRunEntity | null =>
+  sortByIsoDescending(
+    taskRuns.filter((taskRun) => taskRun.taskId === taskId),
+    (taskRun) => taskRun.finishedAt ?? taskRun.updatedAt,
+  )[0] ?? null;
+
+const getTaskIssueReason = (
+  task: Pick<TaskEntity, "lastErrorMessage" | "attempts">,
+  taskRun: TaskRunEntity | null,
+): string =>
+  task.lastErrorMessage ??
+  taskRun?.error ??
+  [...task.attempts].reverse().find((attempt) => typeof attempt.error === "string")?.error ??
+  "Manual review required.";
+
+const inferQueueIssueSource = (
+  task: Pick<TaskEntity, "attempts" | "maxAttempts">,
+  reason: string,
+  recoveryCycleId: string | undefined,
+): QueueIssueSource => {
+  if (recoveryCycleId) {
+    return "recovery";
+  }
+
+  if (/operator/i.test(reason)) {
+    return "operator";
+  }
+
+  if (task.attempts.length >= task.maxAttempts) {
+    return "runtime";
+  }
+
+  return "unknown";
+};
+
+const getLatestRecoveryCycleForTask = (
+  cycles: readonly AutomationCycleReadModel[],
+  taskId: string,
+): AutomationCycleReadModel | null =>
+  listRecoveryCyclesNewestFirst(cycles).find((cycle) => {
+    if (cycle.taskIds.includes(taskId)) {
+      return true;
+    }
+
+    return getRecoveryMetadataTaskIds(cycle.metadata, "manualReviewTaskIds").includes(taskId) ||
+      getRecoveryMetadataTaskIds(cycle.metadata, "quarantinedTaskIds").includes(taskId) ||
+      getRecoveryMetadataTaskIds(cycle.metadata, "redrivenTaskIds").includes(taskId) ||
+      getRecoveryMetadataTaskIds(cycle.metadata, "expiredLeaseTaskIds").includes(taskId);
+  }) ?? null;
+
+const createManualReviewReadModels = (input: {
+  readonly automationCycles: readonly AutomationCycleReadModel[];
+  readonly tasks: readonly TaskReadModel[];
+  readonly taskRuns: readonly TaskRunEntity[];
+}): readonly ManualReviewReadModel[] => {
+  const recoveryCycles = listRecoveryCyclesNewestFirst(input.automationCycles);
+
+  return input.tasks
+    .flatMap((task) => {
+      const recoveryCycle =
+        recoveryCycles.find((cycle) => getRecoveryMetadataTaskIds(cycle.metadata, "manualReviewTaskIds").includes(task.id)) ??
+        null;
+      const taskRun = getLatestTaskRunForTask(input.taskRuns, task.id);
+      const fixtureId = getTaskFixtureId(task);
+      const reason = getTaskIssueReason(task, taskRun);
+      const source = inferQueueIssueSource(task, reason, recoveryCycle?.id);
+      const required =
+        recoveryCycle !== null ||
+        (task.status === "quarantined" && (task.attempts.length >= task.maxAttempts || /manual review/i.test(reason)));
+      if (!required) {
+        return [];
+      }
+
+      return [
+        {
+          id: `manual-review:${task.id}`,
+          taskId: task.id,
+          taskKind: task.kind,
+          taskStatus: task.status,
+          ...(taskRun?.id ? { taskRunId: taskRun.id } : {}),
+          ...(fixtureId ? { fixtureId } : {}),
+          reason,
+          source,
+          requiredAt: taskRun?.finishedAt ?? task.updatedAt,
+          ...(task.workflowId ? { workflowId: task.workflowId } : {}),
+          ...(task.traceId ? { traceId: task.traceId } : {}),
+          ...(task.correlationId ? { correlationId: task.correlationId } : {}),
+          ...(recoveryCycle?.id ? { recoveryCycleId: recoveryCycle.id } : {}),
+        } satisfies ManualReviewReadModel,
+      ];
+    })
+    .sort((left, right) => right.requiredAt.localeCompare(left.requiredAt));
+};
+
+const createQuarantineReadModels = (input: {
+  readonly automationCycles: readonly AutomationCycleReadModel[];
+  readonly tasks: readonly TaskReadModel[];
+  readonly taskRuns: readonly TaskRunEntity[];
+}): readonly QuarantineReadModel[] => {
+  return input.tasks
+    .flatMap((task) => {
+      if (task.status !== "quarantined") {
+        return [];
+      }
+
+      const taskRun = getLatestTaskRunForTask(input.taskRuns, task.id);
+      const recoveryCycle = getLatestRecoveryCycleForTask(input.automationCycles, task.id);
+      const fixtureId = getTaskFixtureId(task);
+      const reason = getTaskIssueReason(task, taskRun);
+      const source = inferQueueIssueSource(task, reason, recoveryCycle?.id);
+
+      return [
+        {
+          taskId: task.id,
+          taskKind: task.kind,
+          taskStatus: task.status,
+          ...(taskRun?.id ? { taskRunId: taskRun.id } : {}),
+          ...(fixtureId ? { fixtureId } : {}),
+          reason,
+          source,
+          quarantinedAt: taskRun?.finishedAt ?? task.updatedAt,
+          attempts: task.attempts.length,
+          maxAttempts: task.maxAttempts,
+          canRequeue: true,
+          ...(task.workflowId ? { workflowId: task.workflowId } : {}),
+          ...(task.traceId ? { traceId: task.traceId } : {}),
+          ...(task.correlationId ? { correlationId: task.correlationId } : {}),
+          ...(recoveryCycle?.id ? { recoveryCycleId: recoveryCycle.id } : {}),
+          manualReviewRequired:
+            Boolean(recoveryCycle && getRecoveryMetadataTaskIds(recoveryCycle.metadata, "manualReviewTaskIds").includes(task.id)) ||
+            task.attempts.length >= task.maxAttempts,
+        } satisfies QuarantineReadModel,
+      ];
+    })
+    .sort((left, right) => right.quarantinedAt.localeCompare(left.quarantinedAt));
+};
+
+const normalizeRecoveryActions = (value: unknown): readonly RecoveryActionReadModel[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((candidate) => {
+    const record = asRecord(candidate);
+    const action = asString(record?.action);
+    if (!record || !action) {
+      return [];
+    }
+
+    const taskId = asString(record.taskId);
+    const taskRunId = asString(record.taskRunId);
+    const reason = asString(record.reason);
+    const error = asString(record.error);
+    const retryScheduledFor = asString(record.retryScheduledFor);
+    const previousStatus = asString(record.previousStatus);
+
+    return [
+      {
+        action,
+        ...(taskId ? { taskId } : {}),
+        ...(taskRunId ? { taskRunId } : {}),
+        ...(reason ? { reason } : {}),
+        ...(error ? { error } : {}),
+        ...(retryScheduledFor ? { retryScheduledFor } : {}),
+        ...(previousStatus ? { previousStatus } : {}),
+      } satisfies RecoveryActionReadModel,
+    ];
+  });
+};
+
+const createRecoveryReadModels = (
+  cycles: readonly AutomationCycleReadModel[],
+): readonly RecoveryReadModel[] =>
+  listRecoveryCyclesNewestFirst(cycles).map((cycle) => {
+    const errors =
+      Array.isArray(cycle.metadata.recoveryErrors)
+        ? cycle.metadata.recoveryErrors.filter((candidate): candidate is string => typeof candidate === "string")
+        : cycle.metadata.error && typeof cycle.metadata.error === "string"
+          ? [cycle.metadata.error]
+          : [];
+
+    return {
+      cycleId: cycle.id,
+      source: cycle.source,
+      status: cycle.status,
+      leaseOwner: cycle.leaseOwner,
+      startedAt: cycle.startedAt,
+      ...(cycle.completedAt ? { completedAt: cycle.completedAt } : {}),
+      expiredLeaseCount: cycle.summary.expiredLeaseCount ?? 0,
+      recoveredLeaseCount: cycle.summary.recoveredLeaseCount ?? 0,
+      renewedLeaseCount: cycle.summary.renewedLeaseCount ?? 0,
+      redrivenTaskCount: cycle.summary.redrivenTaskCount ?? 0,
+      quarantinedTaskCount: cycle.summary.quarantinedTaskCount ?? 0,
+      manualReviewTaskCount: cycle.summary.manualReviewTaskCount ?? 0,
+      affectedTaskIds: [...cycle.taskIds],
+      affectedFixtureIds: [...cycle.fixtureIds],
+      actions: normalizeRecoveryActions(cycle.metadata.recoveryActions),
+      errors,
+    } satisfies RecoveryReadModel;
+  });
+
 const createAutomationCycleReadModel = (
   cycle: AutomationCycleEntity,
 ): AutomationCycleReadModel => {
@@ -1530,6 +1975,16 @@ const createAutomationCycleReadModel = (
       predictionTaskCount: typeof counts.predictionTaskCount === "number" ? counts.predictionTaskCount : 0,
       parlayCount: typeof counts.parlayCount === "number" ? counts.parlayCount : 0,
       validationTaskCount: typeof counts.validationTaskCount === "number" ? counts.validationTaskCount : 0,
+      ...(typeof counts.expiredLeaseCount === "number" ? { expiredLeaseCount: counts.expiredLeaseCount } : {}),
+      ...(typeof counts.recoveredLeaseCount === "number" ? { recoveredLeaseCount: counts.recoveredLeaseCount } : {}),
+      ...(typeof counts.renewedLeaseCount === "number" ? { renewedLeaseCount: counts.renewedLeaseCount } : {}),
+      ...(typeof counts.redrivenTaskCount === "number" ? { redrivenTaskCount: counts.redrivenTaskCount } : {}),
+      ...(typeof counts.quarantinedTaskCount === "number"
+        ? { quarantinedTaskCount: counts.quarantinedTaskCount }
+        : {}),
+      ...(typeof counts.manualReviewTaskCount === "number"
+        ? { manualReviewTaskCount: counts.manualReviewTaskCount }
+        : {}),
     },
     metadata: { ...(cycle.metadata ?? {}) },
   };
@@ -1673,6 +2128,9 @@ export function createPublicApiHandlers(
     taskRuns: () => listTaskRuns(snapshot),
     taskRunById: (taskRunId: string) => findTaskRunById(snapshot, taskRunId),
     taskRunsByTaskId: (taskId: string) => listTaskRunsByTaskId(snapshot, taskId),
+    manualReviews: () => listManualReviews(snapshot),
+    quarantines: () => listQuarantines(snapshot),
+    recovery: () => listRecovery(snapshot),
     liveIngestionRuns: () => listLiveIngestionRuns(snapshot),
     liveIngestionRunByTaskId: (taskId: string) => findLiveIngestionRunByTaskId(snapshot, taskId),
     aiRuns: () => listAiRuns(snapshot),
@@ -1681,6 +2139,8 @@ export function createPublicApiHandlers(
     providerStateByProvider: (provider: string) => findProviderStateByProvider(snapshot, provider),
     rawBatches: () => listRawBatches(snapshot),
     oddsSnapshots: () => listOddsSnapshots(snapshot),
+    telemetryEvents: () => listTelemetryEvents(snapshot),
+    telemetryMetrics: () => listTelemetryMetrics(snapshot),
     operationalSummary: () => createOperationalSummary(snapshot),
     operationalLogs: () => listOperationalLogs(snapshot),
     predictions: () => listPredictions(snapshot),
@@ -1855,6 +2315,12 @@ export function routePublicApiRequest(
     }
     case publicApiEndpointPaths.taskRuns:
       return { status: 200, body: handlers.taskRuns() };
+    case publicApiEndpointPaths.manualReview:
+      return { status: 200, body: handlers.manualReviews() };
+    case publicApiEndpointPaths.quarantines:
+      return { status: 200, body: handlers.quarantines() };
+    case publicApiEndpointPaths.recovery:
+      return { status: 200, body: handlers.recovery() };
     case publicApiEndpointPaths.liveIngestionRuns:
       return { status: 200, body: handlers.liveIngestionRuns() };
     case publicApiEndpointPaths.aiRuns:
@@ -1865,6 +2331,10 @@ export function routePublicApiRequest(
       return { status: 200, body: handlers.rawBatches() };
     case publicApiEndpointPaths.oddsSnapshots:
       return { status: 200, body: handlers.oddsSnapshots() };
+    case publicApiEndpointPaths.telemetryEvents:
+      return { status: 200, body: handlers.telemetryEvents() };
+    case publicApiEndpointPaths.telemetryMetrics:
+      return { status: 200, body: handlers.telemetryMetrics() };
     case publicApiEndpointPaths.operationalSummary:
       return { status: 200, body: handlers.operationalSummary() };
     case publicApiEndpointPaths.operationalLogs:
@@ -1930,7 +2400,10 @@ const stableStringify = (value: unknown): string => {
 
 const resolveSandboxCertificationSources = (
   options: PublicApiSandboxCertificationSourceOptions | undefined,
-): Required<PublicApiSandboxCertificationSourceOptions> => ({
+): {
+  readonly goldensRoot: string;
+  readonly artifactsRoot: string;
+} => ({
   goldensRoot: resolve(options?.goldensRoot ?? PUBLIC_API_DEFAULT_GOLDENS_ROOT),
   artifactsRoot: resolve(options?.artifactsRoot ?? PUBLIC_API_DEFAULT_SANDBOX_ARTIFACTS_ROOT),
 });
@@ -1963,6 +2436,251 @@ const listJsonFilesRecursive = async (directory: string): Promise<readonly strin
     }
     throw error;
   }
+};
+
+const normalizeSandboxCertificationVerificationKind = (
+  value: string | null | undefined,
+): SandboxCertificationVerificationKind | null => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "synthetic-integrity" || normalized === "synthetic_integrity") {
+    return "synthetic-integrity";
+  }
+
+  if (normalized === "runtime-release" || normalized === "runtime_release") {
+    return "runtime-release";
+  }
+
+  return null;
+};
+
+const normalizeSandboxCertificationRunStatus = (
+  value: string | null | undefined,
+): SandboxCertificationRunStatus | null => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "passed" || normalized === "failed" ? normalized : null;
+};
+
+const normalizeSandboxCertificationPromotionStatus = (
+  value: string | null | undefined,
+): SandboxCertificationPromotionStatus | null => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "blocked" || normalized === "review-required" || normalized === "promotable") {
+    return normalized;
+  }
+
+  if (normalized === "review_required") {
+    return "review-required";
+  }
+
+  return null;
+};
+
+const isWithinIsoWindow = (
+  value: string | undefined,
+  searchParams: URLSearchParams,
+  bounds: {
+    readonly fromParam?: string;
+    readonly toParam?: string;
+  } = {},
+): boolean => {
+  if (!value) {
+    return true;
+  }
+
+  const from = searchParams.get(bounds.fromParam ?? "from");
+  if (from && value < from) {
+    return false;
+  }
+
+  const to = searchParams.get(bounds.toParam ?? "to");
+  if (to && value > to) {
+    return false;
+  }
+
+  return true;
+};
+
+const filterSandboxCertificationRuns = (
+  runs: readonly SandboxCertificationRunReadModel[],
+  searchParams: URLSearchParams,
+): readonly SandboxCertificationRunReadModel[] => {
+  const profileName = searchParams.get("profileName");
+  const packId = searchParams.get("packId");
+  const verificationKind = normalizeSandboxCertificationVerificationKind(
+    searchParams.get("verificationKind"),
+  );
+  const status = normalizeSandboxCertificationRunStatus(searchParams.get("status"));
+
+  return runs.filter((run) => {
+    if (profileName && run.profileName !== profileName) {
+      return false;
+    }
+
+    if (packId && run.packId !== packId) {
+      return false;
+    }
+
+    if (verificationKind && run.verificationKind !== verificationKind) {
+      return false;
+    }
+
+    if (status && run.status !== status) {
+      return false;
+    }
+
+    return isWithinIsoWindow(run.generatedAt, searchParams, {
+      fromParam: "generatedFrom",
+      toParam: "generatedTo",
+    });
+  });
+};
+
+const findSandboxCertificationRunById = (
+  runs: readonly SandboxCertificationRunReadModel[],
+  runId: string,
+): SandboxCertificationRunReadModel | null =>
+  runs.find((run) => run.id === runId) ?? null;
+
+const filterTelemetryEvents = (
+  events: readonly TelemetryEventReadModel[],
+  searchParams: URLSearchParams,
+): readonly TelemetryEventReadModel[] => {
+  const traceId = searchParams.get("traceId");
+  const taskId = searchParams.get("taskId");
+  const automationCycleId = searchParams.get("automationCycleId");
+  const severity = searchParams.get("severity");
+  const name = searchParams.get("name");
+
+  return events.filter((event) => {
+    if (traceId && event.traceId !== traceId) {
+      return false;
+    }
+
+    if (taskId && event.taskId !== taskId) {
+      return false;
+    }
+
+    if (automationCycleId && event.automationCycleId !== automationCycleId) {
+      return false;
+    }
+
+    if (severity && event.severity !== severity) {
+      return false;
+    }
+
+    if (name && event.name !== name) {
+      return false;
+    }
+
+    return isWithinIsoWindow(event.occurredAt, searchParams);
+  });
+};
+
+const filterTelemetryMetrics = (
+  metrics: readonly TelemetryMetricReadModel[],
+  searchParams: URLSearchParams,
+): readonly TelemetryMetricReadModel[] => {
+  const traceId = searchParams.get("traceId");
+  const taskId = searchParams.get("taskId");
+  const automationCycleId = searchParams.get("automationCycleId");
+  const name = searchParams.get("name");
+
+  return metrics.filter((metric) => {
+    if (traceId && metric.traceId !== traceId) {
+      return false;
+    }
+
+    if (taskId && metric.taskId !== taskId) {
+      return false;
+    }
+
+    if (automationCycleId && metric.automationCycleId !== automationCycleId) {
+      return false;
+    }
+
+    if (name && metric.name !== name) {
+      return false;
+    }
+
+    return isWithinIsoWindow(metric.recordedAt, searchParams);
+  });
+};
+
+const toSandboxCertificationRunSummary = (
+  run: SandboxCertificationRunReadModel,
+): SandboxCertificationRunSummaryReadModel => ({
+  id: run.id,
+  verificationKind: run.verificationKind,
+  status: run.status,
+  ...(run.generatedAt ? { generatedAt: run.generatedAt } : {}),
+  ...(run.promotionStatus ? { promotionStatus: run.promotionStatus } : {}),
+  ...(run.gitSha ? { gitSha: run.gitSha } : {}),
+  ...(run.baselineRef ? { baselineRef: run.baselineRef } : {}),
+  ...(run.candidateRef ? { candidateRef: run.candidateRef } : {}),
+  ...(run.goldenFingerprint ? { goldenFingerprint: run.goldenFingerprint } : {}),
+  ...(run.evidenceFingerprint ? { evidenceFingerprint: run.evidenceFingerprint } : {}),
+  ...(run.artifactRef ? { artifactRef: run.artifactRef } : {}),
+  runtimeSignals: run.runtimeSignals,
+  diffEntryCount: run.diffEntryCount,
+  summary: run.summary,
+});
+
+const createSyntheticIntegrityRunSummary = (
+  certification: Pick<
+    SandboxCertificationReadModel,
+    "id" | "status" | "generatedAt" | "diffEntryCount"
+  >,
+): SandboxCertificationRunSummaryReadModel => ({
+  id: `${certification.id}:synthetic-integrity`,
+  verificationKind: "synthetic-integrity",
+  status: certification.status === "failed" ? "failed" : "passed",
+  ...(certification.generatedAt ? { generatedAt: certification.generatedAt } : {}),
+  diffEntryCount: certification.diffEntryCount,
+  runtimeSignals: {},
+  summary: {
+    syntheticIntegrity:
+      certification.status === "passed"
+        ? "passed"
+        : certification.status === "failed"
+          ? "failed"
+          : "missing",
+  },
+});
+
+const indexSandboxCertificationRuns = (
+  runs: readonly SandboxCertificationRunReadModel[],
+): ReadonlyMap<string, {
+  readonly latestSyntheticIntegrity: SandboxCertificationRunSummaryReadModel | null;
+  readonly latestRuntimeRelease: SandboxCertificationRunSummaryReadModel | null;
+}> => {
+  const sortedRuns = sortByIsoDescending(
+    runs,
+    (run) => run.generatedAt ?? run.id,
+  );
+  const index = new Map<string, {
+    latestSyntheticIntegrity: SandboxCertificationRunSummaryReadModel | null;
+    latestRuntimeRelease: SandboxCertificationRunSummaryReadModel | null;
+  }>();
+
+  for (const run of sortedRuns) {
+    const key = `${run.profileName}:${run.packId}`;
+    const existing = index.get(key) ?? {
+      latestSyntheticIntegrity: null,
+      latestRuntimeRelease: null,
+    };
+
+    if (run.verificationKind === "synthetic-integrity" && existing.latestSyntheticIntegrity === null) {
+      existing.latestSyntheticIntegrity = toSandboxCertificationRunSummary(run);
+    }
+
+    if (run.verificationKind === "runtime-release" && existing.latestRuntimeRelease === null) {
+      existing.latestRuntimeRelease = toSandboxCertificationRunSummary(run);
+    }
+
+    index.set(key, existing);
+  }
+
+  return index;
 };
 
 const diffSandboxCertificationValues = (
@@ -2014,8 +2732,15 @@ const diffSandboxCertificationValues = (
 };
 
 const loadSandboxCertificationBundle = async (
-  sources: Required<PublicApiSandboxCertificationSourceOptions>,
+  sources: {
+    readonly goldensRoot: string;
+    readonly artifactsRoot: string;
+  },
   goldenPath: string,
+  latestRuns: {
+    readonly latestSyntheticIntegrity: SandboxCertificationRunSummaryReadModel | null;
+    readonly latestRuntimeRelease: SandboxCertificationRunSummaryReadModel | null;
+  } | null = null,
 ): Promise<SandboxCertificationDetailReadModel> => {
   const golden = JSON.parse(await readFile(goldenPath, "utf8")) as {
     readonly mode: string;
@@ -2176,6 +2901,17 @@ const loadSandboxCertificationBundle = async (
     ...(evidenceFingerprint ? { evidenceFingerprint } : {}),
     goldenPath,
     ...(status !== "missing" ? { artifactPath } : {}),
+    latestSyntheticIntegrity:
+      latestRuns?.latestSyntheticIntegrity ??
+      (status === "missing"
+        ? null
+        : createSyntheticIntegrityRunSummary({
+            id: `${profileName}:${packId}`,
+            status,
+            ...(generatedAt ? { generatedAt } : {}),
+            diffEntryCount: diffEntries.length,
+          })),
+    latestRuntimeRelease: latestRuns?.latestRuntimeRelease ?? null,
     assertions: golden.assertions ?? [],
     allowedHosts: golden.safety?.allowedHosts ?? [],
     diffEntries,
@@ -2189,8 +2925,19 @@ export const loadSandboxCertificationReadModels = async (
 ): Promise<readonly SandboxCertificationReadModel[]> => {
   const sources = resolveSandboxCertificationSources(options);
   const goldenPaths = await listJsonFilesRecursive(sources.goldensRoot);
+  const latestRunsByCertification = indexSandboxCertificationRuns(options.persistedRuns ?? []);
   const certifications = await Promise.all(
-    goldenPaths.map((goldenPath) => loadSandboxCertificationBundle(sources, goldenPath)),
+    goldenPaths.map(async (goldenPath) => {
+      const golden = JSON.parse(await readFile(goldenPath, "utf8")) as {
+        readonly profileName: string;
+        readonly fixturePackId: string;
+      };
+      return loadSandboxCertificationBundle(
+        sources,
+        goldenPath,
+        latestRunsByCertification.get(`${golden.profileName}:${golden.fixturePackId}`) ?? null,
+      );
+    }),
   );
 
   return certifications.map((certification) => ({
@@ -2208,8 +2955,18 @@ export const loadSandboxCertificationReadModels = async (
     goldenPath: certification.goldenPath,
     ...(certification.artifactPath ? { artifactPath: certification.artifactPath } : {}),
     ...(certification.promotion ? { promotion: certification.promotion } : {}),
+    latestSyntheticIntegrity: certification.latestSyntheticIntegrity,
+    latestRuntimeRelease: certification.latestRuntimeRelease,
   }));
 };
+
+export const loadSandboxCertificationRuns = async (
+  options: PublicApiSandboxCertificationSourceOptions = {},
+): Promise<readonly SandboxCertificationRunReadModel[]> =>
+  sortByIsoDescending(
+    [...(options.persistedRuns ?? [])],
+    (run) => run.generatedAt ?? run.id,
+  );
 
 export const loadSandboxCertificationDetail = async (
   profileName: string,
@@ -2218,8 +2975,13 @@ export const loadSandboxCertificationDetail = async (
 ): Promise<SandboxCertificationDetailReadModel | null> => {
   const sources = resolveSandboxCertificationSources(options);
   const goldenPath = join(sources.goldensRoot, profileName, `${packId}.json`);
+  const latestRunsByCertification = indexSandboxCertificationRuns(options.persistedRuns ?? []);
   try {
-    return await loadSandboxCertificationBundle(sources, goldenPath);
+    return await loadSandboxCertificationBundle(
+      sources,
+      goldenPath,
+      latestRunsByCertification.get(`${profileName}:${packId}`) ?? null,
+    );
   } catch (error) {
     if (
       error instanceof Error &&
@@ -2418,6 +3180,29 @@ const loadPublicApiSandboxCertificationSourcesFromEnv = (
   ...(env.GANA_SANDBOX_CERT_ARTIFACTS_ROOT ? { artifactsRoot: env.GANA_SANDBOX_CERT_ARTIFACTS_ROOT } : {}),
 });
 
+const withPersistedSandboxCertificationRuns = async (
+  options: PublicApiSandboxCertificationSourceOptions | undefined,
+  unitOfWork?: StorageUnitOfWork,
+): Promise<PublicApiSandboxCertificationSourceOptions | undefined> => {
+  if (options?.persistedRuns || !unitOfWork) {
+    return options;
+  }
+
+  const repositoryRuns = await loadPersistedSandboxCertificationRunsFromRepositories(
+    unitOfWork as StorageUnitOfWork & PersistedCertificationHistoryRepositoryCollectionLike,
+  );
+  const persistedRuns =
+    repositoryRuns.length > 0
+      ? repositoryRuns
+      : isPrismaSnapshotUnitOfWorkLike(unitOfWork)
+        ? await loadPersistedSandboxCertificationRunsFromPrisma(unitOfWork.client)
+        : [];
+  return {
+    ...(options ?? {}),
+    persistedRuns,
+  };
+};
+
 export const authorizePublicApiRequest = (
   request: IncomingMessage,
   method: string,
@@ -2486,6 +3271,7 @@ export async function handlePublicApiRequest(
   const method = request.method ?? "GET";
   const requestPath = request.url ?? "/";
   const normalizedRequestPath = normalizeRequestPath(requestPath);
+  const searchParams = getRequestSearchParams(requestPath);
   const authorization = authorizePublicApiRequest(request, method, normalizedRequestPath, options.auth);
 
   if (authorization.denied) {
@@ -2494,12 +3280,48 @@ export async function handlePublicApiRequest(
   }
 
   if (method === "GET") {
+    const sandboxCertificationOptions = await withPersistedSandboxCertificationRuns(
+      options.sandboxCertification,
+      options.unitOfWork,
+    );
+
     if (normalizedRequestPath === publicApiEndpointPaths.sandboxCertification) {
       writeJsonResponse(
         response,
         200,
-        await loadSandboxCertificationReadModels(options.sandboxCertification),
+        await loadSandboxCertificationReadModels(sandboxCertificationOptions),
       );
+      return;
+    }
+
+    if (normalizedRequestPath === publicApiEndpointPaths.sandboxCertificationRuns) {
+      writeJsonResponse(
+        response,
+        200,
+        filterSandboxCertificationRuns(
+          await loadSandboxCertificationRuns(sandboxCertificationOptions),
+          searchParams,
+        ),
+      );
+      return;
+    }
+
+    const sandboxCertificationRunDetail = matchSandboxCertificationRunDetailPath(normalizedRequestPath);
+    if (sandboxCertificationRunDetail) {
+      const certificationRun = findSandboxCertificationRunById(
+        await loadSandboxCertificationRuns(sandboxCertificationOptions),
+        sandboxCertificationRunDetail.runId,
+      );
+      if (!certificationRun) {
+        writeJsonResponse(response, 404, {
+          error: "resource_not_found",
+          resource: "sandbox-certification-run",
+          resourceId: sandboxCertificationRunDetail.runId,
+        });
+        return;
+      }
+
+      writeJsonResponse(response, 200, certificationRun);
       return;
     }
 
@@ -2508,7 +3330,7 @@ export async function handlePublicApiRequest(
       const certification = await loadSandboxCertificationDetail(
         sandboxCertificationDetail.profileName,
         sandboxCertificationDetail.packId,
-        options.sandboxCertification,
+        sandboxCertificationOptions,
       );
       if (!certification) {
         writeJsonResponse(response, 404, {
@@ -2523,8 +3345,8 @@ export async function handlePublicApiRequest(
       return;
     }
 
-    const certifications = options.sandboxCertification
-      ? await loadSandboxCertificationReadModels(options.sandboxCertification)
+    const certifications = sandboxCertificationOptions
+      ? await loadSandboxCertificationReadModels(sandboxCertificationOptions)
       : [];
     const handlers = options.unitOfWork
       ? createPublicApiHandlers(
@@ -2536,6 +3358,17 @@ export async function handlePublicApiRequest(
       : options.snapshot
         ? createPublicApiHandlers(withReadiness(options.snapshot, certifications))
         : options.handlers ?? createPublicApiHandlers(createEmptyOperationSnapshot());
+
+    if (normalizedRequestPath === publicApiEndpointPaths.telemetryEvents) {
+      writeJsonResponse(response, 200, filterTelemetryEvents(handlers.telemetryEvents(), searchParams));
+      return;
+    }
+
+    if (normalizedRequestPath === publicApiEndpointPaths.telemetryMetrics) {
+      writeJsonResponse(response, 200, filterTelemetryMetrics(handlers.telemetryMetrics(), searchParams));
+      return;
+    }
+
     const routedResponse = routePublicApiRequest(handlers, requestPath);
     writeJsonResponse(response, routedResponse.status, routedResponse.body);
     return;
@@ -2573,6 +3406,19 @@ export async function handlePublicApiRequest(
 
       try {
         const requeuedTask = await options.queueAdapter.requeue(taskRequeuePath.taskId, occurredAt);
+        await recordPublicApiActionTelemetry(options.unitOfWork, {
+          action: "task-requeue",
+          occurredAt: occurredAt?.toISOString() ?? new Date().toISOString(),
+          actorId: authorization.actor?.id,
+          taskId: requeuedTask.id,
+          message: `Task ${requeuedTask.id} was requeued through public-api.`,
+          attributes: {
+            taskStatus: requeuedTask.status,
+          },
+          labels: {
+            taskKind: requeuedTask.kind,
+          },
+        });
         writeJsonResponse(response, 200, requeuedTask);
       } catch (error) {
         writeQueueActionError(response, error);
@@ -2637,6 +3483,22 @@ export async function handlePublicApiRequest(
           body.reason.trim(),
           occurredAt,
         );
+        await recordPublicApiActionTelemetry(options.unitOfWork, {
+          action: "task-quarantine",
+          occurredAt: occurredAt?.toISOString() ?? new Date().toISOString(),
+          actorId: authorization.actor?.id,
+          taskId: quarantinedClaim.task.id,
+          taskRunId: quarantinedClaim.taskRun.id,
+          severity: "warn",
+          message: `Task ${quarantinedClaim.task.id} was quarantined through public-api.`,
+          attributes: {
+            reason: body.reason.trim(),
+            taskStatus: quarantinedClaim.task.status,
+          },
+          labels: {
+            taskKind: quarantinedClaim.task.kind,
+          },
+        });
         writeJsonResponse(response, 200, quarantinedClaim);
       } catch (error) {
         writeQueueActionError(response, error);
@@ -2660,6 +3522,17 @@ export async function handlePublicApiRequest(
         manuallySelectedAt: body.occurredAt ?? workflow.updatedAt,
         updatedAt: body.occurredAt ?? workflow.updatedAt,
       });
+      await recordPublicApiActionTelemetry(options.unitOfWork, {
+        action: "manual-selection-reset",
+        occurredAt: clearedWorkflow.updatedAt,
+        actorId: authorization.actor?.id,
+        message: `Fixture ${manualSelectionResetPath.fixtureId} manual selection state was reset.`,
+        attributes: {
+          fixtureId: manualSelectionResetPath.fixtureId,
+          status: clearedWorkflow.manualSelectionStatus,
+          ...(body.reason !== undefined ? { reason: body.reason } : {}),
+        },
+      });
       writeJsonResponse(response, 200, clearedWorkflow);
       return;
     }
@@ -2668,6 +3541,17 @@ export async function handlePublicApiRequest(
     if (manualSelectionPath) {
       const body = await readJsonRequestBody<FixtureManualSelectionActionInput>(request);
       const workflow = await applyFixtureManualSelection(options.unitOfWork, manualSelectionPath.fixtureId, body);
+      await recordPublicApiActionTelemetry(options.unitOfWork, {
+        action: "manual-selection",
+        occurredAt: workflow.updatedAt,
+        actorId: authorization.actor?.id ?? body.selectedBy,
+        message: `Fixture ${manualSelectionPath.fixtureId} manual selection was updated through public-api.`,
+        attributes: {
+          fixtureId: manualSelectionPath.fixtureId,
+          status: workflow.manualSelectionStatus,
+          ...(workflow.manualSelectionReason ? { reason: workflow.manualSelectionReason } : {}),
+        },
+      });
       writeJsonResponse(response, 200, workflow);
       return;
     }
@@ -2680,6 +3564,17 @@ export async function handlePublicApiRequest(
         ...(body.reason !== undefined ? { reason: body.reason } : {}),
         ...(body.occurredAt !== undefined ? { occurredAt: body.occurredAt } : {}),
       });
+      await recordPublicApiActionTelemetry(options.unitOfWork, {
+        action: "selection-override-reset",
+        occurredAt: workflow.updatedAt,
+        actorId: authorization.actor?.id,
+        message: `Fixture ${selectionOverrideResetPath.fixtureId} selection override was reset.`,
+        attributes: {
+          fixtureId: selectionOverrideResetPath.fixtureId,
+          mode: workflow.selectionOverride,
+          ...(workflow.overrideReason ? { reason: workflow.overrideReason } : {}),
+        },
+      });
       writeJsonResponse(response, 200, workflow);
       return;
     }
@@ -2688,6 +3583,17 @@ export async function handlePublicApiRequest(
     if (selectionOverridePath) {
       const body = await readJsonRequestBody<FixtureSelectionOverrideActionInput>(request);
       const workflow = await applyFixtureSelectionOverride(options.unitOfWork, selectionOverridePath.fixtureId, body);
+      await recordPublicApiActionTelemetry(options.unitOfWork, {
+        action: "selection-override",
+        occurredAt: workflow.updatedAt,
+        actorId: authorization.actor?.id,
+        message: `Fixture ${selectionOverridePath.fixtureId} selection override was updated through public-api.`,
+        attributes: {
+          fixtureId: selectionOverridePath.fixtureId,
+          mode: workflow.selectionOverride,
+          ...(workflow.overrideReason ? { reason: workflow.overrideReason } : {}),
+        },
+      });
       writeJsonResponse(response, 200, workflow);
       return;
     }
@@ -3017,6 +3923,18 @@ export function listTaskRuns(snapshot: OperationSnapshot): readonly TaskRunEntit
   return snapshot.taskRuns;
 }
 
+export function listManualReviews(snapshot: OperationSnapshot): readonly ManualReviewReadModel[] {
+  return snapshot.manualReviews ?? [];
+}
+
+export function listQuarantines(snapshot: OperationSnapshot): readonly QuarantineReadModel[] {
+  return snapshot.quarantines ?? [];
+}
+
+export function listRecovery(snapshot: OperationSnapshot): readonly RecoveryReadModel[] {
+  return snapshot.recovery ?? [];
+}
+
 export function listAiRuns(snapshot: OperationSnapshot): readonly AiRunReadModel[] {
   return snapshot.aiRuns;
 }
@@ -3317,11 +4235,20 @@ export function listOddsSnapshots(snapshot: OperationSnapshot): readonly OddsSna
   return snapshot.oddsSnapshots;
 }
 
+export function listTelemetryEvents(snapshot: OperationSnapshot): readonly TelemetryEventReadModel[] {
+  return snapshot.telemetryEvents ?? [];
+}
+
+export function listTelemetryMetrics(snapshot: OperationSnapshot): readonly TelemetryMetricReadModel[] {
+  return snapshot.telemetryMetrics ?? [];
+}
+
 const countTasksByStatus = (tasks: readonly TaskEntity[]): OperationalSummary["taskCounts"] => ({
   total: tasks.length,
   queued: tasks.filter((task) => task.status === "queued").length,
   running: tasks.filter((task) => task.status === "running").length,
   failed: tasks.filter((task) => task.status === "failed").length,
+  quarantined: tasks.filter((task) => task.status === "quarantined").length,
   succeeded: tasks.filter((task) => task.status === "succeeded").length,
   cancelled: tasks.filter((task) => task.status === "cancelled").length,
 });
@@ -3589,58 +4516,537 @@ const createDerivedProviderStates = (
   ];
 };
 
+const isPrismaSnapshotUnitOfWorkLike = (
+  unitOfWork: unknown,
+): unitOfWork is { readonly client: PrismaClientLike & PrismaQueueClientLike } => {
+  const candidate = unitOfWork as { readonly client?: PrismaClientLike & PrismaQueueClientLike };
+  return typeof candidate.client?.$queryRawUnsafe === "function";
+};
+
+const toIsoString = (value: unknown): string | null => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.valueOf()) ? value : parsed.toISOString();
+  }
+
+  return null;
+};
+
+const toNumericValue = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const readRecordString = (record: Record<string, unknown>, ...keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = asString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const readRecordIsoString = (record: Record<string, unknown>, ...keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = toIsoString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const readRecordNumber = (record: Record<string, unknown>, ...keys: readonly string[]): number | null => {
+  for (const key of keys) {
+    const value = toNumericValue(record[key]);
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const readRecordObject = (
+  record: Record<string, unknown>,
+  ...keys: readonly string[]
+): Record<string, unknown> | null => {
+  for (const key of keys) {
+    const value = record[key];
+    const objectValue = asRecord(value);
+    if (objectValue) {
+      return objectValue;
+    }
+
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        const parsedRecord = asRecord(parsed);
+        if (parsedRecord) {
+          return parsedRecord;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
+};
+
+const readRecordStringArray = (
+  record: Record<string, unknown>,
+  ...keys: readonly string[]
+): readonly string[] => {
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      const items = value.filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
+      if (items.length > 0) {
+        return items;
+      }
+    }
+
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        if (Array.isArray(parsed)) {
+          const items = parsed.filter(
+            (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+          );
+          if (items.length > 0) {
+            return items;
+          }
+        }
+      } catch {
+        const items = asStringArray(value);
+        if (items.length > 0) {
+          return items;
+        }
+      }
+    }
+  }
+
+  return [];
+};
+
+const prismaTableExists = async (
+  client: PrismaClientLike,
+  tableName: string,
+): Promise<boolean> => {
+  try {
+    const rows = await client.$queryRawUnsafe<Array<{ readonly present?: number }>>(
+      "SELECT 1 AS present FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
+      tableName,
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+};
+
+const toTelemetrySeverity = (
+  value: string | null | undefined,
+): TelemetryEventReadModel["severity"] => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "debug" || normalized === "info" || normalized === "warn" || normalized === "error") {
+    return normalized;
+  }
+
+  return "info";
+};
+
+const toTelemetryMetricType = (
+  value: string | null | undefined,
+): TelemetryMetricReadModel["type"] => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "counter" || normalized === "gauge" || normalized === "histogram") {
+    return normalized;
+  }
+
+  return "gauge";
+};
+
+const mapSandboxCertificationRunRecord = (
+  record: Record<string, unknown>,
+): SandboxCertificationRunReadModel | null => {
+  const id = readRecordString(record, "id", "runId");
+  const profileName = readRecordString(record, "profileName", "profile", "profileId");
+  const packId = readRecordString(record, "packId", "fixturePackId", "pack");
+  const verificationKind = normalizeSandboxCertificationVerificationKind(
+    readRecordString(record, "verificationKind", "runType", "kind", "type"),
+  );
+  const status = normalizeSandboxCertificationRunStatus(readRecordString(record, "status", "result"));
+  const mode = readRecordString(record, "mode");
+  const gitSha = readRecordString(record, "gitSha", "gitSHA");
+  const generatedAt = readRecordIsoString(record, "generatedAt", "createdAt", "occurredAt");
+  if (!id || !profileName || !packId || !verificationKind || !status || !mode || !gitSha || !generatedAt) {
+    return null;
+  }
+
+  const runtimeSignals = readRecordObject(record, "runtimeSignals") ?? {};
+  const summary = readRecordObject(record, "summary") ?? {};
+  const promotionStatus = normalizeSandboxCertificationPromotionStatus(readRecordString(record, "promotionStatus"));
+  const baselineRef = readRecordString(record, "baselineRef");
+  const candidateRef = readRecordString(record, "candidateRef");
+  const goldenFingerprint = readRecordString(record, "goldenFingerprint");
+  const evidenceFingerprint = readRecordString(record, "evidenceFingerprint");
+  const artifactRef = readRecordString(record, "artifactRef", "artifactPath");
+  const rawDiffEntries = (() => {
+    if (Array.isArray(record.diffEntries)) {
+      return record.diffEntries;
+    }
+
+    if (typeof record.diffEntries === "string") {
+      try {
+        const parsed = JSON.parse(record.diffEntries) as unknown;
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    return [];
+  })();
+  const diffEntries = rawDiffEntries.flatMap((entry) => {
+    const item = asRecord(entry);
+    const path = asString(item?.path);
+    const kind = asString(item?.kind);
+    if (!item || !path || (kind !== "added" && kind !== "removed" && kind !== "changed")) {
+      return [];
+    }
+
+    return [
+      {
+        path,
+        kind,
+        ...(item.expected !== undefined ? { expected: item.expected } : {}),
+        ...(item.actual !== undefined ? { actual: item.actual } : {}),
+      } satisfies SandboxCertificationDiffEntryReadModel,
+    ];
+  });
+
+  return {
+    id,
+    profileName,
+    packId,
+    mode,
+    verificationKind,
+    status,
+    ...(promotionStatus ? { promotionStatus } : {}),
+    gitSha,
+    ...(baselineRef ? { baselineRef } : {}),
+    ...(candidateRef ? { candidateRef } : {}),
+    ...(goldenFingerprint ? { goldenFingerprint } : {}),
+    ...(evidenceFingerprint ? { evidenceFingerprint } : {}),
+    ...(artifactRef ? { artifactRef } : {}),
+    runtimeSignals,
+    diffEntryCount: diffEntries.length,
+    diffEntries,
+    summary,
+    generatedAt,
+  };
+};
+
+const mapTelemetryEventRecord = (
+  record: Record<string, unknown>,
+): TelemetryEventReadModel | null => {
+  const id = readRecordString(record, "id", "eventId");
+  const name = readRecordString(record, "name", "eventName", "kind", "type");
+  const occurredAt = readRecordIsoString(record, "occurredAt", "capturedAt", "createdAt");
+  const kind = readRecordString(record, "kind");
+  if (!id || !name || !occurredAt || (kind !== "log" && kind !== "span")) {
+    return null;
+  }
+
+  const finishedAt = readRecordIsoString(record, "finishedAt");
+  const durationMs = readRecordNumber(record, "durationMs");
+  const message = readRecordString(record, "message", "summary", "detail");
+  const traceId = readRecordString(record, "traceId");
+  const correlationId = readRecordString(record, "correlationId");
+  const taskId = readRecordString(record, "taskId");
+  const taskRunId = readRecordString(record, "taskRunId");
+  const automationCycleId = readRecordString(record, "automationCycleId");
+  const sandboxCertificationRunId = readRecordString(record, "sandboxCertificationRunId");
+  const attributes = readRecordObject(record, "attributes", "metadata", "payload") ?? {};
+  const source =
+    readRecordString(record, "source", "worker", "emitter") ??
+    asString(attributes.source) ??
+    "runtime";
+
+  return {
+    id,
+    kind,
+    name,
+    source,
+    severity: toTelemetrySeverity(readRecordString(record, "severity", "level", "status")),
+    occurredAt,
+    ...(finishedAt ? { finishedAt } : {}),
+    ...(durationMs !== null ? { durationMs } : {}),
+    ...(message ? { message } : {}),
+    ...(traceId ? { traceId } : {}),
+    ...(correlationId ? { correlationId } : {}),
+    ...(taskId ? { taskId } : {}),
+    ...(taskRunId ? { taskRunId } : {}),
+    ...(automationCycleId ? { automationCycleId } : {}),
+    ...(sandboxCertificationRunId ? { sandboxCertificationRunId } : {}),
+    attributes,
+  };
+};
+
+const mapTelemetryMetricRecord = (
+  record: Record<string, unknown>,
+): TelemetryMetricReadModel | null => {
+  const name = readRecordString(record, "name", "metricName", "metric");
+  const recordedAt = readRecordIsoString(record, "recordedAt", "capturedAt", "observedAt", "createdAt");
+  const value = readRecordNumber(record, "value", "metricValue");
+  if (!name || !recordedAt || value === null) {
+    return null;
+  }
+
+  const traceId = readRecordString(record, "traceId");
+  const correlationId = readRecordString(record, "correlationId");
+  const taskId = readRecordString(record, "taskId");
+  const taskRunId = readRecordString(record, "taskRunId");
+  const automationCycleId = readRecordString(record, "automationCycleId");
+  const sandboxCertificationRunId = readRecordString(record, "sandboxCertificationRunId");
+  const labels = Object.fromEntries(
+    Object.entries(readRecordObject(record, "labels", "dimensions") ?? {}).flatMap(([key, entry]) => {
+      const value = asString(entry);
+      return value ? [[key, value]] : [];
+    }),
+  );
+  const source =
+    readRecordString(record, "source", "worker", "emitter") ??
+    labels.source ??
+    "runtime";
+
+  return {
+    id: readRecordString(record, "id") ?? `${name}:${recordedAt}`,
+    name,
+    type: toTelemetryMetricType(readRecordString(record, "type", "kind", "metricType")),
+    value,
+    labels,
+    source,
+    ...(traceId ? { traceId } : {}),
+    ...(correlationId ? { correlationId } : {}),
+    ...(taskId ? { taskId } : {}),
+    ...(taskRunId ? { taskRunId } : {}),
+    ...(automationCycleId ? { automationCycleId } : {}),
+    ...(sandboxCertificationRunId ? { sandboxCertificationRunId } : {}),
+    recordedAt,
+  };
+};
+
+const loadPersistedSandboxCertificationRunsFromRepositories = async (
+  unitOfWork: PersistedCertificationHistoryRepositoryCollectionLike,
+): Promise<readonly SandboxCertificationRunReadModel[]> => {
+  if (!unitOfWork.sandboxCertificationRuns) {
+    return [];
+  }
+
+  const rows = await unitOfWork.sandboxCertificationRuns.listByQuery({ limit: 500 });
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapSandboxCertificationRunRecord(asRecord(row) ?? {});
+      return mapped ? [mapped] : [];
+    }),
+    (run) => run.generatedAt ?? run.id,
+  );
+};
+
+const loadPersistedTelemetryEventsFromRepositories = async (
+  unitOfWork: PersistedTelemetryRepositoryCollectionLike,
+): Promise<readonly TelemetryEventReadModel[]> => {
+  if (!unitOfWork.telemetryEvents) {
+    return [];
+  }
+
+  const rows = await unitOfWork.telemetryEvents.listByQuery({ limit: 500 });
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapTelemetryEventRecord(asRecord(row) ?? {});
+      return mapped ? [mapped] : [];
+    }),
+    (event) => event.occurredAt,
+  );
+};
+
+const loadPersistedMetricSamplesFromRepositories = async (
+  unitOfWork: PersistedTelemetryRepositoryCollectionLike,
+): Promise<readonly TelemetryMetricReadModel[]> => {
+  if (!unitOfWork.metricSamples) {
+    return [];
+  }
+
+  const rows = await unitOfWork.metricSamples.listByQuery({ limit: 500 });
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapTelemetryMetricRecord(asRecord(row) ?? {});
+      return mapped ? [mapped] : [];
+    }),
+    (metric) => metric.recordedAt,
+  );
+};
+
+const loadPersistedSandboxCertificationRunsFromPrisma = async (
+  client: PrismaClientLike,
+): Promise<readonly SandboxCertificationRunReadModel[]> => {
+  if (!(await prismaTableExists(client, "SandboxCertificationRun"))) {
+    return [];
+  }
+
+  const rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
+    "SELECT * FROM SandboxCertificationRun LIMIT 500",
+  );
+
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapSandboxCertificationRunRecord(row);
+      return mapped ? [mapped] : [];
+    }),
+    (run) => run.generatedAt ?? run.id,
+  );
+};
+
+const loadPersistedTelemetryEventsFromPrisma = async (
+  client: PrismaClientLike,
+): Promise<readonly TelemetryEventReadModel[]> => {
+  if (!(await prismaTableExists(client, "OperationalTelemetryEvent"))) {
+    return [];
+  }
+
+  const rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
+    "SELECT * FROM OperationalTelemetryEvent LIMIT 500",
+  );
+
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapTelemetryEventRecord(row);
+      return mapped ? [mapped] : [];
+    }),
+    (event) => event.occurredAt,
+  );
+};
+
+const loadPersistedTelemetryMetricsFromPrisma = async (
+  client: PrismaClientLike,
+): Promise<readonly TelemetryMetricReadModel[]> => {
+  if (!(await prismaTableExists(client, "OperationalMetricSample"))) {
+    return [];
+  }
+
+  const rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(
+    "SELECT * FROM OperationalMetricSample LIMIT 500",
+  );
+
+  return sortByIsoDescending(
+    rows.flatMap((row) => {
+      const mapped = mapTelemetryMetricRecord(row);
+      return mapped ? [mapped] : [];
+    }),
+    (metric) => metric.recordedAt,
+  );
+};
+
+const loadPersistedOperationSnapshotSourcesFromPrisma = async (
+  client: PrismaClientLike,
+): Promise<{
+  readonly rawBatches: readonly RawIngestionBatchReadModel[];
+  readonly oddsSnapshots: readonly OddsSnapshotReadModel[];
+  readonly sandboxCertificationRuns: readonly SandboxCertificationRunReadModel[];
+  readonly telemetryEvents: readonly TelemetryEventReadModel[];
+  readonly telemetryMetrics: readonly TelemetryMetricReadModel[];
+}> => {
+  const [rawBatches, oddsSnapshots, sandboxCertificationRuns, telemetryEvents, telemetryMetrics] = await Promise.all([
+    client.rawIngestionBatch.findMany({
+      orderBy: { extractionTime: "desc" },
+      take: 100,
+    }),
+    client.$queryRawUnsafe<Array<{
+      id: string;
+      fixtureId: string | null;
+      providerFixtureId: string;
+      bookmakerKey: string;
+      marketKey: string;
+      capturedAt: Date;
+      selectionCount: bigint | number;
+    }>>(`
+      SELECT
+        os.id,
+        os.fixtureId,
+        os.providerFixtureId,
+        os.bookmakerKey,
+        os.marketKey,
+        os.capturedAt,
+        COUNT(oss.id) AS selectionCount
+      FROM OddsSnapshot os
+      LEFT JOIN OddsSelectionSnapshot oss ON oss.oddsSnapshotId = os.id
+      GROUP BY os.id, os.fixtureId, os.providerFixtureId, os.bookmakerKey, os.marketKey, os.capturedAt
+      ORDER BY os.capturedAt DESC
+      LIMIT 100
+    `),
+    loadPersistedSandboxCertificationRunsFromPrisma(client),
+    loadPersistedTelemetryEventsFromPrisma(client),
+    loadPersistedTelemetryMetricsFromPrisma(client),
+  ]);
+
+  return {
+    rawBatches: rawBatches.map((batch) => ({
+      endpointFamily: batch.endpointFamily,
+      extractionStatus: batch.extractionStatus,
+      extractionTime: batch.extractionTime.toISOString(),
+      id: batch.id,
+      providerCode: batch.providerCode,
+      recordCount: batch.recordCount,
+    })),
+    oddsSnapshots: oddsSnapshots.map((snapshot) => ({
+      bookmakerKey: snapshot.bookmakerKey,
+      capturedAt: snapshot.capturedAt.toISOString(),
+      ...(snapshot.fixtureId ? { fixtureId: snapshot.fixtureId } : {}),
+      id: snapshot.id,
+      marketKey: snapshot.marketKey,
+      providerFixtureId: snapshot.providerFixtureId,
+      selectionCount: Number(snapshot.selectionCount),
+    })),
+    sandboxCertificationRuns,
+    telemetryEvents,
+    telemetryMetrics,
+  };
+};
+
 export async function loadOperationSnapshotFromDatabase(databaseUrl?: string): Promise<OperationSnapshot> {
   return retryPrismaReadOperation(async () => {
     const client = await createConnectedVerifiedPrismaClient({ databaseUrl });
 
     try {
       const unitOfWork = createPrismaUnitOfWork(client);
-      const rawBatches = await client.rawIngestionBatch.findMany({
-        orderBy: { extractionTime: "desc" },
-        take: 100,
-      });
-      const oddsSnapshots = await client.$queryRawUnsafe<Array<{
-        id: string;
-        fixtureId: string | null;
-        providerFixtureId: string;
-        bookmakerKey: string;
-        marketKey: string;
-        capturedAt: Date;
-        selectionCount: bigint | number;
-      }>>(`
-        SELECT
-          os.id,
-          os.fixtureId,
-          os.providerFixtureId,
-          os.bookmakerKey,
-          os.marketKey,
-          os.capturedAt,
-          COUNT(oss.id) AS selectionCount
-        FROM OddsSnapshot os
-        LEFT JOIN OddsSelectionSnapshot oss ON oss.oddsSnapshotId = os.id
-        GROUP BY os.id, os.fixtureId, os.providerFixtureId, os.bookmakerKey, os.marketKey, os.capturedAt
-        ORDER BY os.capturedAt DESC
-        LIMIT 100
-      `);
+      const persistedSources = await loadPersistedOperationSnapshotSourcesFromPrisma(client);
       const snapshot = await loadOperationSnapshotFromUnitOfWork(unitOfWork, {
         generatedAt: new Date().toISOString(),
-        rawBatches: rawBatches.map((batch) => ({
-          endpointFamily: batch.endpointFamily,
-          extractionStatus: batch.extractionStatus,
-          extractionTime: batch.extractionTime.toISOString(),
-          id: batch.id,
-          providerCode: batch.providerCode,
-          recordCount: batch.recordCount,
-        })),
-        oddsSnapshots: oddsSnapshots.map((snapshot) => ({
-          bookmakerKey: snapshot.bookmakerKey,
-          capturedAt: snapshot.capturedAt.toISOString(),
-          ...(snapshot.fixtureId ? { fixtureId: snapshot.fixtureId } : {}),
-          id: snapshot.id,
-          marketKey: snapshot.marketKey,
-          providerFixtureId: snapshot.providerFixtureId,
-          selectionCount: Number(snapshot.selectionCount),
-        })),
+        rawBatches: persistedSources.rawBatches,
+        oddsSnapshots: persistedSources.oddsSnapshots,
+        telemetryEvents: persistedSources.telemetryEvents,
+        telemetryMetrics: persistedSources.telemetryMetrics,
       });
 
       return snapshot;
@@ -3666,11 +5072,13 @@ export async function loadOperationSnapshotFromUnitOfWork(
     | "predictions"
     | "parlays"
     | "validations"
-  > & FixtureResearchRepositoryCollectionLike,
+  > & FixtureResearchRepositoryCollectionLike & PersistedTelemetryRepositoryCollectionLike,
   input: {
     readonly generatedAt?: string;
     readonly rawBatches?: readonly RawIngestionBatchReadModel[];
     readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
+    readonly telemetryEvents?: readonly TelemetryEventReadModel[];
+    readonly telemetryMetrics?: readonly TelemetryMetricReadModel[];
     readonly researchBundles?: readonly ResearchBundleEntity[];
     readonly featureSnapshots?: readonly FeatureSnapshotEntity[];
   } = {},
@@ -3705,8 +5113,34 @@ export async function loadOperationSnapshotFromUnitOfWork(
     unitOfWork.validations.list(),
   ]);
 
-  const rawBatches = [...(input.rawBatches ?? [])];
-  const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
+  const repositoryTelemetryEvents =
+    !input.telemetryEvents
+      ? await loadPersistedTelemetryEventsFromRepositories(unitOfWork)
+      : [];
+  const repositoryMetricSamples =
+    !input.telemetryMetrics
+      ? await loadPersistedMetricSamplesFromRepositories(unitOfWork)
+      : [];
+  const persistedSources =
+    isPrismaSnapshotUnitOfWorkLike(unitOfWork) &&
+    (
+      !input.rawBatches ||
+      !input.oddsSnapshots ||
+      (!input.telemetryEvents && repositoryTelemetryEvents.length === 0) ||
+      (!input.telemetryMetrics && repositoryMetricSamples.length === 0)
+    )
+      ? await loadPersistedOperationSnapshotSourcesFromPrisma(unitOfWork.client)
+      : null;
+  const rawBatches = [...(input.rawBatches ?? persistedSources?.rawBatches ?? [])];
+  const oddsSnapshots = [...(input.oddsSnapshots ?? persistedSources?.oddsSnapshots ?? [])];
+  const telemetryEvents = [
+    ...(input.telemetryEvents ??
+      (repositoryTelemetryEvents.length > 0 ? repositoryTelemetryEvents : persistedSources?.telemetryEvents ?? [])),
+  ];
+  const telemetryMetrics = [
+    ...(input.telemetryMetrics ??
+      (repositoryMetricSamples.length > 0 ? repositoryMetricSamples : persistedSources?.telemetryMetrics ?? [])),
+  ];
   const fixtureResearch = await loadFixtureResearchReadModels({
     fixtures,
     aiRuns,
@@ -3743,6 +5177,8 @@ export async function loadOperationSnapshotFromUnitOfWork(
     aiRuns: mappedAiRuns,
     providerStates: createDerivedProviderStates(mappedAiRuns, rawBatches),
     oddsSnapshots,
+    telemetryEvents,
+    telemetryMetrics,
     parlays,
     predictions,
     rawBatches,
@@ -3764,6 +5200,75 @@ const createDefaultFixtureWorkflowState = (fixtureId: string): FixtureWorkflowEn
     validationStatus: "pending",
     isCandidate: false,
   });
+
+interface PublicApiActionTelemetryInput {
+  readonly action: string;
+  readonly occurredAt: string;
+  readonly message: string;
+  readonly severity?: "debug" | "info" | "warn" | "error";
+  readonly actorId?: string | undefined;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly taskId?: string;
+  readonly taskRunId?: string;
+  readonly automationCycleId?: string;
+  readonly attributes?: Readonly<Record<string, unknown>>;
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+const recordPublicApiActionTelemetry = async (
+  unitOfWork: Pick<StorageUnitOfWork, "telemetryEvents" | "metricSamples">,
+  input: PublicApiActionTelemetryInput,
+): Promise<void> => {
+  const traceId = input.traceId ?? `public-api:${input.action}:${randomUUID()}`;
+  const correlationId = input.correlationId ?? traceId;
+  const source = "public-api";
+  const metricLabels = {
+    action: input.action,
+    source,
+    ...(input.actorId ? { actorId: input.actorId } : {}),
+    ...(input.labels ?? {}),
+  };
+
+  await Promise.allSettled([
+    unitOfWork.telemetryEvents.save(
+      createOperationalTelemetryEvent({
+        id: `telemetry-event:public-api:${input.action}:${randomUUID()}`,
+        kind: "log",
+        name: `public_api.${input.action}`,
+        severity: input.severity ?? "info",
+        traceId,
+        correlationId,
+        ...(input.taskId ? { taskId: input.taskId } : {}),
+        ...(input.taskRunId ? { taskRunId: input.taskRunId } : {}),
+        ...(input.automationCycleId ? { automationCycleId: input.automationCycleId } : {}),
+        occurredAt: input.occurredAt,
+        message: input.message,
+        attributes: {
+          source,
+          action: input.action,
+          ...(input.actorId ? { actorId: input.actorId } : {}),
+          ...(input.attributes ?? {}),
+        },
+      }),
+    ),
+    unitOfWork.metricSamples.save(
+      createOperationalMetricSample({
+        id: `metric-sample:public-api:${input.action}:${randomUUID()}`,
+        name: `public_api.${input.action}.count`,
+        type: "counter",
+        value: 1,
+        labels: metricLabels,
+        traceId,
+        correlationId,
+        ...(input.taskId ? { taskId: input.taskId } : {}),
+        ...(input.taskRunId ? { taskRunId: input.taskRunId } : {}),
+        ...(input.automationCycleId ? { automationCycleId: input.automationCycleId } : {}),
+        recordedAt: input.occurredAt,
+      }),
+    ),
+  ]);
+};
 
 const loadExistingFixtureWorkflow = async (
   unitOfWork: Pick<StorageUnitOfWork, "fixtures" | "fixtureWorkflows">,
@@ -3796,6 +5301,10 @@ export async function applyFixtureManualSelection(
       aggregateId: fixtureId,
       eventType: "fixture-workflow.manual-selection.updated",
       actor: input.selectedBy,
+      actorType: "operator",
+      subjectType: "fixture-workflow",
+      subjectId: fixtureId,
+      action: "manual-selection",
       payload: {
         status: updatedWorkflow.manualSelectionStatus,
         reason: updatedWorkflow.manualSelectionReason ?? null,
@@ -3836,6 +5345,10 @@ export async function applyFixtureSelectionOverride(
       aggregateId: fixtureId,
       eventType: "fixture-workflow.selection-override.updated",
       actor: "public-api",
+      actorType: "operator",
+      subjectType: "fixture-workflow",
+      subjectId: fixtureId,
+      action: "selection-override",
       payload: {
         mode: persistedWorkflow.selectionOverride,
         reason: persistedWorkflow.overrideReason ?? null,
@@ -3979,6 +5492,15 @@ function matchSandboxCertificationDetailPath(
     profileName: decodeURIComponent(match[1]),
     packId: decodeURIComponent(match[2]),
   };
+}
+
+function matchSandboxCertificationRunDetailPath(requestPath: string): { runId: string } | null {
+  const match = requestPath.match(/^\/sandbox-certification\/runs\/([^/]+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return { runId: decodeURIComponent(match[1]) };
 }
 
 function matchTaskRunDetailPath(requestPath: string): { taskRunId: string } | null {

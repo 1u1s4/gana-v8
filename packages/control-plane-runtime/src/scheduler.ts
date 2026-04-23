@@ -33,6 +33,10 @@ import {
   type SchedulerCycleOptions,
   updateCycle,
 } from "./shared.js";
+import {
+  createObservabilityKit,
+  createPrismaDurableObservabilitySink,
+} from "@gana-v8/observability";
 
 const floorToMinute = (date: Date): Date =>
   new Date(Math.floor(date.getTime() / 60_000) * 60_000);
@@ -360,6 +364,7 @@ export const runSchedulerCycle = async (
   const now = options.now ?? new Date();
   const leaseOwner = options.leaseOwner ?? defaultLeaseOwner("scheduler");
   const client = await createConnectedVerifiedPrismaClient({ databaseUrl });
+  let observability: ReturnType<typeof createObservabilityKit> | null = null;
 
   try {
     const unitOfWork = createPrismaUnitOfWork(client);
@@ -393,6 +398,36 @@ export const runSchedulerCycle = async (
         },
       }),
     );
+    observability = createObservabilityKit({
+      context: {
+        correlationId: cycle.id,
+        traceId: `${cycle.id}:scheduler`,
+        workspace: "hermes-scheduler",
+        labels: {
+          cycleKind: "scheduler",
+          leaseOwner,
+        },
+      },
+      refs: {
+        automationCycleId: cycle.id,
+      },
+      sink: createPrismaDurableObservabilitySink(client),
+    });
+    observability.log("scheduler cycle started", {
+      data: {
+        requestedFixtureCount: requestedFixtureIds.length,
+      },
+      refs: {
+        automationCycleId: cycle.id,
+      },
+      timestamp: toIso(now),
+    });
+    observability.setGauge("runtime.scheduler.requested_fixtures", requestedFixtureIds.length, {
+      refs: {
+        automationCycleId: cycle.id,
+      },
+      recordedAt: toIso(now),
+    });
 
     const manifestId = cycle.id;
     const scheduledMinute = floorToMinute(now);
@@ -454,6 +489,24 @@ export const runSchedulerCycle = async (
         requestedFixtureIds,
         now,
       );
+      observability.setGauge("runtime.scheduler.cron_tasks", cronTaskIds.length, {
+        refs: {
+          automationCycleId: cycle.id,
+        },
+        recordedAt: toIso(now),
+      });
+      observability.setGauge("runtime.scheduler.research_tasks", researchTaskIds.length, {
+        refs: {
+          automationCycleId: cycle.id,
+        },
+        recordedAt: toIso(now),
+      });
+      observability.setGauge("runtime.scheduler.skipped_fixtures", skippedFixtures.length, {
+        refs: {
+          automationCycleId: cycle.id,
+        },
+        recordedAt: toIso(now),
+      });
 
       const finalTaskIds = [...cronTaskIds, ...researchTaskIds];
       const finishedCycle = await unitOfWork.automationCycles.save(
@@ -509,9 +562,27 @@ export const runSchedulerCycle = async (
             triggeredCronTaskKinds,
             cursorStates,
             cronTaskIds,
+            observability: {
+              durableEvents: observability.sinkCapabilities.eventsDurable,
+              durableMetrics: observability.sinkCapabilities.metricsDurable,
+            },
           },
         }),
       );
+      observability.log("scheduler cycle completed", {
+        data: {
+          manifestId,
+          includedFixtureCount: includedFixtureIds.length,
+          researchTaskCount: researchTaskIds.length,
+          cronTaskCount: cronTaskIds.length,
+          skippedFixtureCount: skippedFixtures.length,
+        },
+        refs: {
+          automationCycleId: finishedCycle.id,
+        },
+        timestamp: toIso(now),
+      });
+      await observability.flush();
 
       return {
         cycle: finishedCycle,
@@ -520,6 +591,18 @@ export const runSchedulerCycle = async (
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unexpected scheduler cycle error";
+      if (observability) {
+        observability.log("scheduler cycle failed", {
+          severity: "error",
+          data: {
+            error: message,
+          },
+          refs: {
+            automationCycleId: cycle.id,
+          },
+          timestamp: toIso(now),
+        });
+      }
       const failedCycle = await unitOfWork.automationCycles.save(
         updateCycle(cycle, {
           status: "failed",
@@ -546,6 +629,9 @@ export const runSchedulerCycle = async (
           },
         }),
       );
+      if (observability) {
+        await observability.flush();
+      }
 
       return {
         cycle: failedCycle,

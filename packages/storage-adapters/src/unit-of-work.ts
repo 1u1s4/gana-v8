@@ -10,6 +10,8 @@ import type {
   LeagueCoveragePolicyRepository,
   LineupParticipantRepository,
   LineupSnapshotRepository,
+  OperationalMetricSampleRepository,
+  OperationalTelemetryEventRepository,
   ParlayRepository,
   PredictionRepository,
   ResearchAssignmentRepository,
@@ -18,6 +20,7 @@ import type {
   ResearchClaimSourceRepository,
   ResearchConflictRepository,
   ResearchSourceRepository,
+  SandboxCertificationRunRepository,
   SandboxNamespaceRepository,
   SchedulerCursorRepository,
   TaskRepository,
@@ -38,6 +41,8 @@ import {
   InMemoryLeagueCoveragePolicyRepository,
   InMemoryLineupParticipantRepository,
   InMemoryLineupSnapshotRepository,
+  InMemoryOperationalMetricSampleRepository,
+  InMemoryOperationalTelemetryEventRepository,
   InMemoryParlayRepository,
   InMemoryPredictionRepository,
   InMemoryResearchAssignmentRepository,
@@ -46,6 +51,7 @@ import {
   InMemoryResearchClaimSourceRepository,
   InMemoryResearchConflictRepository,
   InMemoryResearchSourceRepository,
+  InMemorySandboxCertificationRunRepository,
   InMemorySandboxNamespaceRepository,
   InMemorySchedulerCursorRepository,
   InMemoryTaskRepository,
@@ -65,6 +71,8 @@ import {
   PrismaLeagueCoveragePolicyRepository,
   PrismaLineupParticipantRepository,
   PrismaLineupSnapshotRepository,
+  PrismaOperationalMetricSampleRepository,
+  PrismaOperationalTelemetryEventRepository,
   PrismaParlayRepository,
   PrismaPredictionRepository,
   PrismaResearchAssignmentRepository,
@@ -73,6 +81,7 @@ import {
   PrismaResearchClaimSourceRepository,
   PrismaResearchConflictRepository,
   PrismaResearchSourceRepository,
+  PrismaSandboxCertificationRunRepository,
   PrismaSandboxNamespaceRepository,
   PrismaSchedulerCursorRepository,
   PrismaTaskRepository,
@@ -104,6 +113,9 @@ export interface StorageUnitOfWork {
   parlays: ParlayRepository;
   validations: ValidationRepository;
   auditEvents: AuditEventRepository;
+  sandboxCertificationRuns: SandboxCertificationRunRepository;
+  telemetryEvents: OperationalTelemetryEventRepository;
+  metricSamples: OperationalMetricSampleRepository;
   leagueCoveragePolicies: LeagueCoveragePolicyRepository;
   teamCoveragePolicies: TeamCoveragePolicyRepository;
   dailyAutomationPolicies: DailyAutomationPolicyRepository;
@@ -138,6 +150,9 @@ export const createInMemoryUnitOfWork = (): InMemoryUnitOfWork => ({
   parlays: new InMemoryParlayRepository(),
   validations: new InMemoryValidationRepository(),
   auditEvents: new InMemoryAuditEventRepository(),
+  sandboxCertificationRuns: new InMemorySandboxCertificationRunRepository(),
+  telemetryEvents: new InMemoryOperationalTelemetryEventRepository(),
+  metricSamples: new InMemoryOperationalMetricSampleRepository(),
   leagueCoveragePolicies: new InMemoryLeagueCoveragePolicyRepository(),
   teamCoveragePolicies: new InMemoryTeamCoveragePolicyRepository(),
   dailyAutomationPolicies: new InMemoryDailyAutomationPolicyRepository(),
@@ -169,6 +184,9 @@ export const createPrismaUnitOfWork = (
   parlays: new PrismaParlayRepository(client),
   validations: new PrismaValidationRepository(client),
   auditEvents: new PrismaAuditEventRepository(client),
+  sandboxCertificationRuns: new PrismaSandboxCertificationRunRepository(client),
+  telemetryEvents: new PrismaOperationalTelemetryEventRepository(client),
+  metricSamples: new PrismaOperationalMetricSampleRepository(client),
   leagueCoveragePolicies: new PrismaLeagueCoveragePolicyRepository(client),
   teamCoveragePolicies: new PrismaTeamCoveragePolicyRepository(client),
   dailyAutomationPolicies: new PrismaDailyAutomationPolicyRepository(client),

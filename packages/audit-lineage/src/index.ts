@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import { createLogEvent, type LogEvent, type TelemetryContext } from "@gana-v8/observability";
+import {
+  createLogEvent,
+  persistTelemetryEvent,
+  type DurableTelemetryRefs,
+  type DurableTelemetrySink,
+  type LogEvent,
+  type TelemetryContext,
+} from "@gana-v8/observability";
 
 export const workspaceInfo = {
   packageName: "@gana-v8/audit-lineage",
@@ -61,6 +68,32 @@ export interface AuditTrailEntry {
 export interface AuditTrailRecord {
   readonly entry: AuditTrailEntry;
   readonly event: LogEvent;
+}
+
+export interface PersistedAuditEvent {
+  readonly id: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly eventType: string;
+  readonly actor?: string;
+  readonly actorType?: AuditActorType;
+  readonly subjectType?: string;
+  readonly subjectId?: string;
+  readonly action?: string;
+  readonly traceId?: string;
+  readonly correlationId?: string;
+  readonly lineageRefs?: readonly string[];
+  readonly payload: Record<string, unknown>;
+  readonly occurredAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface DurableAuditTrailSink {
+  readonly auditEvents: {
+    save(entity: PersistedAuditEvent): Promise<PersistedAuditEvent>;
+  };
+  readonly telemetry?: DurableTelemetrySink;
 }
 
 const cloneStringMap = (value?: Readonly<Record<string, string>>): Readonly<Record<string, string>> => ({ ...(value ?? {}) });
@@ -183,3 +216,46 @@ export class InMemoryAuditTrail {
     return buildAuditTrailSummary(this.list());
   }
 }
+
+export const auditTrailRecordToAuditEvent = (record: AuditTrailRecord): PersistedAuditEvent => ({
+  id: record.entry.id,
+  aggregateType: record.entry.subject.type,
+  aggregateId: record.entry.subject.id,
+  eventType: `${record.entry.subject.type}.${record.entry.action}`,
+  actor: record.entry.actor.id,
+  actorType: record.entry.actor.type,
+  subjectType: record.entry.subject.type,
+  subjectId: record.entry.subject.id,
+  action: record.entry.action,
+  ...(record.entry.traceId ? { traceId: record.entry.traceId } : {}),
+  ...(record.entry.correlationId ? { correlationId: record.entry.correlationId } : {}),
+  ...(record.entry.lineage.length > 0 ? { lineageRefs: record.entry.lineage.map((lineage) => lineage.id) } : {}),
+  payload: {
+    actorDisplayName: record.entry.actor.displayName,
+    details: record.entry.details,
+    lineage: record.entry.lineage,
+    summary: record.entry.summary,
+    tags: record.entry.tags,
+  },
+  occurredAt: record.entry.occurredAt,
+  createdAt: record.entry.occurredAt,
+  updatedAt: record.entry.occurredAt,
+});
+
+export const persistAuditTrailRecord = async (input: {
+  readonly sink: DurableAuditTrailSink;
+  readonly record: AuditTrailRecord;
+  readonly refs?: DurableTelemetryRefs;
+}): Promise<PersistedAuditEvent> => {
+  const auditEvent = await input.sink.auditEvents.save(auditTrailRecordToAuditEvent(input.record));
+
+  if (input.sink.telemetry) {
+    await persistTelemetryEvent({
+      sink: input.sink.telemetry,
+      event: input.record.event,
+      ...(input.refs ? { refs: input.refs } : {}),
+    });
+  }
+
+  return auditEvent;
+};

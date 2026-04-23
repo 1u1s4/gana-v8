@@ -9,11 +9,14 @@ import {
   createFixture,
   createFixtureWorkflow,
   createLeagueCoveragePolicy,
+  createOperationalMetricSample,
+  createOperationalTelemetryEvent,
   createParlay,
   createPrediction,
   createResearchAssignment,
   createResearchBundle,
   createResearchClaim,
+  createSandboxCertificationRun,
   createSandboxNamespace,
   createTask,
   createTaskRun,
@@ -33,6 +36,10 @@ import {
   createPrismaUnitOfWork,
   fixtureDomainToCreateInput,
   fixtureRecordToDomain,
+  operationalMetricSampleDomainToCreateInput,
+  operationalMetricSampleRecordToDomain,
+  operationalTelemetryEventDomainToCreateInput,
+  operationalTelemetryEventRecordToDomain,
   parlayRecordToDomain,
   predictionDomainToCreateInput,
   predictionRecordToDomain,
@@ -44,6 +51,8 @@ import {
   researchClaimRecordToDomain,
   sandboxNamespaceDomainToCreateInput,
   sandboxNamespaceRecordToDomain,
+  sandboxCertificationRunDomainToCreateInput,
+  sandboxCertificationRunRecordToDomain,
   taskDomainToCreateInput,
   taskAttemptToTaskRunInput,
   taskRecordToDomain,
@@ -241,6 +250,77 @@ test("in-memory repositories store and query core aggregates", async () => {
   );
 });
 
+test("release ops repositories persist certification history and telemetry queries", async () => {
+  const uow = createInMemoryUnitOfWork();
+  const syntheticRun = createSandboxCertificationRun({
+    id: "cert-synth-1",
+    verificationKind: "synthetic-integrity",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-1",
+    status: "passed",
+    promotionStatus: "promotable",
+    runtimeSignals: { diffEntryCount: 0 },
+    diffEntries: [],
+    summary: { replayEventCount: 4 },
+    generatedAt: "2026-04-22T10:00:00.000Z",
+  });
+  const runtimeRun = createSandboxCertificationRun({
+    id: "cert-runtime-1",
+    verificationKind: "runtime-release",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-2",
+    status: "failed",
+    promotionStatus: "blocked",
+    runtimeSignals: { manualReviewTaskCount: 1 },
+    diffEntries: [{ path: "$.runtimeSignals.manualReviewTaskCount", kind: "changed", expected: 0, actual: 1 }],
+    summary: { releaseEvidence: "runtime" },
+    generatedAt: "2026-04-22T10:05:00.000Z",
+  });
+  const telemetryEvent = createOperationalTelemetryEvent({
+    id: "telemetry-1",
+    kind: "log",
+    name: "public-api.task.quarantine",
+    severity: "warn",
+    traceId: "trace-1",
+    taskId: "task-1",
+    sandboxCertificationRunId: runtimeRun.id,
+    occurredAt: "2026-04-22T10:06:00.000Z",
+    message: "Task quarantined during release review.",
+    attributes: { actor: "operator-console" },
+  });
+  const metricSample = createOperationalMetricSample({
+    id: "metric-1",
+    name: "release.review.manual_review_tasks",
+    type: "gauge",
+    value: 1,
+    taskId: "task-1",
+    sandboxCertificationRunId: runtimeRun.id,
+    labels: { profileName: "ci-smoke" },
+    recordedAt: "2026-04-22T10:06:30.000Z",
+  });
+
+  await uow.sandboxCertificationRuns.save(syntheticRun);
+  await uow.sandboxCertificationRuns.save(runtimeRun);
+  await uow.telemetryEvents.save(telemetryEvent);
+  await uow.metricSamples.save(metricSample);
+
+  assert.equal((await uow.sandboxCertificationRuns.listByQuery({ profileName: "ci-smoke" })).length, 2);
+  assert.equal(
+    (await uow.sandboxCertificationRuns.findLatestByProfilePack("ci-smoke", "football-dual-smoke", "runtime-release"))
+      ?.id,
+    runtimeRun.id,
+  );
+  assert.equal((await uow.telemetryEvents.listByQuery({ traceId: "trace-1" }))[0]?.id, telemetryEvent.id);
+  assert.equal(
+    (await uow.metricSamples.listByQuery({ sandboxCertificationRunId: runtimeRun.id }))[0]?.id,
+    metricSample.id,
+  );
+});
+
 test("taskAttemptToTaskRunInput emits opaque trn task run ids", () => {
   const taskRun = taskAttemptToTaskRunInput(
     "tsk_1234567890abcdef",
@@ -296,6 +376,109 @@ test("prisma mappers preserve ai-run metadata roundtrip shape", () => {
   assert.equal(roundTrip.fallbackReason, "provider timeout");
   assert.equal(roundTrip.degraded, true);
   assert.deepEqual(roundTrip.usage, aiRun.usage);
+});
+
+test("prisma mappers preserve release ops durability roundtrip shape", () => {
+  const certificationRun = createSandboxCertificationRun({
+    id: "cert-run-1",
+    verificationKind: "runtime-release",
+    profileName: "ci-smoke",
+    packId: "football-dual-smoke",
+    mode: "smoke",
+    gitSha: "sha-22",
+    baselineRef: "main",
+    candidateRef: "codex/release-ops-integration",
+    status: "failed",
+    promotionStatus: "review-required",
+    goldenFingerprint: "golden-22",
+    evidenceFingerprint: "evidence-22",
+    artifactRef: "db://sandbox-certification/cert-run-1",
+    runtimeSignals: { taskCount: 5 },
+    diffEntries: [{ path: "$.taskCounts.quarantined", kind: "changed", expected: 0, actual: 1 }],
+    summary: { promotion: { status: "review-required" } },
+    generatedAt: "2026-04-22T12:00:00.000Z",
+    createdAt: "2026-04-22T12:00:00.000Z",
+    updatedAt: "2026-04-22T12:01:00.000Z",
+  });
+  const telemetryEvent = createOperationalTelemetryEvent({
+    id: "telemetry-ops-1",
+    kind: "span",
+    name: "sandbox.runtime-release",
+    severity: "info",
+    traceId: "trace-ops-1",
+    correlationId: "corr-ops-1",
+    taskId: "task-1",
+    taskRunId: "task-1:attempt:1",
+    automationCycleId: "cycle-1",
+    sandboxCertificationRunId: certificationRun.id,
+    occurredAt: "2026-04-22T12:02:00.000Z",
+    finishedAt: "2026-04-22T12:03:00.000Z",
+    durationMs: 60000,
+    message: "Runtime release certification executed",
+    attributes: { profileName: "ci-smoke" },
+    createdAt: "2026-04-22T12:02:00.000Z",
+    updatedAt: "2026-04-22T12:03:00.000Z",
+  });
+  const metricSample = createOperationalMetricSample({
+    id: "metric-ops-1",
+    name: "sandbox.certification.diff_entries",
+    type: "gauge",
+    value: 1,
+    labels: { profileName: "ci-smoke" },
+    traceId: "trace-ops-1",
+    sandboxCertificationRunId: certificationRun.id,
+    recordedAt: "2026-04-22T12:03:00.000Z",
+    createdAt: "2026-04-22T12:03:00.000Z",
+    updatedAt: "2026-04-22T12:03:00.000Z",
+  });
+
+  const certificationInput = sandboxCertificationRunDomainToCreateInput(certificationRun);
+  const certificationRoundTrip = sandboxCertificationRunRecordToDomain({
+    ...certificationInput,
+    baselineRef: certificationInput.baselineRef ?? null,
+    candidateRef: certificationInput.candidateRef ?? null,
+    promotionStatus: certificationInput.promotionStatus ?? null,
+    goldenFingerprint: certificationInput.goldenFingerprint ?? null,
+    evidenceFingerprint: certificationInput.evidenceFingerprint ?? null,
+    artifactRef: certificationInput.artifactRef ?? null,
+    generatedAt: new Date(certificationRun.generatedAt),
+    createdAt: new Date(certificationRun.createdAt),
+    updatedAt: new Date(certificationRun.updatedAt),
+  } as never);
+  const telemetryInput = operationalTelemetryEventDomainToCreateInput(telemetryEvent);
+  const telemetryRoundTrip = operationalTelemetryEventRecordToDomain({
+    ...telemetryInput,
+    traceId: telemetryInput.traceId ?? null,
+    correlationId: telemetryInput.correlationId ?? null,
+    taskId: telemetryInput.taskId ?? null,
+    taskRunId: telemetryInput.taskRunId ?? null,
+    automationCycleId: telemetryInput.automationCycleId ?? null,
+    sandboxCertificationRunId: telemetryInput.sandboxCertificationRunId ?? null,
+    finishedAt: telemetryInput.finishedAt ?? null,
+    durationMs: telemetryInput.durationMs ?? null,
+    message: telemetryInput.message ?? null,
+    occurredAt: new Date(telemetryEvent.occurredAt),
+    createdAt: new Date(telemetryEvent.createdAt),
+    updatedAt: new Date(telemetryEvent.updatedAt),
+  } as never);
+  const metricInput = operationalMetricSampleDomainToCreateInput(metricSample);
+  const metricRoundTrip = operationalMetricSampleRecordToDomain({
+    ...metricInput,
+    traceId: metricInput.traceId ?? null,
+    correlationId: metricInput.correlationId ?? null,
+    taskId: metricInput.taskId ?? null,
+    taskRunId: metricInput.taskRunId ?? null,
+    automationCycleId: metricInput.automationCycleId ?? null,
+    sandboxCertificationRunId: metricInput.sandboxCertificationRunId ?? null,
+    recordedAt: new Date(metricSample.recordedAt),
+    createdAt: new Date(metricSample.createdAt),
+    updatedAt: new Date(metricSample.updatedAt),
+  } as never);
+
+  assert.equal(certificationRoundTrip.verificationKind, "runtime-release");
+  assert.equal(certificationRoundTrip.promotionStatus, "review-required");
+  assert.equal(telemetryRoundTrip.sandboxCertificationRunId, certificationRun.id);
+  assert.equal(metricRoundTrip.labels.profileName, "ci-smoke");
 });
 
 test("prisma mappers preserve research bundle, claim, and assignment roundtrip shape", () => {

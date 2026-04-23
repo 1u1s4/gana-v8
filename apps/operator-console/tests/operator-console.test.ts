@@ -385,7 +385,7 @@ test("operator console builds panels and alerts from the snapshot", () => {
   const snapshot = createOperatorConsoleSnapshotFromOperation(createOperationLikeSnapshot() as never);
   const model = buildOperatorConsoleModel(snapshot);
 
-  assert.equal(model.panels.length, 21);
+  assert.equal(model.panels.length, 23);
   assert.equal(model.health.status, "ok");
   assert.equal(model.validationSummary.partial, 1);
   assert.ok(model.alerts.length >= 1);
@@ -398,9 +398,11 @@ test("operator console builds panels and alerts from the snapshot", () => {
   assert.equal(model.panels[6]?.title, "AI & providers");
   assert.equal(model.panels[7]?.title, "Research trace");
   assert.equal(model.panels[8]?.title, "Sandbox certification");
-  assert.equal(model.panels[9]?.title, "Observability");
-  assert.equal(model.panels[10]?.title, "Policy");
-  assert.equal(model.panels[11]?.title, "Traceability");
+  assert.equal(model.panels[9]?.title, "Release ops");
+  assert.equal(model.panels[10]?.title, "Observability");
+  assert.equal(model.panels[11]?.title, "Telemetry");
+  assert.equal(model.panels[12]?.title, "Policy");
+  assert.equal(model.panels[13]?.title, "Traceability");
 });
 
 test("operator console defaults to an operational empty state instead of demo data", () => {
@@ -847,9 +849,17 @@ test("operator console can load a web payload from public-api snapshots", async 
     assert.equal(payload.snapshot.fixtures.length, 1);
     assert.equal(payload.certification.length, 1);
     assert.equal(payload.snapshot.sandboxCertification[0]?.status, "passed");
+    assert.deepEqual(payload.snapshot.manualReviews, []);
+    assert.deepEqual(payload.snapshot.quarantines, []);
+    assert.deepEqual(payload.snapshot.recovery, []);
+    assert.deepEqual(payload.snapshot.telemetryEvents, []);
+    assert.deepEqual(payload.snapshot.telemetryMetrics, []);
+    assert.deepEqual(payload.snapshot.certificationRuns, []);
     assert.equal(payload.model.health.status, "ok");
     assert.ok(payload.model.panels.some((panel) => panel.title === "Task queue"));
     assert.ok(payload.model.panels.some((panel) => panel.title === "Sandbox certification"));
+    assert.ok(payload.model.panels.some((panel) => panel.title === "Release ops"));
+    assert.ok(payload.model.panels.some((panel) => panel.title === "Telemetry"));
   } finally {
     await new Promise<void>((resolve, reject) =>
       publicApiServer.close((error) => (error ? reject(error) : resolve())),

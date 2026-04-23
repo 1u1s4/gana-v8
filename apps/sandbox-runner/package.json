@@ -16,12 +16,12 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && pnpm --filter @gana-v8/policy-engine build && tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && pnpm --filter @gana-v8/policy-engine build && tsc -p tsconfig.build.json",
     "certify": "pnpm run build && node dist/index.js --certify",
     "dev": "node ../../scripts/workspace-dev.mjs sandbox-runner",
     "lint": "node ../../scripts/workspace-lint.mjs .",
-    "test": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && pnpm --filter @gana-v8/policy-engine build && tsx --test tests/**/*.test.ts",
-    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && pnpm --filter @gana-v8/policy-engine build && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && pnpm --filter @gana-v8/policy-engine build && tsx --test tests/**/*.test.ts",
+    "typecheck": "pnpm --filter @gana-v8/domain-core build && pnpm --filter @gana-v8/observability build && pnpm --filter @gana-v8/storage-adapters build && pnpm --filter @gana-v8/testing-fixtures build && pnpm --filter @gana-v8/policy-engine build && tsc -p tsconfig.json --noEmit",
     "clean": "node --eval \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\""
   },
   "dependencies": {

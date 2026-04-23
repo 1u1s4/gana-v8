@@ -2,49 +2,49 @@
 
 ## Objetivo
 
-`gana-v8` usa certificación de sandbox para detectar drift estructural en los packs sintéticos y en los perfiles de ejecución antes de promover cambios del harness.
+Detectar drift estructural en packs sintéticos, perfiles certificados y promotion gates antes de promover cambios del harness.
 
-## Qué se certifica
+## Disparadores
 
-- `fixtures/replays/goldens/ci-smoke/football-dual-smoke.json`
-- `fixtures/replays/goldens/ci-regression/football-replay-late-swing.json`
-- `fixtures/replays/goldens/staging-like/football-staging-parity.json`
-- `fixtures/replays/goldens/hybrid/football-hybrid-routing.json`
-- `fixtures/replays/goldens/chaos-provider/football-chaos-provider.json`
-- `fixtures/replays/goldens/human-qa-demo/football-human-qa-demo.json`
+- Cambios en `fixtures/replays/goldens/`, `apps/sandbox-runner/`, `packages/testing-fixtures/` o `tests/sandbox/certification.mjs`.
+- Fallo del job `sandbox-certification` en CI.
+- Necesidad de validar si un drift es intencional o si rompe la baseline aprobada.
 
-Cada golden fija:
+## Precondiciones
 
-- modo (`smoke` o `replay`)
-- pack y perfil aprobados
-- provider modes
-- conteos de fixtures y replay events
-- replay timeline
-- fingerprint del pack
-- safety rails
-- policy trace auditable
-- promotion gates (`blocked`, `review-required`, `promotable`)
+- Dependencias instaladas con `pnpm install`.
+- No usar este runbook como sustituto del gate MySQL-backed de runtime release; certifica sandbox sintético, no comportamiento durable contra MySQL.
+- Tener claro qué profile/pack cambió y qué decisión humana se espera del resultado.
 
-## Cómo correrlo
+## Comandos
+
+1. Ejecutar la certificación completa:
 
 ```bash
 pnpm test:sandbox:certification
 ```
 
-Salida:
+2. Si necesitás inspección puntual, regenerar un evidence pack local para un golden específico:
 
-- artifacts en `.artifacts/sandbox-certification/`
-- diff legible en stdout si alguna golden deriva
+```bash
+pnpm --filter @gana-v8/sandbox-runner certify -- --mode smoke --profile ci-smoke --pack football-dual-smoke --golden fixtures/replays/goldens/ci-smoke/football-dual-smoke.json --artifact .artifacts/sandbox-certification/ci-smoke/football-dual-smoke.evidence.json
+```
 
-## Cómo actualizar una golden
+3. Si el drift es esperado, actualizar la golden correspondiente y volver a correr la certificación completa antes de cerrar el cambio.
 
-1. Verificá primero que el drift sea intencional.
-2. Corré el sandbox runner localmente para inspeccionar el evidence pack.
-3. Reemplazá la golden correspondiente en `fixtures/replays/goldens/`.
-4. Volvé a correr `pnpm test:sandbox:certification`.
-5. Incluí en el cambio una nota explícita sobre por qué cambió el fingerprint, la timeline o los safety rails.
+## Evidencia esperada
 
-## Uso en CI
+- `0 diff entries` cuando la baseline sigue vigente.
+- Evidence packs regenerados en `.artifacts/sandbox-certification/`.
+- Promotion gates explícitos por profile (`blocked`, `review-required`, `promotable`).
+- En CI, artifact `sandbox-certification-evidence` aun cuando la comparación falle.
 
-- El job `sandbox-certification` ejecuta la certificación sin depender de MySQL.
-- Los evidence packs se suben como artifact aun cuando falle la comparación.
+## Decisiones humanas
+
+- Si el diff cambia fingerprints, timeline, provider modes o safety rails sin causa intencional, tratarlo como bloqueo y abrir investigación.
+- Si el diff es intencional pero cambia promotion gates o policy snapshots, dejar nota explícita del motivo y revisar también `runbooks/release-review-promotion.md`.
+- Si el fallo proviene de evidencia corrupta o desalineada contra goldens vigentes, seguir `runbooks/sandbox-certification-drift.md`.
+
+## Salida
+
+- Certificación sintética aprobada y lista para CI, o drift clasificado como bloqueo/review con siguiente acción documentada.

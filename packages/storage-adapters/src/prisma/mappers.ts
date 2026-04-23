@@ -5,6 +5,7 @@ import type {
   AutomationCycleKind,
   AutomationCycleStatus,
   AutomationCycleSummary,
+  AuditActorType,
   AuditEventEntity,
   DailyAutomationPolicyEntity,
   FeatureSnapshotEntity,
@@ -15,6 +16,11 @@ import type {
   LeagueCoveragePolicyEntity,
   LineupParticipantEntity,
   LineupSnapshotEntity,
+  OperationalMetricSampleEntity,
+  OperationalMetricType,
+  OperationalTelemetryEventEntity,
+  OperationalTelemetryKind,
+  OperationalTelemetrySeverity,
   ParlayEntity,
   ParlayLeg,
   PredictionEntity,
@@ -26,6 +32,11 @@ import type {
   ResearchGateReason,
   ResearchSourceEntity,
   SandboxNamespace,
+  SandboxCertificationDiffEntry,
+  SandboxCertificationRunEntity,
+  SandboxCertificationRunStatus,
+  SandboxCertificationVerificationKind,
+  SandboxPromotionStatus,
   SchedulerCursorEntity,
   TaskAttempt,
   TaskEntity,
@@ -59,6 +70,11 @@ import {
   type LeagueCoveragePolicy,
   type LineupParticipant,
   type LineupSnapshot,
+  type OperationalMetricSample,
+  type OperationalMetricType as PrismaOperationalMetricType,
+  type OperationalTelemetryEvent,
+  type OperationalTelemetryKind as PrismaOperationalTelemetryKind,
+  type OperationalTelemetrySeverity as PrismaOperationalTelemetrySeverity,
   type Parlay,
   type ParlayLeg as PrismaParlayLeg,
   type Prediction,
@@ -70,6 +86,10 @@ import {
   type ResearchConflict,
   type ResearchSource,
   type SandboxNamespace as PrismaSandboxNamespace,
+  type SandboxCertificationRun,
+  type SandboxCertificationRunStatus as PrismaSandboxCertificationRunStatus,
+  type SandboxCertificationVerificationKind as PrismaSandboxCertificationVerificationKind,
+  type SandboxPromotionStatus as PrismaSandboxPromotionStatus,
   type SchedulerCursor,
   type Task,
   type TaskKind as PrismaTaskKind,
@@ -83,18 +103,23 @@ import {
 } from "@prisma/client";
 
 const asRecord = (value: Prisma.JsonValue | null | undefined): Record<string, unknown> =>
-  (value ?? {}) as Record<string, unknown>;
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? structuredClone(value as Record<string, unknown>)
+    : {};
 
 const asStringRecord = (
   value: Prisma.JsonValue | null | undefined,
-): Record<string, string> => asRecord(value) as Record<string, string>;
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(asRecord(value)).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
 
 const asStringArray = (value: Prisma.JsonValue | null | undefined): string[] =>
-  ((value ?? []) as unknown as string[]).slice();
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
 const asArray = <T>(
   value: Prisma.JsonValue | null | undefined,
-): T[] => ((value ?? []) as unknown as T[]).slice();
+): T[] => (Array.isArray(value) ? structuredClone(value as T[]) : []);
 
 const asValidationChecks = (
   value: Prisma.JsonValue | null | undefined,
@@ -185,6 +210,54 @@ const environmentToPrisma = (
   value: SandboxNamespace["environment"],
 ): PrismaEnvironment => value as PrismaEnvironment;
 
+const sandboxCertificationVerificationKindToDomain = (
+  value: PrismaSandboxCertificationVerificationKind,
+): SandboxCertificationVerificationKind => value.replaceAll("_", "-") as SandboxCertificationVerificationKind;
+
+const sandboxCertificationVerificationKindToPrisma = (
+  value: SandboxCertificationVerificationKind,
+): PrismaSandboxCertificationVerificationKind => value.replaceAll("-", "_") as PrismaSandboxCertificationVerificationKind;
+
+const sandboxCertificationRunStatusToDomain = (
+  value: PrismaSandboxCertificationRunStatus,
+): SandboxCertificationRunStatus => value;
+
+const sandboxCertificationRunStatusToPrisma = (
+  value: SandboxCertificationRunStatus,
+): PrismaSandboxCertificationRunStatus => value;
+
+const sandboxPromotionStatusToDomain = (
+  value: PrismaSandboxPromotionStatus,
+): SandboxPromotionStatus => value.replaceAll("_", "-") as SandboxPromotionStatus;
+
+const sandboxPromotionStatusToPrisma = (
+  value: SandboxPromotionStatus,
+): PrismaSandboxPromotionStatus => value.replaceAll("-", "_") as PrismaSandboxPromotionStatus;
+
+const operationalTelemetryKindToDomain = (
+  value: PrismaOperationalTelemetryKind,
+): OperationalTelemetryKind => value;
+
+const operationalTelemetryKindToPrisma = (
+  value: OperationalTelemetryKind,
+): PrismaOperationalTelemetryKind => value;
+
+const operationalTelemetrySeverityToDomain = (
+  value: PrismaOperationalTelemetrySeverity,
+): OperationalTelemetrySeverity => value;
+
+const operationalTelemetrySeverityToPrisma = (
+  value: OperationalTelemetrySeverity,
+): PrismaOperationalTelemetrySeverity => value;
+
+const operationalMetricTypeToDomain = (
+  value: PrismaOperationalMetricType,
+): OperationalMetricType => value;
+
+const operationalMetricTypeToPrisma = (
+  value: OperationalMetricType,
+): PrismaOperationalMetricType => value;
+
 export const fixtureInclude = {} as const satisfies Prisma.FixtureDefaultArgs;
 export type FixtureRecord = Prisma.FixtureGetPayload<typeof fixtureInclude>;
 
@@ -221,6 +294,17 @@ export type ValidationRecord = Prisma.ValidationGetPayload<typeof validationIncl
 
 export const auditEventInclude = {} as const satisfies Prisma.AuditEventDefaultArgs;
 export type AuditEventRecord = Prisma.AuditEventGetPayload<typeof auditEventInclude>;
+
+export const sandboxCertificationRunInclude = {} as const satisfies Prisma.SandboxCertificationRunDefaultArgs;
+export type SandboxCertificationRunRecord = Prisma.SandboxCertificationRunGetPayload<typeof sandboxCertificationRunInclude>;
+
+export const operationalTelemetryEventInclude = {} as const satisfies Prisma.OperationalTelemetryEventDefaultArgs;
+export type OperationalTelemetryEventRecord =
+  Prisma.OperationalTelemetryEventGetPayload<typeof operationalTelemetryEventInclude>;
+
+export const operationalMetricSampleInclude = {} as const satisfies Prisma.OperationalMetricSampleDefaultArgs;
+export type OperationalMetricSampleRecord =
+  Prisma.OperationalMetricSampleGetPayload<typeof operationalMetricSampleInclude>;
 
 export const leagueCoveragePolicyInclude = {} as const satisfies Prisma.LeagueCoveragePolicyDefaultArgs;
 export type LeagueCoveragePolicyRecord = Prisma.LeagueCoveragePolicyGetPayload<
@@ -722,17 +806,28 @@ export const validationDomainToCreateInput = (
 
 export const auditEventRecordToDomain = (
   record: AuditEvent | AuditEventRecord,
-): AuditEventEntity => ({
-  id: record.id,
-  aggregateType: record.aggregateType,
-  aggregateId: record.aggregateId,
-  eventType: record.eventType,
-  ...(record.actor ? { actor: record.actor } : {}),
-  payload: asRecord(record.payload),
-  occurredAt: record.occurredAt.toISOString(),
-  createdAt: record.createdAt.toISOString(),
-  updatedAt: record.updatedAt.toISOString(),
-});
+): AuditEventEntity => {
+  const lineageRefs = asStringArray(record.lineageRefs);
+
+  return {
+    id: record.id,
+    aggregateType: record.aggregateType,
+    aggregateId: record.aggregateId,
+    eventType: record.eventType,
+    ...(record.actor ? { actor: record.actor } : {}),
+    ...(record.actorType ? { actorType: record.actorType as AuditActorType } : {}),
+    ...(record.subjectType ? { subjectType: record.subjectType } : {}),
+    ...(record.subjectId ? { subjectId: record.subjectId } : {}),
+    ...(record.action ? { action: record.action } : {}),
+    ...(record.traceId ? { traceId: record.traceId } : {}),
+    ...(record.correlationId ? { correlationId: record.correlationId } : {}),
+    ...(lineageRefs.length > 0 ? { lineageRefs } : {}),
+    payload: asRecord(record.payload),
+    occurredAt: record.occurredAt.toISOString(),
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+};
 
 export const auditEventDomainToCreateInput = (
   entity: AuditEventEntity,
@@ -742,8 +837,155 @@ export const auditEventDomainToCreateInput = (
   aggregateId: entity.aggregateId,
   eventType: entity.eventType,
   actor: entity.actor ?? null,
+  actorType: entity.actorType ?? null,
+  subjectType: entity.subjectType ?? null,
+  subjectId: entity.subjectId ?? null,
+  action: entity.action ?? null,
+  traceId: entity.traceId ?? null,
+  correlationId: entity.correlationId ?? null,
+  lineageRefs: entity.lineageRefs ? (entity.lineageRefs as Prisma.InputJsonValue) : Prisma.JsonNull,
   payload: entity.payload as Prisma.InputJsonValue,
   occurredAt: new Date(entity.occurredAt),
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+const sandboxCertificationDiffEntriesToDomain = (
+  value: Prisma.JsonValue | null | undefined,
+): SandboxCertificationDiffEntry[] =>
+  asArray<SandboxCertificationDiffEntry>(value).map((entry) => ({
+    path: entry.path,
+    kind: entry.kind,
+    ...(entry.expected !== undefined ? { expected: structuredClone(entry.expected) } : {}),
+    ...(entry.actual !== undefined ? { actual: structuredClone(entry.actual) } : {}),
+  }));
+
+export const sandboxCertificationRunRecordToDomain = (
+  record: SandboxCertificationRun | SandboxCertificationRunRecord,
+): SandboxCertificationRunEntity => ({
+  id: record.id,
+  verificationKind: sandboxCertificationVerificationKindToDomain(record.verificationKind),
+  profileName: record.profileName,
+  packId: record.packId,
+  mode: record.mode,
+  gitSha: record.gitSha,
+  ...(record.baselineRef ? { baselineRef: record.baselineRef } : {}),
+  ...(record.candidateRef ? { candidateRef: record.candidateRef } : {}),
+  status: sandboxCertificationRunStatusToDomain(record.status),
+  ...(record.promotionStatus ? { promotionStatus: sandboxPromotionStatusToDomain(record.promotionStatus) } : {}),
+  ...(record.goldenFingerprint ? { goldenFingerprint: record.goldenFingerprint } : {}),
+  ...(record.evidenceFingerprint ? { evidenceFingerprint: record.evidenceFingerprint } : {}),
+  ...(record.artifactRef ? { artifactRef: record.artifactRef } : {}),
+  runtimeSignals: asRecord(record.runtimeSignals),
+  diffEntries: sandboxCertificationDiffEntriesToDomain(record.diffEntries),
+  summary: asRecord(record.summary),
+  generatedAt: record.generatedAt.toISOString(),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const sandboxCertificationRunDomainToCreateInput = (
+  entity: SandboxCertificationRunEntity,
+): Prisma.SandboxCertificationRunUncheckedCreateInput => ({
+  id: entity.id,
+  verificationKind: sandboxCertificationVerificationKindToPrisma(entity.verificationKind),
+  profileName: entity.profileName,
+  packId: entity.packId,
+  mode: entity.mode,
+  gitSha: entity.gitSha,
+  baselineRef: entity.baselineRef ?? null,
+  candidateRef: entity.candidateRef ?? null,
+  status: sandboxCertificationRunStatusToPrisma(entity.status),
+  promotionStatus: entity.promotionStatus ? sandboxPromotionStatusToPrisma(entity.promotionStatus) : null,
+  goldenFingerprint: entity.goldenFingerprint ?? null,
+  evidenceFingerprint: entity.evidenceFingerprint ?? null,
+  artifactRef: entity.artifactRef ?? null,
+  runtimeSignals: entity.runtimeSignals as Prisma.InputJsonValue,
+  diffEntries: entity.diffEntries as unknown as Prisma.InputJsonValue,
+  summary: entity.summary as Prisma.InputJsonValue,
+  generatedAt: new Date(entity.generatedAt),
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const operationalTelemetryEventRecordToDomain = (
+  record: OperationalTelemetryEvent | OperationalTelemetryEventRecord,
+): OperationalTelemetryEventEntity => ({
+  id: record.id,
+  kind: operationalTelemetryKindToDomain(record.kind),
+  name: record.name,
+  severity: operationalTelemetrySeverityToDomain(record.severity),
+  ...(record.traceId ? { traceId: record.traceId } : {}),
+  ...(record.correlationId ? { correlationId: record.correlationId } : {}),
+  ...(record.taskId ? { taskId: record.taskId } : {}),
+  ...(record.taskRunId ? { taskRunId: record.taskRunId } : {}),
+  ...(record.automationCycleId ? { automationCycleId: record.automationCycleId } : {}),
+  ...(record.sandboxCertificationRunId ? { sandboxCertificationRunId: record.sandboxCertificationRunId } : {}),
+  occurredAt: record.occurredAt.toISOString(),
+  ...(record.finishedAt ? { finishedAt: record.finishedAt.toISOString() } : {}),
+  ...(record.durationMs !== null ? { durationMs: record.durationMs } : {}),
+  ...(record.message ? { message: record.message } : {}),
+  attributes: asRecord(record.attributes),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const operationalTelemetryEventDomainToCreateInput = (
+  entity: OperationalTelemetryEventEntity,
+): Prisma.OperationalTelemetryEventUncheckedCreateInput => ({
+  id: entity.id,
+  kind: operationalTelemetryKindToPrisma(entity.kind),
+  name: entity.name,
+  severity: operationalTelemetrySeverityToPrisma(entity.severity),
+  traceId: entity.traceId ?? null,
+  correlationId: entity.correlationId ?? null,
+  taskId: entity.taskId ?? null,
+  taskRunId: entity.taskRunId ?? null,
+  automationCycleId: entity.automationCycleId ?? null,
+  sandboxCertificationRunId: entity.sandboxCertificationRunId ?? null,
+  occurredAt: new Date(entity.occurredAt),
+  finishedAt: toDate(entity.finishedAt) ?? null,
+  durationMs: entity.durationMs ?? null,
+  message: entity.message ?? null,
+  attributes: entity.attributes as Prisma.InputJsonValue,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const operationalMetricSampleRecordToDomain = (
+  record: OperationalMetricSample | OperationalMetricSampleRecord,
+): OperationalMetricSampleEntity => ({
+  id: record.id,
+  name: record.name,
+  type: operationalMetricTypeToDomain(record.type),
+  value: record.value,
+  labels: asStringRecord(record.labels),
+  ...(record.traceId ? { traceId: record.traceId } : {}),
+  ...(record.correlationId ? { correlationId: record.correlationId } : {}),
+  ...(record.taskId ? { taskId: record.taskId } : {}),
+  ...(record.taskRunId ? { taskRunId: record.taskRunId } : {}),
+  ...(record.automationCycleId ? { automationCycleId: record.automationCycleId } : {}),
+  ...(record.sandboxCertificationRunId ? { sandboxCertificationRunId: record.sandboxCertificationRunId } : {}),
+  recordedAt: record.recordedAt.toISOString(),
+  createdAt: record.createdAt.toISOString(),
+  updatedAt: record.updatedAt.toISOString(),
+});
+
+export const operationalMetricSampleDomainToCreateInput = (
+  entity: OperationalMetricSampleEntity,
+): Prisma.OperationalMetricSampleUncheckedCreateInput => ({
+  id: entity.id,
+  name: entity.name,
+  type: operationalMetricTypeToPrisma(entity.type),
+  value: entity.value,
+  labels: entity.labels as Prisma.InputJsonValue,
+  traceId: entity.traceId ?? null,
+  correlationId: entity.correlationId ?? null,
+  taskId: entity.taskId ?? null,
+  taskRunId: entity.taskRunId ?? null,
+  automationCycleId: entity.automationCycleId ?? null,
+  sandboxCertificationRunId: entity.sandboxCertificationRunId ?? null,
+  recordedAt: new Date(entity.recordedAt),
   createdAt: new Date(entity.createdAt),
   updatedAt: new Date(entity.updatedAt),
 });

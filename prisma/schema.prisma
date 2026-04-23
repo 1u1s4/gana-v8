@@ -140,6 +140,40 @@ enum ValidationTargetType {
   sandbox_namespace @map("sandbox-namespace")
 }
 
+enum SandboxCertificationVerificationKind {
+  synthetic_integrity @map("synthetic-integrity")
+  runtime_release     @map("runtime-release")
+}
+
+enum SandboxCertificationRunStatus {
+  passed
+  failed
+}
+
+enum SandboxPromotionStatus {
+  blocked
+  review_required @map("review-required")
+  promotable
+}
+
+enum OperationalTelemetryKind {
+  log
+  span
+}
+
+enum OperationalTelemetrySeverity {
+  debug
+  info
+  warn
+  error
+}
+
+enum OperationalMetricType {
+  counter
+  gauge
+  histogram
+}
+
 enum WorkflowStageStatus {
   pending
   running
@@ -162,66 +196,66 @@ enum FixtureSelectionOverride {
 }
 
 model Fixture {
-  id                   String                 @id
-  sport                String
-  competition          String
-  homeTeam             String
-  awayTeam             String
-  scheduledAt          DateTime
-  status               FixtureStatus
-  scoreHome            Int?
-  scoreAway            Int?
-  metadata             Json
-  predictions          Prediction[]
-  parlayLegs           ParlayLeg[]
-  oddsSnapshots        OddsSnapshot[]
-  researchBundles      ResearchBundle[]
-  researchSources      ResearchSource[]
-  researchClaims       ResearchClaim[]
-  researchConflicts    ResearchConflict[]
-  featureSnapshots     FeatureSnapshot[]
+  id                    String                 @id
+  sport                 String
+  competition           String
+  homeTeam              String
+  awayTeam              String
+  scheduledAt           DateTime
+  status                FixtureStatus
+  scoreHome             Int?
+  scoreAway             Int?
+  metadata              Json
+  predictions           Prediction[]
+  parlayLegs            ParlayLeg[]
+  oddsSnapshots         OddsSnapshot[]
+  researchBundles       ResearchBundle[]
+  researchSources       ResearchSource[]
+  researchClaims        ResearchClaim[]
+  researchConflicts     ResearchConflict[]
+  featureSnapshots      FeatureSnapshot[]
   availabilitySnapshots AvailabilitySnapshot[]
-  lineupSnapshots      LineupSnapshot[]
-  researchAssignments  ResearchAssignment[]
-  workflow             FixtureWorkflow?
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
+  lineupSnapshots       LineupSnapshot[]
+  researchAssignments   ResearchAssignment[]
+  workflow              FixtureWorkflow?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
   @@index([competition, scheduledAt])
 }
 
 model FixtureWorkflow {
-  id               String              @id
-  fixtureId        String              @unique
-  fixture          Fixture             @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
-  ingestionStatus  WorkflowStageStatus
-  oddsStatus       WorkflowStageStatus
-  enrichmentStatus WorkflowStageStatus
-  candidateStatus  WorkflowStageStatus
-  predictionStatus WorkflowStageStatus
-  parlayStatus     WorkflowStageStatus
-  validationStatus WorkflowStageStatus
-  isCandidate      Boolean
-  minDetectedOdd   Float?
-  qualityScore     Float?
-  selectionScore   Float?
-  lastIngestedAt   DateTime?
-  lastEnrichedAt   DateTime?
-  lastPredictedAt  DateTime?
-  lastParlayAt     DateTime?
-  lastValidatedAt  DateTime?
+  id                    String                       @id
+  fixtureId             String                       @unique
+  fixture               Fixture                      @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
+  ingestionStatus       WorkflowStageStatus
+  oddsStatus            WorkflowStageStatus
+  enrichmentStatus      WorkflowStageStatus
+  candidateStatus       WorkflowStageStatus
+  predictionStatus      WorkflowStageStatus
+  parlayStatus          WorkflowStageStatus
+  validationStatus      WorkflowStageStatus
+  isCandidate           Boolean
+  minDetectedOdd        Float?
+  qualityScore          Float?
+  selectionScore        Float?
+  lastIngestedAt        DateTime?
+  lastEnrichedAt        DateTime?
+  lastPredictedAt       DateTime?
+  lastParlayAt          DateTime?
+  lastValidatedAt       DateTime?
   manualSelectionStatus FixtureManualSelectionStatus @default(none)
-  manualSelectionBy String?
+  manualSelectionBy     String?
   manualSelectionReason String?
-  manuallySelectedAt DateTime?
-  selectionOverride FixtureSelectionOverride @default(none)
-  overrideReason String?
-  overriddenAt DateTime?
-  errorCount       Int                 @default(0)
-  lastErrorMessage String?             @db.Text
-  diagnostics      Json?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  manuallySelectedAt    DateTime?
+  selectionOverride     FixtureSelectionOverride     @default(none)
+  overrideReason        String?
+  overriddenAt          DateTime?
+  errorCount            Int                          @default(0)
+  lastErrorMessage      String?                      @db.Text
+  diagnostics           Json?
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
 
   @@index([fixtureId, updatedAt])
   @@index([predictionStatus])
@@ -229,7 +263,7 @@ model FixtureWorkflow {
 }
 
 model RawIngestionBatch {
-  id                    String                @id
+  id                    String                 @id
   providerCode          String
   endpointFamily        String
   sourceName            String
@@ -250,8 +284,8 @@ model RawIngestionBatch {
   oddsSnapshots         OddsSnapshot[]
   availabilitySnapshots AvailabilitySnapshot[]
   lineupSnapshots       LineupSnapshot[]
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
   @@index([providerCode, endpointFamily, extractionTime])
 }
@@ -365,20 +399,20 @@ model AutomationCycle {
 }
 
 model SchedulerCursor {
-  id              String   @id
-  specId          String   @unique
+  id              String    @id
+  specId          String    @unique
   lastTriggeredAt DateTime?
   metadata        Json?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([lastTriggeredAt])
 }
 
 model AiRun {
-  id                    String       @id
+  id                    String           @id
   taskId                String
-  task                  Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task                  Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
   provider              String
   model                 String
   promptVersion         String
@@ -388,43 +422,43 @@ model AiRun {
   usageCompletionTokens Int?
   usageTotalTokens      Int?
   outputRef             String?
-  error                 String?       @db.Text
-  fallbackReason        String?       @db.Text
+  error                 String?          @db.Text
+  fallbackReason        String?          @db.Text
   degraded              Boolean?
   predictions           Prediction[]
   researchBundles       ResearchBundle[]
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
   @@index([taskId, createdAt])
 }
 
 model ResearchBundle {
-  id               String            @id
+  id               String               @id
   fixtureId        String
-  fixture          Fixture           @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
+  fixture          Fixture              @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
   generatedAt      DateTime
   gatedAt          DateTime
   status           String
   briefHeadline    String
-  briefContext     String            @db.Text
+  briefContext     String               @db.Text
   briefQuestions   Json
   briefAssumptions Json
-  summary          String            @db.Text
+  summary          String               @db.Text
   recommendedLean  String
   directionalScore Json
   risks            Json
   gateReasons      Json
   trace            Json?
   aiRunId          String?
-  aiRun            AiRun?            @relation(fields: [aiRunId], references: [id], onDelete: SetNull)
+  aiRun            AiRun?               @relation(fields: [aiRunId], references: [id], onDelete: SetNull)
   claims           ResearchClaim[]
   sources          ResearchSource[]
   conflicts        ResearchConflict[]
   featureSnapshots FeatureSnapshot[]
   assignments      ResearchAssignment[]
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   @@index([fixtureId, generatedAt])
   @@index([status, generatedAt])
@@ -456,31 +490,31 @@ model ResearchSource {
 }
 
 model ResearchClaim {
-  id                  String                @id
-  bundleId            String
-  bundle              ResearchBundle        @relation(fields: [bundleId], references: [id], onDelete: Cascade)
-  fixtureId           String
-  fixture             Fixture               @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
-  assignmentId        String?
-  assignment          ResearchAssignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
-  kind                String
-  title               String
-  summary             String                @db.Text
-  direction           String
-  confidence          Float
-  impact              Float
-  significance        String
-  status              String
-  corroborationStatus String
-  requiredSourceCount Int
-  matchedSourceIds    Json
+  id                   String                @id
+  bundleId             String
+  bundle               ResearchBundle        @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  fixtureId            String
+  fixture              Fixture               @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
+  assignmentId         String?
+  assignment           ResearchAssignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  kind                 String
+  title                String
+  summary              String                @db.Text
+  direction            String
+  confidence           Float
+  impact               Float
+  significance         String
+  status               String
+  corroborationStatus  String
+  requiredSourceCount  Int
+  matchedSourceIds     Json
   freshnessWindowHours Int
-  extractedAt         DateTime
-  freshnessExpiresAt  DateTime?
-  metadata            Json
-  sourceLinks         ResearchClaimSource[]
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
+  extractedAt          DateTime
+  freshnessExpiresAt   DateTime?
+  metadata             Json
+  sourceLinks          ResearchClaimSource[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
   @@index([bundleId, kind])
   @@index([fixtureId, extractedAt])
@@ -543,52 +577,52 @@ model FeatureSnapshot {
 }
 
 model AvailabilitySnapshot {
-  id               String            @id
-  batchId          String
-  batch            RawIngestionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  fixtureId        String?
-  fixture          Fixture?          @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
+  id                String            @id
+  batchId           String
+  batch             RawIngestionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  fixtureId         String?
+  fixture           Fixture?          @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
   providerFixtureId String
-  providerCode     String
-  teamSide         String?           @db.VarChar(32)
-  subjectType      String            @db.VarChar(32)
-  subjectName      String            @db.VarChar(128)
-  status           String
-  capturedAt       DateTime
-  sourceUpdatedAt  DateTime?
-  summary          String            @db.Text
-  payload          Json
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  providerCode      String
+  teamSide          String?           @db.VarChar(32)
+  subjectType       String            @db.VarChar(32)
+  subjectName       String            @db.VarChar(128)
+  status            String
+  capturedAt        DateTime
+  sourceUpdatedAt   DateTime?
+  summary           String            @db.Text
+  payload           Json
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   @@unique([batchId, providerFixtureId, teamSide, subjectType, subjectName])
   @@index([fixtureId, capturedAt])
 }
 
 model LineupSnapshot {
-  id               String             @id
-  batchId          String
-  batch            RawIngestionBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  fixtureId        String?
-  fixture          Fixture?           @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
+  id                String              @id
+  batchId           String
+  batch             RawIngestionBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  fixtureId         String?
+  fixture           Fixture?            @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
   providerFixtureId String
-  providerCode     String
-  teamSide         String             @db.VarChar(32)
-  lineupStatus     String             @db.VarChar(64)
-  formation        String?
-  capturedAt       DateTime
-  sourceUpdatedAt  DateTime?
-  payload          Json
-  participants     LineupParticipant[]
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  providerCode      String
+  teamSide          String              @db.VarChar(32)
+  lineupStatus      String              @db.VarChar(64)
+  formation         String?
+  capturedAt        DateTime
+  sourceUpdatedAt   DateTime?
+  payload           Json
+  participants      LineupParticipant[]
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   @@unique([batchId, providerFixtureId, teamSide, lineupStatus])
   @@index([fixtureId, capturedAt])
 }
 
 model LineupParticipant {
-  id                 String        @id
+  id                 String         @id
   lineupSnapshotId   String
   lineupSnapshot     LineupSnapshot @relation(fields: [lineupSnapshotId], references: [id], onDelete: Cascade)
   index              Int
@@ -597,17 +631,17 @@ model LineupParticipant {
   position           String?
   jerseyNumber       Int?
   availabilityStatus String?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   @@unique([lineupSnapshotId, index])
   @@index([participantName])
 }
 
 model ResearchAssignment {
-  id            String         @id
+  id            String          @id
   fixtureId     String
-  fixture       Fixture        @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
+  fixture       Fixture         @relation(fields: [fixtureId], references: [id], onDelete: Cascade)
   bundleId      String?
   bundle        ResearchBundle? @relation(fields: [bundleId], references: [id], onDelete: SetNull)
   dimension     String
@@ -615,12 +649,12 @@ model ResearchAssignment {
   attemptNumber Int
   startedAt     DateTime?
   finishedAt    DateTime?
-  error         String?        @db.Text
-  summary       String?        @map("outputSummary") @db.Text
+  error         String?         @db.Text
+  summary       String?         @map("outputSummary") @db.Text
   metadata      Json
   claims        ResearchClaim[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   @@index([fixtureId, createdAt])
   @@index([bundleId, dimension])
@@ -702,12 +736,100 @@ model AuditEvent {
   aggregateId   String
   eventType     String
   actor         String?
+  actorType     String?
+  subjectType   String?
+  subjectId     String?
+  action        String?
+  traceId       String?
+  correlationId String?
+  lineageRefs   Json?
   payload       Json
   occurredAt    DateTime
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([aggregateType, aggregateId, occurredAt])
+  @@index([subjectType, subjectId, occurredAt])
+  @@index([traceId])
+  @@index([correlationId])
+}
+
+model SandboxCertificationRun {
+  id                  String                               @id
+  verificationKind    SandboxCertificationVerificationKind
+  profileName         String
+  packId              String
+  mode                String
+  gitSha              String
+  baselineRef         String?
+  candidateRef        String?
+  status              SandboxCertificationRunStatus
+  promotionStatus     SandboxPromotionStatus?
+  goldenFingerprint   String?
+  evidenceFingerprint String?
+  artifactRef         String?                              @db.Text
+  runtimeSignals      Json
+  diffEntries         Json
+  summary             Json
+  generatedAt         DateTime
+  createdAt           DateTime                             @default(now())
+  updatedAt           DateTime                             @updatedAt
+
+  @@index([profileName, packId, verificationKind, generatedAt], map: "scr_profile_pack_kind_gen_idx")
+  @@index([verificationKind, status, generatedAt], map: "scr_kind_status_gen_idx")
+  @@index([generatedAt])
+}
+
+model OperationalTelemetryEvent {
+  id                        String                       @id
+  kind                      OperationalTelemetryKind
+  name                      String
+  severity                  OperationalTelemetrySeverity
+  traceId                   String?
+  correlationId             String?
+  taskId                    String?
+  taskRunId                 String?
+  automationCycleId         String?
+  sandboxCertificationRunId String?
+  occurredAt                DateTime
+  finishedAt                DateTime?
+  durationMs                Int?
+  message                   String?                      @db.Text
+  attributes                Json
+  createdAt                 DateTime                     @default(now())
+  updatedAt                 DateTime                     @updatedAt
+
+  @@index([name, occurredAt])
+  @@index([severity, occurredAt])
+  @@index([traceId, occurredAt])
+  @@index([taskId, occurredAt])
+  @@index([taskRunId, occurredAt])
+  @@index([automationCycleId, occurredAt])
+  @@index([sandboxCertificationRunId, occurredAt], map: "ote_scrid_occ_idx")
+}
+
+model OperationalMetricSample {
+  id                        String                @id
+  name                      String
+  type                      OperationalMetricType
+  value                     Float
+  labels                    Json
+  traceId                   String?
+  correlationId             String?
+  taskId                    String?
+  taskRunId                 String?
+  automationCycleId         String?
+  sandboxCertificationRunId String?
+  recordedAt                DateTime
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+
+  @@index([name, type, recordedAt])
+  @@index([traceId, recordedAt])
+  @@index([taskId, recordedAt])
+  @@index([taskRunId, recordedAt])
+  @@index([automationCycleId, recordedAt])
+  @@index([sandboxCertificationRunId, recordedAt], map: "oms_scrid_rec_idx")
 }
 
 model LeagueCoveragePolicy {
@@ -748,19 +870,19 @@ model TeamCoveragePolicy {
 }
 
 model DailyAutomationPolicy {
-  id                       String   @id
-  policyName               String   @unique
-  enabled                  Boolean
-  timezone                 String
-  minAllowedOdd            Float
-  defaultMaxFixturesPerRun Int
-  defaultLookaheadHours    Int
-  defaultLookbackHours     Int
+  id                         String   @id
+  policyName                 String   @unique
+  enabled                    Boolean
+  timezone                   String
+  minAllowedOdd              Float
+  defaultMaxFixturesPerRun   Int
+  defaultLookaheadHours      Int
+  defaultLookbackHours       Int
   requireTrackedLeagueOrTeam Boolean
   allowManualInclusionBypass Boolean
-  notes                    String?  @db.Text
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  notes                      String?  @db.Text
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
   @@index([enabled, policyName])
 }
