@@ -25,7 +25,7 @@ Retirar un candidato de release del harness cuando el runtime durable o la evide
 ```bash
 pnpm test:sandbox:certification
 pnpm db:generate
-pnpm db:push
+pnpm db:migrate:deploy
 pnpm --filter @gana-v8/control-plane-runtime test
 GANA_RUNTIME_PROFILE=ci-smoke pnpm test:e2e:hermes-smoke
 ```

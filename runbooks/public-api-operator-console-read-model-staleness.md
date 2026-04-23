@@ -29,11 +29,10 @@ curl -s http://127.0.0.1:${GANA_PUBLIC_API_PORT:-3100}/telemetry/events
 curl -s http://127.0.0.1:${GANA_PUBLIC_API_PORT:-3100}/telemetry/metrics
 ```
 
-2. Contrastar contra la base durable:
+2. Contrastar contra la base durable sin mutar el schema del entorno afectado:
 
 ```bash
 pnpm db:generate
-pnpm db:push
 pnpm --filter @gana-v8/control-plane-runtime test
 ```
 

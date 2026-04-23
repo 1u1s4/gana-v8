@@ -30,6 +30,12 @@ const requiredAgenticEvaluationRubricSections = [
   "Salida del evaluador",
   "Reevaluacion",
 ];
+const requiredRunbooksIndexSections = [
+  "Runbooks operativos activos",
+  "Routing operativo",
+  "Matriz canonica de bootstrap y preparacion",
+  "Doc-gardening recurrente",
+];
 const localMarkdownLinkPattern = /!?\[[^\]]*]\(([^)]+)\)/g;
 
 const args = process.argv.slice(2);
@@ -64,6 +70,7 @@ async function lintRepo(repoPath) {
   await assertExists(resolve(repoPath, "docs/agentic-evaluation-rubric.md"), "docs/agentic-evaluation-rubric.md");
   await assertExists(resolve(repoPath, "docs/plans/README.md"), "docs/plans/README.md");
   await assertExists(resolve(repoPath, "runbooks"), "runbooks/");
+  await assertExists(resolve(repoPath, "runbooks/README.md"), "runbooks/README.md");
 
   await assertMarkdownHeadings(
     await readFile(resolve(repoPath, "docs/agentic-sprint-contract.md"), "utf8"),
@@ -76,11 +83,15 @@ async function lintRepo(repoPath) {
     requiredAgenticEvaluationRubricSections,
   );
 
-  const runbookEntries = await readdir(resolve(repoPath, "runbooks"), { withFileTypes: true });
-  const runbookCount = runbookEntries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
-  if (runbookCount === 0) {
+  const runbookNames = await readRunbookNames(resolve(repoPath, "runbooks"));
+  if (runbookNames.length === 0) {
     throw new Error("runbooks/ should contain at least one markdown runbook");
   }
+
+  const runbooksIndexContent = await readFile(resolve(repoPath, "runbooks/README.md"), "utf8");
+  assertMarkdownHeadings(runbooksIndexContent, "runbooks/README.md", requiredRunbooksIndexSections);
+  const indexedRunbooks = extractCodeListItems(readSection(runbooksIndexContent, "Runbooks operativos activos")).sort();
+  assertSameList("runbooks/README.md active runbooks", indexedRunbooks, runbookNames);
 
   const activePlans = await readActivePlanNames(resolve(repoPath, "docs/plans/falta"));
   for (const planName of activePlans) {
@@ -100,10 +111,18 @@ async function lintRepo(repoPath) {
   const indexedPlans = extractCodeListItems(readSection(plansReadmeContent, "Planes vigentes en `falta/`")).sort();
   assertSameList("docs/plans/README.md active plans", indexedPlans, activePlans);
 
+  const agentsContent = await readFile(resolve(repoPath, "AGENTS.md"), "utf8");
+  const agentsPlans = extractCodeListItems(readSection(agentsContent, "Planes activos"))
+    .filter((item) => item.startsWith("docs/plans/falta/"))
+    .map((item) => item.replace("docs/plans/falta/", ""))
+    .sort();
+  assertSameList("AGENTS.md active plans", agentsPlans, activePlans);
+
   const markdownFiles = await collectMarkdownFiles(repoPath);
   for (const filePath of markdownFiles) {
     await lintMarkdownLinks(repoPath, filePath);
   }
+  await lintOperationalCommandDrift(repoPath);
 
   console.log(`repo lint ok: ${activePlans.length} active plans, ${markdownFiles.length} markdown files checked`);
 }
@@ -113,6 +132,14 @@ async function readActivePlanNames(activePlansPath) {
   const entries = await readdir(activePlansPath, { withFileTypes: true });
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+async function readRunbookNames(runbooksPath) {
+  const entries = await readdir(runbooksPath, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name !== "README.md")
     .map((entry) => entry.name)
     .sort();
 }
@@ -214,6 +241,38 @@ async function lintMarkdownLinks(repoPath, filePath) {
       throw new Error(`Broken local markdown link in ${toRepoPath(repoPath, filePath)}: ${rawTarget}`);
     }
   }
+}
+
+async function lintOperationalCommandDrift(repoPath) {
+  const allowedDbPushFile = resolve(repoPath, "runbooks/README.md");
+  const operationalMarkdownFiles = [
+    resolve(repoPath, "AGENTS.md"),
+    resolve(repoPath, "README.md"),
+    resolve(repoPath, "docs/README.md"),
+    ...(await walkMarkdownTree(resolve(repoPath, "runbooks"))),
+  ];
+
+  for (const filePath of operationalMarkdownFiles) {
+    const content = await readFile(filePath, "utf8");
+    const headings = extractMarkdownHeadings(content);
+
+    if (filePath !== allowedDbPushFile && content.includes("pnpm db:push")) {
+      throw new Error(`pnpm db:push is only allowed in runbooks/README.md: ${toRepoPath(repoPath, filePath)}`);
+    }
+
+    if (filePath !== allowedDbPushFile && headings.has("Runbooks operativos activos")) {
+      throw new Error(`Runbook inventory should live only in runbooks/README.md: ${toRepoPath(repoPath, filePath)}`);
+    }
+  }
+}
+
+function extractMarkdownHeadings(markdown) {
+  return new Set(
+    markdown
+      .split(/\r?\n/)
+      .filter((line) => /^#{1,6}\s+/.test(line))
+      .map((line) => line.replace(/^#{1,6}\s+/, "").trim()),
+  );
 }
 
 function shouldSkipLink(target) {

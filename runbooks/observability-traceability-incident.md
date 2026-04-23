@@ -37,7 +37,7 @@ curl -s http://127.0.0.1:${GANA_PUBLIC_API_PORT:-3100}/operational-logs
 
 ```bash
 pnpm db:generate
-pnpm db:push
+pnpm db:migrate:deploy
 pnpm --filter @gana-v8/control-plane-runtime test
 ```
 

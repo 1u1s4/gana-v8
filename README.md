@@ -28,7 +28,7 @@ El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-m
 - `docs/agentic-sprint-contract.md`: contrato para sprint agentic no trivial, roles, baseline y validación.
 - `docs/agentic-evaluation-rubric.md`: rúbrica para evaluador separado y salida `promotable`/`review-required`/`blocked`.
 - `docs/plans/falta/`: fuente de verdad para gaps activos del harness.
-- `runbooks/`: procedimientos operativos activos.
+- `runbooks/README.md`: índice canónico para elegir procedimientos operativos activos.
 
 ## Workspaces incluidos
 
@@ -141,6 +141,7 @@ pnpm --filter @gana-v8/sandbox-runner certify -- --mode smoke --profile ci-smoke
 
 Runbooks asociados:
 
+- `runbooks/README.md`
 - `runbooks/expensive-verification-triage.md`
 - `runbooks/sandbox-certification.md`
 - `runbooks/sandbox-certification-drift.md`
@@ -176,7 +177,9 @@ pnpm ops-history-retention -- --dry-run
 pnpm ops-history-retention -- --apply
 ```
 
-Runbooks operativos activos:
+El índice canónico de runbooks vive en `runbooks/README.md`; desde ahí se enruta por objetivo, disparador, precondición y preparación de base de datos.
+
+Runbooks operativos activos más usados:
 
 - `runbooks/expensive-verification-triage.md`
 - `runbooks/release-review-promotion.md`
@@ -193,6 +196,7 @@ Runbooks operativos activos:
 - Copiá `.env.example` a `.env` y completá `DATABASE_URL` (y opcionalmente `DATABASE_ADMIN_URL`) con la conexión MySQL administrada en DigitalOcean.
 - Para DigitalOcean managed MySQL sin CA local configurada, usá `sslaccept=accept_invalid_certs` en la URL
 - El baseline actual de `prisma/migrations/` ya fue regenerado para MySQL.
+- La matriz canónica de preparación vive en `runbooks/README.md`; release review, rollback, smoke y runtime durable usan migraciones versionadas.
 
 ## Convenciones del repo
 
@@ -213,10 +217,10 @@ Runbooks operativos activos:
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/falta/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`
 - `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`

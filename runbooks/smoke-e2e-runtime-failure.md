@@ -22,7 +22,7 @@ Diagnosticar fallos del smoke end-to-end de Hermes y separar problemas de compil
 
 ```bash
 pnpm db:generate
-pnpm db:push
+pnpm db:migrate:deploy
 ```
 
 2. Reproducir el smoke local:

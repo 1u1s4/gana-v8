@@ -40,6 +40,8 @@ pnpm db:generate
 pnpm db:migrate:deploy
 ```
 
+Esta es la preparacion canonica para evidencia release-grade; la sincronizacion ad hoc de schema queda reservada para bootstrap local descartable segun `runbooks/README.md`.
+
 2. Ejecutar el gate MySQL-backed de runtime release:
 
 ```bash

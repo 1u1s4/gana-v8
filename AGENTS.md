@@ -9,7 +9,7 @@ Entry point corto y canónico para agentes que trabajen en `gana-v8`.
 3. Tratar `docs/plans/falta/` como la fuente de verdad para gaps activos del repo.
 4. Usar `docs/agentic-handoff.md` cuando haya subagentes, handoff entre sesiones o trabajo largo.
 5. Usar `docs/agentic-sprint-contract.md` y `docs/agentic-evaluation-rubric.md` para trabajo agentic no trivial, paralelo o con evaluador separado.
-6. Ir a `runbooks/` para procedimientos operativos activos; usar `runbooks/expensive-verification-triage.md` para corridas largas o DB-backed y `runbooks/sandbox-certification.md` para la certificación sintética.
+6. Ir a `runbooks/README.md` para elegir procedimientos operativos activos; usar `runbooks/expensive-verification-triage.md` para corridas largas o DB-backed y `runbooks/sandbox-certification.md` para la certificación sintética.
 
 ## Topología oficial hoy
 
@@ -48,17 +48,17 @@ pnpm build
 pnpm test:sandbox:certification
 ```
 
-`pnpm lint` debe fallar si deriva el mapa mínimo del harness (`AGENTS.md`, índices de planes, secciones obligatorias o links locales).
+`pnpm lint` debe fallar si deriva el mapa mínimo del harness (`AGENTS.md`, índices de planes, índice de runbooks, secciones obligatorias, comandos canónicos o links locales).
 
 ## Planes activos
 
 `docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
-- `docs/plans/falta/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/falta/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 
 Último cierre relevante:
 
+- `docs/plans/completado/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`
 - `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`
