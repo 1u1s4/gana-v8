@@ -78,6 +78,24 @@ importers:
         specifier: workspace:*
         version: link:../validation-worker
 
+  apps/hermes-dispatcher:
+    dependencies:
+      '@gana-v8/control-plane-runtime':
+        specifier: workspace:*
+        version: link:../../packages/control-plane-runtime
+
+  apps/hermes-recovery:
+    dependencies:
+      '@gana-v8/control-plane-runtime':
+        specifier: workspace:*
+        version: link:../../packages/control-plane-runtime
+
+  apps/hermes-scheduler:
+    dependencies:
+      '@gana-v8/control-plane-runtime':
+        specifier: workspace:*
+        version: link:../../packages/control-plane-runtime
+
   apps/ingestion-worker:
     dependencies:
       '@gana-v8/canonical-pipeline':
@@ -221,6 +239,9 @@ importers:
       '@gana-v8/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../../packages/policy-engine
       '@gana-v8/storage-adapters':
         specifier: workspace:*
         version: link:../../packages/storage-adapters
@@ -335,6 +356,51 @@ importers:
       zod:
         specifier: ^3.25.76
         version: 3.25.76
+
+  packages/control-plane-runtime:
+    dependencies:
+      '@gana-v8/config-runtime':
+        specifier: workspace:*
+        version: link:../config-runtime
+      '@gana-v8/domain-core':
+        specifier: workspace:*
+        version: link:../domain-core
+      '@gana-v8/ingestion-worker':
+        specifier: workspace:*
+        version: link:../../apps/ingestion-worker
+      '@gana-v8/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@gana-v8/orchestration-sdk':
+        specifier: workspace:*
+        version: link:../orchestration-sdk
+      '@gana-v8/policy-engine':
+        specifier: workspace:*
+        version: link:../policy-engine
+      '@gana-v8/public-api':
+        specifier: workspace:*
+        version: link:../../apps/public-api
+      '@gana-v8/publisher-worker':
+        specifier: workspace:*
+        version: link:../../apps/publisher-worker
+      '@gana-v8/queue-adapters':
+        specifier: workspace:*
+        version: link:../queue-adapters
+      '@gana-v8/research-worker':
+        specifier: workspace:*
+        version: link:../../apps/research-worker
+      '@gana-v8/sandbox-runner':
+        specifier: workspace:*
+        version: link:../../apps/sandbox-runner
+      '@gana-v8/scoring-worker':
+        specifier: workspace:*
+        version: link:../../apps/scoring-worker
+      '@gana-v8/storage-adapters':
+        specifier: workspace:*
+        version: link:../storage-adapters
+      '@gana-v8/validation-worker':
+        specifier: workspace:*
+        version: link:../../apps/validation-worker
 
   packages/dev-cli:
     dependencies:

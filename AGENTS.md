@@ -54,7 +54,10 @@ pnpm test:sandbox:certification
 
 `docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
-- Ninguno.
+- `docs/plans/falta/gana-v8-harness-principios-dorados-y-garbage-collection.md`
+- `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
+- `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
+- `docs/plans/falta/gana-v8-harness-remediacion-legible-por-agentes.md`
 
 Último cierre relevante:
 

@@ -228,7 +228,10 @@ Runbooks operativos activos más usados:
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- Ninguno.
+- `docs/plans/falta/gana-v8-harness-principios-dorados-y-garbage-collection.md`
+- `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
+- `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
+- `docs/plans/falta/gana-v8-harness-remediacion-legible-por-agentes.md`
 
 Cierre reciente y contexto histórico:
 - `docs/plans/completado/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
