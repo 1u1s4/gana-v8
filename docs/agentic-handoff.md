@@ -45,5 +45,6 @@ Reglas mínimas:
 - No compartir un mismo worktree entre subagentes activos.
 - Si no hay worktree disponible, usar aislamiento equivalente: rama dedicada, ownership explícito de archivos y serialización estricta en superficies compartidas.
 - Antes de integrar o pasar el relevo, dejar el handoff mínimo actualizado y verificar el frente en su propio aislamiento.
+- Para levantar y validar `public-api` + `operator-console` con puertos y artifacts aislados, usar `../runbooks/worktree-bootstrap-validation.md`.
 
 Referencia ampliada para estrategia de worktrees y merges: `docs/plans/completado/hermes-v8-migracion-v7-a-v8-git-worktrees.md`.

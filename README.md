@@ -116,6 +116,17 @@ Variables clave:
 - `GANA_PUBLIC_API_PORT`
 - `GANA_OPERATOR_CONSOLE_PORT`
 
+Para trabajo agentic o validacion local aislada, el bootstrap canonico por worktree vive en `scripts/workspace-dev.mjs` y en el runbook `runbooks/worktree-bootstrap-validation.md`:
+
+```bash
+pnpm harness:bootstrap -- --worktree-id codex-harness --base-port 4100 --skip-db
+pnpm harness:serve -- --worktree-id codex-harness --base-port 4100
+pnpm harness:validate -- --worktree-id codex-harness --base-port 4100 --level smoke
+pnpm harness:clean -- --worktree-id codex-harness
+```
+
+La validacion `smoke` arranca `public-api` y `operator-console`, prueba las superficies HTTP/HTML vivas y deja evidencia en `.artifacts/workspace-dev/<worktree-id>/`.
+
 ## Sandbox y certification
 
 La certificación determinística de sandbox usa goldens versionadas en `fixtures/replays/goldens/` y genera evidence packs en `.artifacts/sandbox-certification/`:
@@ -217,9 +228,10 @@ Runbooks operativos activos más usados:
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
+- Ninguno.
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 - `docs/plans/completado/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`

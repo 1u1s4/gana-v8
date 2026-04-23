@@ -54,10 +54,11 @@ pnpm test:sandbox:certification
 
 `docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
-- `docs/plans/falta/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
+- Ninguno.
 
 Último cierre relevante:
 
+- `docs/plans/completado/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 - `docs/plans/completado/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`
