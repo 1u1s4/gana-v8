@@ -10,6 +10,7 @@ Este directorio es el mapa canónico de documentación del repo. Su función es 
 - [`plans/falta/`](./plans/falta/) contiene los planes canónicos vigentes para brechas reales del repo actual.
 - [`plans/completado/`](./plans/completado/) contiene planes cuyo resultado principal ya quedó materializado de forma sustancial.
 - [`plans/archivado/`](./plans/archivado/) contiene snapshots y planes históricos preservados para trazabilidad, no para trabajo activo.
+- [`harness-principios-dorados.md`](./harness-principios-dorados.md) contiene el contrato canonico de reglas bloqueantes, guidelines, excepciones temporales y scorecard de entropia del harness.
 - [`agentic-handoff.md`](./agentic-handoff.md) contiene el contrato operativo para subagentes, handoff entre sesiones y aislamiento por frente.
 - [`agentic-sprint-contract.md`](./agentic-sprint-contract.md) contiene el contrato previo para trabajo agentic no trivial: alcance, roles, baseline, validacion, done y politica de contexto.
 - [`agentic-evaluation-rubric.md`](./agentic-evaluation-rubric.md) contiene la rubrica versionada para evaluar trabajo agentic y emitir `promotable`, `review-required` o `blocked`.
@@ -19,6 +20,7 @@ Este directorio es el mapa canónico de documentación del repo. Su función es 
 ## Regla de precedencia
 
 - Decisión de arquitectura: manda `docs/adr/`.
+- Reglas de entropia, fronteras runtime y excepciones temporales del harness: manda `docs/harness-principios-dorados.md`.
 - Trabajo agentic largo, paralelo o con evaluador: mandan `docs/agentic-sprint-contract.md` y `docs/agentic-evaluation-rubric.md`.
 - Gap activo, alcance pendiente y orden de cierre: manda `docs/plans/falta/`.
 - Descubrimiento y routing operativo: manda `runbooks/README.md`.

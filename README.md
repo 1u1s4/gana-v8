@@ -24,6 +24,7 @@ El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-m
 
 - `AGENTS.md`: entry point corto del repo para orientación inicial.
 - `docs/README.md`: mapa documental, taxonomía y lifecycle de documentos.
+- `docs/harness-principios-dorados.md`: contrato canónico de reglas bloqueantes, guidelines y excepciones temporales del harness.
 - `docs/agentic-handoff.md`: contrato de subagentes, handoff y aislamientos de trabajo.
 - `docs/agentic-sprint-contract.md`: contrato para sprint agentic no trivial, roles, baseline y validación.
 - `docs/agentic-evaluation-rubric.md`: rúbrica para evaluador separado y salida `promotable`/`review-required`/`blocked`.
@@ -80,6 +81,7 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm verify
+pnpm harness:scorecard
 pnpm test:sandbox:certification
 pnpm build
 ```
@@ -194,6 +196,7 @@ El índice canónico de runbooks vive en `runbooks/README.md`; desde ahí se enr
 Runbooks operativos activos más usados:
 
 - `runbooks/expensive-verification-triage.md`
+- `runbooks/harness-garbage-collection.md`
 - `runbooks/release-review-promotion.md`
 - `runbooks/rollback.md`
 - `runbooks/recovery-redrive.md`
@@ -233,13 +236,13 @@ La skill reusable del repo vive en `skills/gana-v8-verification-guard/` con su `
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
 - `docs/plans/falta/gana-v8-harness-remediacion-legible-por-agentes.md`
 
 Cierre reciente y contexto histórico:
 - `docs/plans/completado/gana-v8-corners-stats-prediction-validation.md`
+- `docs/plans/completado/gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `docs/plans/completado/gana-v8-multi-market-scoring-publishing-validation.md`
 - `docs/plans/completado/gana-v8-multi-market-odds-taxonomy-ingestion.md`
 - `docs/plans/completado/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`

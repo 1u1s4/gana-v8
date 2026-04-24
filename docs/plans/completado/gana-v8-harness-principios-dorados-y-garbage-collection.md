@@ -7,6 +7,13 @@
 - Todavia no existe un contrato versionado de "principios dorados" con reglas mecanicas, scorecards recurrentes y pequenos PRs de limpieza orientados a reducir entropia agentic.
 - El patrullaje recurrente esta descrito como rutina, pero no como sistema de calidad con hallazgos, puntuacion y priorizacion.
 
+## Cierre materializado (2026-04-24)
+
+- `docs/harness-principios-dorados.md` quedo como contrato canonico para reglas bloqueantes, guidelines, excepciones temporales y scorecard de entropia.
+- `runbooks/harness-garbage-collection.md` quedo como procedimiento operativo para patrullaje recurrente, PRs pequenos y decisiones `fix now`, `active plan` o `accepted risk`.
+- `scripts/harness-entropy-scorecard.mjs` expone `pnpm harness:scorecard` como lectura advisory barata y `scripts/workspace-lint.mjs` bloquea invariantes estructurales claras.
+- El backlog activo quedo sincronizado en `AGENTS.md`, `README.md`, `docs/README.md`, `docs/plans/README.md` y `runbooks/README.md`.
+
 ## Ya cubierto
 
 - Entry point corto para agentes.

@@ -1,7 +1,17 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, extname, relative, resolve } from "node:path";
 
 const requiredWorkspaceScripts = ["build", "lint", "test", "typecheck"];
+const canonicalPrinciplesDocPath = "docs/harness-principios-dorados.md";
+const requiredCanonicalPrinciplesHeadings = [
+  "Objetivo",
+  "Alcance",
+  "Reglas bloqueantes",
+  "Guidelines",
+  "Excepciones temporales",
+  "Scorecard de entropia",
+  "Referencias",
+];
 const requiredPlanSections = [
   "Estado actual confirmado",
   "Ya cubierto",
@@ -36,6 +46,23 @@ const requiredRunbooksIndexSections = [
   "Matriz canonica de bootstrap y preparacion",
   "Doc-gardening recurrente",
 ];
+const hermesControlPlanePackageName = "@gana-v8/hermes-control-plane";
+const hermesControlPlaneWorkspace = "apps/hermes-control-plane";
+const codeFileExtensions = new Set([".cjs", ".js", ".mjs", ".ts", ".tsx"]);
+const packageDependencyFields = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+const builtinPnpmCommands = new Set([
+  "add",
+  "config",
+  "dlx",
+  "exec",
+  "install",
+  "link",
+  "prune",
+  "remove",
+  "run",
+  "store",
+  "update",
+]);
 const localMarkdownLinkPattern = /!?\[[^\]]*]\(([^)]+)\)/g;
 
 const args = process.argv.slice(2);
@@ -72,6 +99,8 @@ async function lintRepo(repoPath) {
   await assertExists(resolve(repoPath, "runbooks"), "runbooks/");
   await assertExists(resolve(repoPath, "runbooks/README.md"), "runbooks/README.md");
 
+  await lintCanonicalPrinciplesDoc(repoPath);
+
   await assertMarkdownHeadings(
     await readFile(resolve(repoPath, "docs/agentic-sprint-contract.md"), "utf8"),
     "docs/agentic-sprint-contract.md",
@@ -91,7 +120,8 @@ async function lintRepo(repoPath) {
   const runbooksIndexContent = await readFile(resolve(repoPath, "runbooks/README.md"), "utf8");
   assertMarkdownHeadings(runbooksIndexContent, "runbooks/README.md", requiredRunbooksIndexSections);
   const indexedRunbooks = extractCodeListItems(readSection(runbooksIndexContent, "Runbooks operativos activos")).sort();
-  assertSameList("runbooks/README.md active runbooks", indexedRunbooks, runbookNames);
+  assertRunbookRoutingCoverage(runbooksIndexContent, runbookNames);
+  assertSameList("runbooks/README.md active runbooks", indexedRunbooks, runbookNames, "runbooks/");
 
   const activePlans = await readActivePlanNames(resolve(repoPath, "docs/plans/falta"));
   for (const planName of activePlans) {
@@ -105,26 +135,39 @@ async function lintRepo(repoPath) {
     .filter((item) => item.startsWith("docs/plans/falta/"))
     .map((item) => item.replace("docs/plans/falta/", ""))
     .sort();
-  assertSameList("README.md active plans", readmePlans, activePlans);
+  assertSameList("README.md active plans", readmePlans, activePlans, "docs/plans/falta/");
 
   const plansReadmeContent = await readFile(resolve(repoPath, "docs/plans/README.md"), "utf8");
   const indexedPlans = extractCodeListItems(readSection(plansReadmeContent, "Planes vigentes en `falta/`")).sort();
-  assertSameList("docs/plans/README.md active plans", indexedPlans, activePlans);
+  assertSameList("docs/plans/README.md active plans", indexedPlans, activePlans, "docs/plans/falta/");
 
   const agentsContent = await readFile(resolve(repoPath, "AGENTS.md"), "utf8");
+  await lintAgentsMinimumMap(repoPath, agentsContent);
   const agentsPlans = extractCodeListItems(readSection(agentsContent, "Planes activos"))
     .filter((item) => item.startsWith("docs/plans/falta/"))
     .map((item) => item.replace("docs/plans/falta/", ""))
     .sort();
-  assertSameList("AGENTS.md active plans", agentsPlans, activePlans);
+  assertSameList("AGENTS.md active plans", agentsPlans, activePlans, "docs/plans/falta/");
 
   const markdownFiles = await collectMarkdownFiles(repoPath);
   for (const filePath of markdownFiles) {
     await lintMarkdownLinks(repoPath, filePath);
   }
+  await lintRootPnpmCommands(repoPath, [resolve(repoPath, "AGENTS.md"), resolve(repoPath, "README.md")]);
   await lintOperationalCommandDrift(repoPath);
+  await lintRuntimeBoundary(repoPath);
 
   console.log(`repo lint ok: ${activePlans.length} active plans, ${markdownFiles.length} markdown files checked`);
+}
+
+async function lintCanonicalPrinciplesDoc(repoPath) {
+  const principlesDoc = resolve(repoPath, canonicalPrinciplesDocPath);
+  await assertExists(principlesDoc, canonicalPrinciplesDocPath);
+  assertMarkdownHeadings(
+    await readFile(principlesDoc, "utf8"),
+    canonicalPrinciplesDocPath,
+    requiredCanonicalPrinciplesHeadings,
+  );
 }
 
 async function readActivePlanNames(activePlansPath) {
@@ -173,6 +216,159 @@ function extractCodeListItems(markdownSection) {
   return [...markdownSection.matchAll(/^- `([^`]+)`/gm)].map((match) => match[1]);
 }
 
+function extractMarkdownLinks(markdownSection) {
+  return [...markdownSection.matchAll(localMarkdownLinkPattern)]
+    .map((match) => stripMarkdownLinkDecorators(match[1]?.trim() ?? "").split("#")[0])
+    .filter(Boolean);
+}
+
+function assertRunbookRoutingCoverage(runbooksIndexContent, runbookNames) {
+  const routingLinkList = extractMarkdownLinks(readSection(runbooksIndexContent, "Routing operativo"))
+    .map((target) => target.replace(/^\.\//, ""))
+    .filter((target) => target.endsWith(".md"));
+  const routingLinks = new Set(routingLinkList);
+  const missingRouting = runbookNames.filter((runbookName) => !routingLinks.has(runbookName));
+  if (missingRouting.length > 0) {
+    throw new Error(`runbooks/README.md routing is missing runbook(s): ${missingRouting.join(", ")}`);
+  }
+
+  const unknownRouting = [...routingLinks].filter((runbookName) => !runbookNames.includes(runbookName));
+  if (unknownRouting.length > 0) {
+    throw new Error(`runbooks/README.md routing references non-active runbook(s): ${unknownRouting.join(", ")}`);
+  }
+
+  const duplicateRouting = [...routingLinks].filter(
+    (runbookName) => routingLinkList.filter((linkedRunbookName) => linkedRunbookName === runbookName).length > 1,
+  );
+  if (duplicateRouting.length > 0) {
+    throw new Error(`runbooks/README.md routing repeats runbook(s): ${duplicateRouting.join(", ")}`);
+  }
+}
+
+async function lintAgentsMinimumMap(repoPath, agentsContent) {
+  const minimumMapPaths = extractCodeListItems(readSection(agentsContent, "Mapa mínimo del repo"));
+  for (const mapPath of minimumMapPaths) {
+    await assertExists(resolve(repoPath, mapPath), `AGENTS.md Mapa mínimo path ${mapPath}`);
+  }
+}
+
+async function lintRootPnpmCommands(repoPath, filePaths) {
+  const rootPackageJson = JSON.parse(await readFile(resolve(repoPath, "package.json"), "utf8"));
+  const rootScripts = rootPackageJson.scripts ?? {};
+
+  for (const filePath of filePaths) {
+    const content = await readFile(filePath, "utf8");
+    for (const commandName of extractRootPnpmCommands(content)) {
+      if (!rootScripts[commandName]) {
+        throw new Error(
+          `${toRepoPath(repoPath, filePath)} references pnpm ${commandName}, but package.json has no root script named ${commandName}`,
+        );
+      }
+    }
+  }
+}
+
+function extractRootPnpmCommands(markdown) {
+  const commands = new Set();
+  const commandPattern = /(?:^|\s)(?:[A-Z_][A-Z0-9_]*=[^\s]+\s+)*pnpm\s+([^\s`]+)/gm;
+
+  for (const match of markdown.matchAll(commandPattern)) {
+    const commandName = match[1]?.trim();
+    if (
+      !commandName ||
+      commandName.startsWith("-") ||
+      commandName.includes("/") ||
+      commandName === "prisma" ||
+      builtinPnpmCommands.has(commandName)
+    ) {
+      continue;
+    }
+    commands.add(commandName);
+  }
+
+  return [...commands].sort();
+}
+
+async function lintRuntimeBoundary(repoPath) {
+  const packageJsonPaths = await collectPackageJsonFiles(repoPath);
+  for (const packageJsonPath of packageJsonPaths) {
+    const repoRelativePackageJsonPath = toRepoPath(repoPath, packageJsonPath);
+    if (isInsideHermesControlPlane(repoPath, packageJsonPath)) {
+      continue;
+    }
+
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
+    const dependencyFields = packageDependencyFields.filter(
+      (fieldName) => packageJson[fieldName]?.[hermesControlPlanePackageName],
+    );
+    if (dependencyFields.length > 0) {
+      throw new Error(
+        `${repoRelativePackageJsonPath} must not depend on ${hermesControlPlanePackageName} (${dependencyFields.join(", ")})`,
+      );
+    }
+  }
+
+  const codeFiles = await collectCodeFiles(repoPath);
+  for (const filePath of codeFiles) {
+    if (isInsideHermesControlPlane(repoPath, filePath)) {
+      continue;
+    }
+
+    const content = await readFile(filePath, "utf8");
+    if (importsHermesControlPlane(content)) {
+      throw new Error(`${toRepoPath(repoPath, filePath)} must not import ${hermesControlPlanePackageName}`);
+    }
+  }
+}
+
+async function collectPackageJsonFiles(repoPath) {
+  return collectFiles(repoPath, (entryPath, entry) => entry.isFile() && entry.name === "package.json");
+}
+
+async function collectCodeFiles(repoPath) {
+  return collectFiles(repoPath, (entryPath, entry) => entry.isFile() && codeFileExtensions.has(extname(entry.name)));
+}
+
+async function collectFiles(directoryPath, shouldInclude) {
+  const entries = await readdir(directoryPath, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const entryPath = resolve(directoryPath, entry.name);
+    if (entry.isDirectory()) {
+      if (shouldSkipDirectory(entry.name)) {
+        continue;
+      }
+      files.push(...(await collectFiles(entryPath, shouldInclude)));
+      continue;
+    }
+    if (shouldInclude(entryPath, entry)) {
+      files.push(entryPath);
+    }
+  }
+
+  return files.sort();
+}
+
+function shouldSkipDirectory(directoryName) {
+  return [".artifacts", ".git", ".turbo", "dist", "node_modules"].includes(directoryName);
+}
+
+function isInsideHermesControlPlane(repoPath, filePath) {
+  const repoRelativePath = toPosixPath(relative(repoPath, filePath));
+  return repoRelativePath === hermesControlPlaneWorkspace || repoRelativePath.startsWith(`${hermesControlPlaneWorkspace}/`);
+}
+
+function importsHermesControlPlane(content) {
+  return new RegExp(
+    `(?:from\\s+["']${escapeRegExp(hermesControlPlanePackageName)}(?:/[^"']*)?["']|import\\s*\\(\\s*["']${escapeRegExp(hermesControlPlanePackageName)}(?:/[^"']*)?["']\\s*\\)|require\\s*\\(\\s*["']${escapeRegExp(hermesControlPlanePackageName)}(?:/[^"']*)?["']\\s*\\))`,
+  ).test(content);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function assertMarkdownHeadings(markdown, label, requiredHeadings) {
   const headings = new Set(
     markdown
@@ -192,9 +388,9 @@ function hasHeading(headings, requiredHeading) {
   );
 }
 
-function assertSameList(label, actual, expected) {
+function assertSameList(label, actual, expected, expectedSource) {
   if (actual.length !== expected.length || actual.some((item, index) => item !== expected[index])) {
-    throw new Error(`${label} do not match docs/plans/falta/: expected [${expected.join(", ")}], received [${actual.join(", ")}]`);
+    throw new Error(`${label} do not match ${expectedSource}: expected [${expected.join(", ")}], received [${actual.join(", ")}]`);
   }
 }
 
@@ -305,5 +501,9 @@ async function pathExists(path) {
 }
 
 function toRepoPath(repoPath, filePath) {
-  return filePath.replace(`${repoPath}/`, "");
+  return toPosixPath(filePath.replace(`${repoPath}/`, ""));
+}
+
+function toPosixPath(filePath) {
+  return filePath.replaceAll("\\", "/");
 }
