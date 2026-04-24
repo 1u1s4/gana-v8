@@ -125,6 +125,27 @@ export interface OddsSnapshotReadModel {
   readonly selectionCount: number;
 }
 
+export interface FixtureStatisticSnapshotReadModel {
+  readonly id?: string;
+  readonly fixtureId: string;
+  readonly statKey: string;
+  readonly scope: "home" | "away";
+  readonly valueNumeric: number | null;
+  readonly capturedAt: string;
+}
+
+export interface FixtureCornersStatisticsReadModel {
+  readonly status: "available" | "missing" | "pending";
+  readonly homeCorners: number | null;
+  readonly awayCorners: number | null;
+  readonly totalCorners: number | null;
+  readonly capturedAt: string | null;
+}
+
+export interface FixtureOpsStatisticsReadModel {
+  readonly corners: FixtureCornersStatisticsReadModel;
+}
+
 export type FixtureResearchBundleStatus = "publishable" | "degraded" | "hold";
 
 export interface FixtureResearchGateReasonReadModel {
@@ -399,6 +420,7 @@ export interface FixtureOpsDetailReadModel {
   readonly workflow?: FixtureWorkflowEntity;
   readonly research: FixtureResearchReadModel | null;
   readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
+  readonly statistics: FixtureOpsStatisticsReadModel;
   readonly scoringEligibility: {
     readonly eligible: boolean;
     readonly reason?: string;
@@ -429,6 +451,7 @@ export interface OperationSnapshot {
   readonly providerStates: readonly ProviderStateReadModel[];
   readonly rawBatches: readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots: readonly OddsSnapshotReadModel[];
+  readonly fixtureStatisticSnapshots: readonly FixtureStatisticSnapshotReadModel[];
   readonly manualReviews: readonly ManualReviewReadModel[];
   readonly quarantines: readonly QuarantineReadModel[];
   readonly recovery: readonly RecoveryReadModel[];
@@ -952,6 +975,12 @@ interface FixtureResearchRepositoryCollectionLike {
   };
 }
 
+interface FixtureStatisticSnapshotRepositoryCollectionLike {
+  readonly fixtureStatisticSnapshots?: {
+    list(): Promise<readonly unknown[]>;
+  };
+}
+
 interface PersistedCertificationHistoryRepositoryCollectionLike {
   readonly sandboxCertificationRuns?: {
     listByQuery(query?: Record<string, unknown>): Promise<readonly unknown[]>;
@@ -1341,6 +1370,31 @@ const loadFixtureResearchReadModels = async (input: {
   return repositoryReadModels;
 };
 
+const toFixtureStatisticSnapshotReadModel = (
+  value: unknown,
+): FixtureStatisticSnapshotReadModel | null => {
+  const snapshot = asRecord(value);
+  const fixtureId = asString(snapshot?.fixtureId);
+  const statKey = asString(snapshot?.statKey);
+  const capturedAt = asString(snapshot?.capturedAt);
+  const scope = asString(snapshot?.scope);
+  const id = asString(snapshot?.id);
+  const valueNumeric = asNumber(snapshot?.valueNumeric);
+  if (!fixtureId || !statKey || !capturedAt || (scope !== "home" && scope !== "away")) {
+    return null;
+  }
+  const normalizedScope: FixtureStatisticSnapshotReadModel["scope"] = scope;
+
+  return {
+    ...(id ? { id } : {}),
+    fixtureId,
+    statKey,
+    scope: normalizedScope,
+    valueNumeric,
+    capturedAt,
+  };
+};
+
 const summarizeResearchGateReasons = (
   research: FixtureResearchReadModel | null,
 ): string | null => {
@@ -1493,6 +1547,7 @@ export interface CreateOperationSnapshotInput {
   readonly providerStates?: readonly ProviderStateReadModel[];
   readonly rawBatches?: readonly RawIngestionBatchReadModel[];
   readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
+  readonly fixtureStatisticSnapshots?: readonly FixtureStatisticSnapshotReadModel[];
   readonly manualReviews?: readonly ManualReviewReadModel[];
   readonly quarantines?: readonly QuarantineReadModel[];
   readonly recovery?: readonly RecoveryReadModel[];
@@ -1520,6 +1575,7 @@ export function createOperationSnapshot(
   const taskRuns = [...(input.taskRuns ?? [])];
   const rawBatches = [...(input.rawBatches ?? [])];
   const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
+  const fixtureStatisticSnapshots = [...(input.fixtureStatisticSnapshots ?? [])];
   const aiRuns = [...(input.aiRuns ?? [])];
   const providerStates = [...(input.providerStates ?? [])];
   const predictions = [...(input.predictions ?? [])];
@@ -1562,6 +1618,7 @@ export function createOperationSnapshot(
     providerStates,
     rawBatches,
     oddsSnapshots,
+    fixtureStatisticSnapshots,
     manualReviews,
     quarantines,
     recovery,
@@ -4611,6 +4668,59 @@ export function findFixtureResearchById(
   return snapshot.fixtureResearch.find((research) => research.fixtureId === fixtureId) ?? null;
 }
 
+const latestCornersStatisticForScope = (
+  snapshot: OperationSnapshot,
+  fixtureId: string,
+  scope: FixtureStatisticSnapshotReadModel["scope"],
+): FixtureStatisticSnapshotReadModel | null =>
+  sortByIsoDescending(
+    (snapshot.fixtureStatisticSnapshots ?? []).filter(
+      (statistic) =>
+        statistic.fixtureId === fixtureId &&
+        statistic.statKey === "corners" &&
+        statistic.scope === scope,
+    ),
+    (statistic) => statistic.capturedAt,
+  )[0] ?? null;
+
+const buildFixtureOpsStatistics = (
+  snapshot: OperationSnapshot,
+  fixtureId: string,
+): FixtureOpsStatisticsReadModel => {
+  const homeStatistic = latestCornersStatisticForScope(snapshot, fixtureId, "home");
+  const awayStatistic = latestCornersStatisticForScope(snapshot, fixtureId, "away");
+  const homeCorners =
+    typeof homeStatistic?.valueNumeric === "number" && Number.isFinite(homeStatistic.valueNumeric)
+      ? homeStatistic.valueNumeric
+      : null;
+  const awayCorners =
+    typeof awayStatistic?.valueNumeric === "number" && Number.isFinite(awayStatistic.valueNumeric)
+      ? awayStatistic.valueNumeric
+      : null;
+  const capturedAt =
+    sortByIsoDescending(
+      [homeStatistic, awayStatistic].filter((statistic): statistic is FixtureStatisticSnapshotReadModel => Boolean(statistic)),
+      (statistic) => statistic.capturedAt,
+    )[0]?.capturedAt ?? null;
+  const hasAnyCornersStatistic = homeStatistic !== null || awayStatistic !== null;
+  const status =
+    homeCorners !== null && awayCorners !== null
+      ? "available"
+      : hasAnyCornersStatistic
+        ? "pending"
+        : "missing";
+
+  return {
+    corners: {
+      status,
+      homeCorners,
+      awayCorners,
+      totalCorners: homeCorners !== null && awayCorners !== null ? homeCorners + awayCorners : null,
+      capturedAt,
+    },
+  };
+};
+
 export function findFixtureOpsById(
   snapshot: OperationSnapshot,
   fixtureId: string,
@@ -4693,6 +4803,7 @@ export function findFixtureOpsById(
     research,
     ...(workflow ? { workflow } : {}),
     latestOddsSnapshot,
+    statistics: buildFixtureOpsStatistics(snapshot, fixtureId),
     scoringEligibility,
     recentAuditEvents,
     predictions,
@@ -5227,6 +5338,14 @@ export function formatPredictionMarketLabel(
       "draw-away": "Draw or Away",
     };
     return `Double Chance: ${outcomes[prediction.outcome] ?? formatFallbackLabelPart(prediction.outcome)}`;
+  }
+
+  if (prediction.market === "corners-total") {
+    return `Total Corners: ${formatFallbackLabelPart(prediction.outcome)}${line}`;
+  }
+
+  if (prediction.market === "corners-h2h") {
+    return `Corners H2H: ${formatFallbackLabelPart(prediction.outcome)}`;
   }
 
   return `${formatFallbackLabelPart(prediction.market)}: ${formatFallbackLabelPart(prediction.outcome)}`;
@@ -6076,11 +6195,15 @@ export async function loadOperationSnapshotFromUnitOfWork(
     | "predictions"
     | "parlays"
     | "validations"
-  > & FixtureResearchRepositoryCollectionLike & PersistedTelemetryRepositoryCollectionLike,
+  > &
+    FixtureResearchRepositoryCollectionLike &
+    FixtureStatisticSnapshotRepositoryCollectionLike &
+    PersistedTelemetryRepositoryCollectionLike,
   input: {
     readonly generatedAt?: string;
     readonly rawBatches?: readonly RawIngestionBatchReadModel[];
     readonly oddsSnapshots?: readonly OddsSnapshotReadModel[];
+    readonly fixtureStatisticSnapshots?: readonly FixtureStatisticSnapshotReadModel[];
     readonly telemetryEvents?: readonly TelemetryEventReadModel[];
     readonly telemetryMetrics?: readonly TelemetryMetricReadModel[];
     readonly researchBundles?: readonly ResearchBundleEntity[];
@@ -6137,6 +6260,17 @@ export async function loadOperationSnapshotFromUnitOfWork(
       : null;
   const rawBatches = [...(input.rawBatches ?? persistedSources?.rawBatches ?? [])];
   const oddsSnapshots = [...(input.oddsSnapshots ?? persistedSources?.oddsSnapshots ?? [])];
+  const fixtureStatisticSnapshots = [
+    ...(input.fixtureStatisticSnapshots ??
+      (await loadOptionalRepositoryEntities(
+        unitOfWork.fixtureStatisticSnapshots
+          ? () => unitOfWork.fixtureStatisticSnapshots!.list()
+          : undefined,
+      )).flatMap((snapshot) => {
+        const readModel = toFixtureStatisticSnapshotReadModel(snapshot);
+        return readModel ? [readModel] : [];
+      })),
+  ];
   const telemetryEvents = [
     ...(input.telemetryEvents ??
       (repositoryTelemetryEvents.length > 0 ? repositoryTelemetryEvents : persistedSources?.telemetryEvents ?? [])),
@@ -6181,6 +6315,7 @@ export async function loadOperationSnapshotFromUnitOfWork(
     aiRuns: mappedAiRuns,
     providerStates: createDerivedProviderStates(mappedAiRuns, rawBatches),
     oddsSnapshots,
+    fixtureStatisticSnapshots,
     telemetryEvents,
     telemetryMetrics,
     parlays,

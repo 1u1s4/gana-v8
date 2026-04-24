@@ -1,4 +1,4 @@
-export type SourceDomain = "fixtures" | "odds" | "availability" | "lineups";
+export type SourceDomain = "fixtures" | "odds" | "availability" | "lineups" | "statistics";
 
 export interface SourceCoverageWindow {
   readonly start: string;
@@ -118,11 +118,23 @@ export interface RawLineupRecord {
   readonly payload: Record<string, unknown>;
 }
 
+export interface RawFixtureStatisticRecord {
+  readonly recordType: "fixture-statistic";
+  readonly providerFixtureId: string;
+  readonly providerCode: string;
+  readonly statKey: string;
+  readonly scope: "home" | "away" | "match";
+  readonly valueNumeric?: number;
+  readonly payload: Record<string, unknown>;
+  readonly sourceUpdatedAt?: string;
+}
+
 export type RawSourceRecord =
   | RawFixtureRecord
   | RawOddsMarketRecord
   | RawAvailabilityRecord
-  | RawLineupRecord;
+  | RawLineupRecord
+  | RawFixtureStatisticRecord;
 
 export interface SourceIngestionBatch<TRecord extends RawSourceRecord = RawSourceRecord> {
   readonly batchId: string;
@@ -163,9 +175,15 @@ export interface FetchLineupsWindowInput {
   readonly teamIds?: readonly string[];
 }
 
+export interface FetchFixtureStatisticsInput {
+  readonly window: SourceCoverageWindow;
+  readonly fixtureIds: readonly string[];
+}
+
 export interface FootballApiClient {
   fetchFixturesWindow(input: FetchFixturesWindowInput): Promise<readonly RawFixtureRecord[]>;
   fetchOddsWindow(input: FetchOddsWindowInput): Promise<readonly RawOddsMarketRecord[]>;
   fetchAvailabilityWindow(input: FetchAvailabilityWindowInput): Promise<readonly RawAvailabilityRecord[]>;
   fetchLineupsWindow(input: FetchLineupsWindowInput): Promise<readonly RawLineupRecord[]>;
+  fetchFixtureStatistics(input: FetchFixtureStatisticsInput): Promise<readonly RawFixtureStatisticRecord[]>;
 }

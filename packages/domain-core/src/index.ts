@@ -14,6 +14,7 @@ export * from './entities/sandbox-certification-run.js';
 export * from './entities/runtime-release-snapshot.js';
 export * from './entities/feature-snapshot.js';
 export * from './entities/availability-snapshot.js';
+export * from './entities/fixture-statistic-snapshot.js';
 export * from './entities/lineup-snapshot.js';
 export * from './entities/sandbox.js';
 export * from './entities/scheduler-cursor.js';

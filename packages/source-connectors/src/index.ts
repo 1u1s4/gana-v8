@@ -22,4 +22,5 @@ export * from "./jobs/ingest-availability-window.js";
 export * from "./jobs/ingest-fixtures-window.js";
 export * from "./jobs/ingest-lineups-window.js";
 export * from "./jobs/ingest-odds-window.js";
+export * from "./jobs/ingest-statistics-window.js";
 export * from "./testing/fakes.js";

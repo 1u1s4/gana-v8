@@ -7,7 +7,9 @@ export type PredictionMarket =
   | "totals"
   | "spread"
   | "both-teams-score"
-  | "double-chance";
+  | "double-chance"
+  | "corners-total"
+  | "corners-h2h";
 export type PredictionOutcome =
   | "home"
   | "away"

@@ -11,6 +11,7 @@ import {
   type AiRunReadModel,
   type AutomationCycleReadModel,
   type CoverageDailyScopeReadModel,
+  type FixtureOpsStatisticsReadModel,
   getDailyAutomationPolicy,
   listCoverageDailyScope,
   type ManualReviewReadModel,
@@ -55,6 +56,7 @@ export interface OperatorConsoleFixture {
   readonly manualSelectionBy?: string | null;
   readonly selectionOverride?: string | null;
   readonly scoringEligibilityReason?: string | null;
+  readonly statistics?: FixtureOpsStatisticsReadModel;
   readonly recentAuditEvents?: readonly string[];
 }
 
@@ -370,6 +372,82 @@ const formatStatusCounts = (counts: Readonly<Record<string, number>>): string =>
   return entries.map(([status, count]) => `${status}:${count}`).join(" | ");
 };
 
+const formatCornersStatistics = (
+  statistics: FixtureOpsStatisticsReadModel | null | undefined,
+): string => {
+  const corners = statistics?.corners;
+  if (!corners) {
+    return "corners missing";
+  }
+
+  const values =
+    `home ${corners.homeCorners ?? "n/a"} | ` +
+    `away ${corners.awayCorners ?? "n/a"} | ` +
+    `total ${corners.totalCorners ?? "n/a"}`;
+  return `corners ${corners.status} | ${values}${corners.capturedAt ? ` | captured ${corners.capturedAt}` : ""}`;
+};
+
+const deriveFixtureCornersStatistics = (
+  operationSnapshot: OperationSnapshot,
+  fixtureId: string,
+): FixtureOpsStatisticsReadModel => {
+  const fixtureStatisticSnapshots =
+    (operationSnapshot as OperationSnapshot & {
+      readonly fixtureStatisticSnapshots?: readonly {
+        readonly fixtureId?: string;
+        readonly statKey?: string;
+        readonly scope?: string;
+        readonly valueNumeric?: number | null;
+        readonly capturedAt?: string;
+      }[];
+    }).fixtureStatisticSnapshots ?? [];
+  const sortStatisticSnapshots = <T extends { readonly capturedAt: string }>(snapshots: readonly T[]): T[] =>
+    [...snapshots].sort((left, right) => right.capturedAt.localeCompare(left.capturedAt));
+  const latestForScope = (scope: "home" | "away") =>
+    sortStatisticSnapshots(
+      fixtureStatisticSnapshots.filter(
+        (snapshot) =>
+          snapshot.fixtureId === fixtureId &&
+          snapshot.statKey === "corners" &&
+          snapshot.scope === scope &&
+          typeof snapshot.capturedAt === "string",
+      ) as readonly { readonly valueNumeric?: number | null; readonly capturedAt: string }[],
+    )[0] ?? null;
+  const homeStatistic = latestForScope("home");
+  const awayStatistic = latestForScope("away");
+  const homeCorners =
+    typeof homeStatistic?.valueNumeric === "number" && Number.isFinite(homeStatistic.valueNumeric)
+      ? homeStatistic.valueNumeric
+      : null;
+  const awayCorners =
+    typeof awayStatistic?.valueNumeric === "number" && Number.isFinite(awayStatistic.valueNumeric)
+      ? awayStatistic.valueNumeric
+      : null;
+  const capturedAt =
+    sortStatisticSnapshots(
+      [homeStatistic, awayStatistic].filter(
+        (snapshot): snapshot is { readonly valueNumeric?: number | null; readonly capturedAt: string } =>
+          Boolean(snapshot),
+      ),
+    )[0]?.capturedAt ?? null;
+  const status =
+    homeCorners !== null && awayCorners !== null
+      ? "available"
+      : homeStatistic || awayStatistic
+        ? "pending"
+        : "missing";
+
+  return {
+    corners: {
+      status,
+      homeCorners,
+      awayCorners,
+      totalCorners: homeCorners !== null && awayCorners !== null ? homeCorners + awayCorners : null,
+      capturedAt,
+    },
+  };
+};
+
 const latestTaskRuns = (taskRuns: readonly OperatorConsoleTaskRun[], limit = 5): OperatorConsoleTaskRun[] =>
   sortByNewest(taskRuns, (taskRun) => taskRun.finishedAt ?? taskRun.startedAt).slice(0, limit);
 
@@ -651,6 +729,7 @@ export function createOperatorConsoleSnapshotFromOperation(
     fixtures: operationSnapshot.fixtures.map((fixture) => {
       const workflow = fixtureWorkflows.find((candidate) => candidate.fixtureId === fixture.id);
       const research = fixtureResearch.find((candidate) => candidate.fixtureId === fixture.id);
+      const statistics = deriveFixtureCornersStatistics(operationSnapshot, fixture.id);
       const latestFixtureOddsSnapshot =
         sortByNewest(
           operationSnapshot.oddsSnapshots.filter((snapshot) => snapshot.fixtureId === fixture.id),
@@ -720,6 +799,7 @@ export function createOperatorConsoleSnapshotFromOperation(
         manualSelectionBy: workflow?.manualSelectionBy ?? null,
         selectionOverride: workflow?.selectionOverride ?? null,
         scoringEligibilityReason,
+        statistics,
         recentAuditEvents,
       };
     }),
@@ -1312,7 +1392,7 @@ export function buildOperatorConsoleModel(
         ]
           .filter((value): value is string => Boolean(value))
           .join(" | ");
-        return `${fixture.id} | workflow ${fixture.featureReadinessStatus ?? "unknown"}${manualSelection}${selectionOverride}${eligibility}${researchContext ? ` | ${researchContext}` : ""} | predictions ${predictions.length} | parlays ${parlays.length} | validations ${snapshot.validationSummary.total}${recentOps}`;
+        return `${fixture.id} | workflow ${fixture.featureReadinessStatus ?? "unknown"}${manualSelection}${selectionOverride}${eligibility}${researchContext ? ` | ${researchContext}` : ""} | ${formatCornersStatistics(fixture.statistics)} | predictions ${predictions.length} | parlays ${parlays.length} | validations ${snapshot.validationSummary.total}${recentOps}`;
       }),
     },
     {
@@ -2111,6 +2191,19 @@ const renderAlerts = (model) => {
 const renderJsonBlock = (value) =>
   '<pre class="log-line">' + escapeHtml(JSON.stringify(value ?? {}, null, 2)) + '</pre>';
 
+const formatFixtureCorners = (statistics) => {
+  const corners = statistics && statistics.corners;
+  if (!corners) {
+    return 'Corners: missing';
+  }
+
+  return 'Corners: ' + corners.status +
+    ' | home ' + (corners.homeCorners ?? 'n/a') +
+    ' | away ' + (corners.awayCorners ?? 'n/a') +
+    ' | total ' + (corners.totalCorners ?? 'n/a') +
+    (corners.capturedAt ? ' | captured ' + corners.capturedAt : '');
+};
+
 const renderFixtureActions = (fixtureId) => {
   const actions = [
     ['manual-select', 'Select', 'neutral'],
@@ -2142,7 +2235,7 @@ const renderFixturesTable = (snapshot) => {
         '<td>' + formatBadge(fixture.status) + '</td>' +
         '<td><strong>' + escapeHtml(fixture.researchRecommendedLean || 'n/a') + '</strong><span class="subtle">Readiness: ' + escapeHtml(fixture.featureReadinessStatus || 'unknown') + ' | bundle ' + escapeHtml(fixture.researchBundleStatus || 'n/a') + '</span><br /><span class="subtle">Cycle: ' + escapeHtml(fixture.researchCycle || 'n/a') + ' | Generated: ' + escapeHtml(fixture.researchGeneratedAt || 'n/a') + '</span><br /><span class="subtle">' + escapeHtml(fixture.researchNarrative || 'No persisted narrative') + '</span></td>' +
         '<td><span class="subtle">Manual: ' + escapeHtml(fixture.manualSelectionStatus || 'none') + ' by ' + escapeHtml(fixture.manualSelectionBy || 'n/a') + '</span><br /><span class="subtle">Override: ' + escapeHtml(fixture.selectionOverride || 'none') + '</span></td>' +
-        '<td><span class="subtle">' + escapeHtml(fixture.scoringEligibilityReason || 'n/a') + '</span></td>' +
+        '<td><span class="subtle">' + escapeHtml(fixture.scoringEligibilityReason || 'n/a') + '</span><br /><span class="subtle">' + escapeHtml(formatFixtureCorners(fixture.statistics)) + '</span></td>' +
         '<td>' + renderFixtureActions(fixture.id) + '</td>' +
       '</tr>'
     ).join('') +

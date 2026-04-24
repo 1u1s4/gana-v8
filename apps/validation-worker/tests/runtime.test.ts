@@ -13,12 +13,23 @@ import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
   deriveBttsOutcomeFromFixture,
+  deriveAwayCornersFromStatisticSnapshot,
   deriveDoubleChanceOutcomesFromFixture,
+  deriveHomeCornersFromStatisticSnapshot,
   deriveMoneylineOutcomeFromFixture,
+  deriveTotalCornersFromStatisticSnapshot,
   deriveTotalsOutcomeFromFixture,
   describeWorkspace,
   runValidationWorker,
 } from "../src/index.js";
+
+interface FixtureStatisticSnapshotLike {
+  readonly id: string;
+  readonly fixtureId: string;
+  readonly capturedAt: string;
+  readonly statistics?: unknown;
+  readonly payload?: unknown;
+}
 
 const fixture = (overrides: Partial<FixtureEntity> = {}): FixtureEntity =>
   createFixture({
@@ -63,6 +74,21 @@ const prediction = (overrides: Partial<PredictionEntity> = {}): PredictionEntity
     overrides.publishedAt ?? "2026-04-16T12:00:00.000Z",
   );
 
+const withFixtureStatisticSnapshots = (
+  unitOfWork: ReturnType<typeof createInMemoryUnitOfWork>,
+  snapshots: readonly FixtureStatisticSnapshotLike[],
+): ReturnType<typeof createInMemoryUnitOfWork> =>
+  Object.assign(unitOfWork, {
+    fixtureStatisticSnapshots: {
+      async list() {
+        return [...snapshots];
+      },
+      async findByFixtureId(fixtureId: string) {
+        return snapshots.filter((snapshot) => snapshot.fixtureId === fixtureId);
+      },
+    },
+  });
+
 test("deriveMoneylineOutcomeFromFixture returns match result for completed fixtures with score", () => {
   assert.equal(deriveMoneylineOutcomeFromFixture(fixture({ score: { home: 3, away: 0 } })), "home");
   assert.equal(deriveMoneylineOutcomeFromFixture(fixture({ score: { home: 1, away: 1 } })), "draw");
@@ -88,6 +114,36 @@ test("score-derived outcome helpers resolve completed fixture scores", () => {
     deriveDoubleChanceOutcomesFromFixture(fixture({ score: { home: 0, away: 2 } })),
     ["home-away", "draw-away"],
   );
+});
+
+test("corner statistic helpers derive home, away, and total corners from snapshots", () => {
+  const directSnapshot = {
+    id: "stats-1",
+    fixtureId: "fx-1",
+    capturedAt: "2026-04-16T21:00:00.000Z",
+    statistics: {
+      home: { corners: "5" },
+      away: { cornerKicks: 7 },
+    },
+  };
+  const providerPayloadSnapshot = {
+    id: "stats-2",
+    fixtureId: "fx-1",
+    capturedAt: "2026-04-16T21:05:00.000Z",
+    payload: {
+      response: [
+        { statistics: [{ type: "Corner Kicks", value: "4" }] },
+        { statistics: [{ type: "Corner Kicks", value: 3 }] },
+      ],
+    },
+  };
+
+  assert.equal(deriveHomeCornersFromStatisticSnapshot(directSnapshot), 5);
+  assert.equal(deriveAwayCornersFromStatisticSnapshot(directSnapshot), 7);
+  assert.equal(deriveTotalCornersFromStatisticSnapshot(directSnapshot), 12);
+  assert.equal(deriveHomeCornersFromStatisticSnapshot(providerPayloadSnapshot), 4);
+  assert.equal(deriveAwayCornersFromStatisticSnapshot(providerPayloadSnapshot), 3);
+  assert.equal(deriveTotalCornersFromStatisticSnapshot(providerPayloadSnapshot), 7);
 });
 
 test("runValidationWorker settles published moneyline predictions and persists prediction validations", async () => {
@@ -222,6 +278,102 @@ test("runValidationWorker settles score-derived predictions from final score", a
   assert.equal(result.skippedPredictionCount, 0);
   assert.equal(result.predictionResults.every((item) => item.verdict === "won"), true);
   assert.equal((await unitOfWork.validations.list()).length, 3);
+});
+
+test("runValidationWorker settles corners-total and corners-h2h from fixture statistic snapshots", async () => {
+  const unitOfWork = withFixtureStatisticSnapshots(createInMemoryUnitOfWork(), [
+    {
+      id: "stats-1",
+      fixtureId: "fx-corners",
+      capturedAt: "2026-04-16T21:10:00.000Z",
+      statistics: {
+        home: { corners: 4 },
+        away: { corners: 7 },
+      },
+    },
+  ]);
+  const cornersFixture = fixtureWithoutScore({ id: "fx-corners" });
+  const cornersTotalPrediction = prediction({
+    id: "pred-corners-total",
+    fixtureId: cornersFixture.id,
+    market: "corners-total" as unknown as PredictionEntity["market"],
+    outcome: "over",
+    probabilities: { implied: 0.52, model: 0.57, edge: 0.05, line: 10.5 },
+  });
+  const cornersH2hPrediction = prediction({
+    id: "pred-corners-h2h",
+    fixtureId: cornersFixture.id,
+    market: "corners-h2h" as unknown as PredictionEntity["market"],
+    outcome: "away",
+    probabilities: { implied: 0.48, model: 0.54, edge: 0.06 },
+  });
+
+  await unitOfWork.fixtures.save(cornersFixture);
+  await unitOfWork.predictions.save(cornersTotalPrediction);
+  await unitOfWork.predictions.save(cornersH2hPrediction);
+
+  const result = await runValidationWorker(undefined, {
+    executedAt: "2026-04-16T22:30:00.000Z",
+    unitOfWork,
+  });
+
+  assert.equal(result.settledPredictionCount, 2);
+  assert.equal(result.skippedPredictionCount, 0);
+  assert.equal(result.predictionResults.every((item) => item.verdict === "won"), true);
+  assert.equal((await unitOfWork.predictions.getById(cornersTotalPrediction.id))?.status, "settled");
+  assert.equal((await unitOfWork.predictions.getById(cornersH2hPrediction.id))?.status, "settled");
+});
+
+test("runValidationWorker voids pushed corners-total and skips corners predictions without stats", async () => {
+  const unitOfWork = withFixtureStatisticSnapshots(createInMemoryUnitOfWork(), [
+    {
+      id: "stats-1",
+      fixtureId: "fx-push",
+      capturedAt: "2026-04-16T21:10:00.000Z",
+      statistics: {
+        home: { corners: 5 },
+        away: { corners: 5 },
+      },
+    },
+  ]);
+  const pushFixture = fixtureWithoutScore({ id: "fx-push" });
+  const missingStatsFixture = fixtureWithoutScore({ id: "fx-missing-stats" });
+  const pushPrediction = prediction({
+    id: "pred-corners-push",
+    fixtureId: pushFixture.id,
+    market: "corners-total" as unknown as PredictionEntity["market"],
+    outcome: "over",
+    probabilities: { implied: 0.5, model: 0.55, edge: 0.05, line: 10 },
+  });
+  const missingStatsPrediction = prediction({
+    id: "pred-corners-missing",
+    fixtureId: missingStatsFixture.id,
+    market: "corners-h2h" as unknown as PredictionEntity["market"],
+    outcome: "home",
+    probabilities: { implied: 0.5, model: 0.55, edge: 0.05 },
+  });
+
+  await unitOfWork.fixtures.save(pushFixture);
+  await unitOfWork.fixtures.save(missingStatsFixture);
+  await unitOfWork.predictions.save(pushPrediction);
+  await unitOfWork.predictions.save(missingStatsPrediction);
+
+  const result = await runValidationWorker(undefined, {
+    executedAt: "2026-04-16T22:30:00.000Z",
+    unitOfWork,
+  });
+
+  const pushValidation = (await unitOfWork.validations.findByTargetId(pushPrediction.id))[0];
+
+  assert.equal(result.settledPredictionCount, 1);
+  assert.equal(result.skippedPredictionCount, 1);
+  assert.equal(result.predictionResults.find((item) => item.predictionId === pushPrediction.id)?.verdict, "voided");
+  assert.equal((await unitOfWork.predictions.getById(pushPrediction.id))?.status, "voided");
+  assert.equal(pushValidation?.status, "partial");
+  assert.match(
+    result.predictionResults.find((item) => item.predictionId === missingStatsPrediction.id)?.reason ?? "",
+    /corners statistic coverage/i,
+  );
 });
 
 test("runValidationWorker settles mixed-market parlays when every leg is gradeable", async () => {

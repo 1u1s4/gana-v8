@@ -8,6 +8,7 @@ import {
   createAvailabilitySnapshot,
   createAuditEvent,
   createFixture,
+  createFixtureStatisticSnapshot,
   createLineupParticipant,
   createLineupSnapshot,
   createTask,
@@ -39,16 +40,20 @@ import {
   ingestFixturesWindow,
   ingestLineupsWindow,
   ingestOddsWindow,
+  ingestStatisticsWindow,
   sampleAvailability,
   sampleFixtures,
   sampleLineups,
   sampleOdds,
+  sampleStatistics,
   type FetchAvailabilityWindowInput,
+  type FetchFixtureStatisticsInput,
   type FetchFixturesWindowInput,
   type FetchLineupsWindowInput,
   type FetchOddsWindowInput,
   type FootballApiClient,
   type RawAvailabilityRecord,
+  type RawFixtureStatisticRecord,
   type RawFixtureRecord,
   type RawLineupRecord,
   type RawOddsMarketRecord,
@@ -85,7 +90,8 @@ export function describeWorkspace() {
 export type IngestionWorkerIntent =
   | Extract<WorkflowIntent, "ingest-fixtures" | "ingest-odds">
   | "ingest-availability"
-  | "ingest-lineups";
+  | "ingest-lineups"
+  | "ingest-fixture-statistics";
 
 export const createIngestionTaskEnvelope = <TPayload extends Record<string, unknown>>(
   input: Omit<Parameters<typeof createTaskEnvelope<TPayload>>[0], "intent"> & {
@@ -128,6 +134,7 @@ export interface IngestionWorkerTaskOutput {
   readonly upsertedAvailabilityEntries: number;
   readonly upsertedLineups: number;
   readonly upsertedMarkets: number;
+  readonly upsertedStatisticSnapshots: number;
 }
 
 export interface IngestionExecutionManifest {
@@ -141,7 +148,7 @@ export interface IngestionExecutionManifest {
   readonly provider: {
     readonly providerSource: RuntimeConfig["provider"]["source"];
     readonly providerBaseUrl: string;
-    readonly endpointFamily: "fixtures" | "odds" | "availability" | "lineups";
+    readonly endpointFamily: "fixtures" | "odds" | "availability" | "lineups" | "statistics";
     readonly requestKind: "live-runner" | "runtime";
   };
   readonly request?: {
@@ -181,7 +188,7 @@ export interface LiveIngestionProviderOverrides {
 }
 
 export interface LiveIngestionRunResult {
-  readonly mode: "fixtures" | "odds";
+  readonly mode: "fixtures" | "odds" | "statistics";
   readonly status: "succeeded" | "failed" | "cancelled" | "skipped";
   readonly manifest: IngestionExecutionManifest;
   readonly output?: IngestionWorkerTaskOutput;
@@ -191,7 +198,7 @@ export interface LiveIngestionRunResult {
 }
 
 export interface LiveIngestionRunSummary {
-  readonly mode: "fixtures" | "odds" | "both";
+  readonly mode: "fixtures" | "odds" | "statistics" | "both";
   readonly ranAt: string;
   readonly runtime: IngestionWorkerRuntimeSummary;
   readonly results: readonly LiveIngestionRunResult[];
@@ -225,17 +232,20 @@ export interface IngestionWorkerRuntimeOptions {
   readonly pipeline?: CanonicalPipeline;
   readonly prismaClient?: PrismaClient;
   readonly queue?: InMemoryQueueAdapter;
+  readonly statistics?: readonly RawFixtureStatisticRecord[];
   readonly unitOfWork?: StorageUnitOfWork;
 }
 
 export interface RunLiveIngestionOptions extends IngestionWorkerRuntimeOptions {
-  readonly mode?: "fixtures" | "odds" | "both";
+  readonly mode?: "fixtures" | "odds" | "statistics" | "both";
   readonly league?: string;
   readonly season?: number;
   readonly fixturesWindow?: SourceCoverageWindow;
   readonly oddsWindow?: SourceCoverageWindow;
+  readonly statisticsWindow?: SourceCoverageWindow;
   readonly provider?: LiveIngestionProviderOverrides;
   readonly oddsFixtureIds?: readonly string[];
+  readonly statisticsFixtureIds?: readonly string[];
   readonly marketKeys?: readonly string[];
 }
 
@@ -297,7 +307,7 @@ const toRuntimeSummary = (
 
 const toEndpointFamily = (
   intent: IngestionWorkerIntent,
-): "fixtures" | "odds" | "availability" | "lineups" => {
+): "fixtures" | "odds" | "availability" | "lineups" | "statistics" => {
   switch (intent) {
     case "ingest-odds":
       return "odds";
@@ -305,6 +315,8 @@ const toEndpointFamily = (
       return "availability";
     case "ingest-lineups":
       return "lineups";
+    case "ingest-fixture-statistics":
+      return "statistics";
     case "ingest-fixtures":
       return "fixtures";
   }
@@ -720,6 +732,73 @@ const persistLineupSnapshots = async (
   }
 };
 
+const persistFixtureStatisticSnapshots = async (
+  prismaClient: PrismaClient | undefined,
+  unitOfWork: StorageUnitOfWork | undefined,
+  batch: {
+    readonly batchId: string;
+    readonly checksum: string;
+    readonly coverageWindow: {
+      readonly start: string;
+      readonly end: string;
+      readonly granularity: "daily" | "intraday";
+    };
+    readonly extractionStatus: string;
+    readonly extractionTime: string;
+    readonly lineage: {
+      readonly endpointFamily: string;
+      readonly fetchedAt: string;
+      readonly providerCode: string;
+      readonly runId: string;
+      readonly schemaVersion: string;
+    };
+    readonly rawObjectRefs: readonly string[];
+    readonly records: readonly RawFixtureStatisticRecord[];
+    readonly sourceEndpoint: string;
+    readonly sourceName: string;
+    readonly sourceQualityScore: number;
+    readonly warnings: readonly string[];
+  },
+): Promise<number> => {
+  if (!unitOfWork) {
+    return 0;
+  }
+
+  await persistRawBatch(prismaClient, batch);
+
+  let upserted = 0;
+  for (const record of batch.records) {
+    const fixtureId = toFixtureIdFromProvider(record.providerCode, record.providerFixtureId);
+    const snapshotId = buildChecksum({
+      batchId: batch.batchId,
+      fixtureId,
+      providerCode: record.providerCode,
+      providerFixtureId: record.providerFixtureId,
+      scope: record.scope,
+      statKey: record.statKey,
+    });
+
+    await unitOfWork.fixtureStatisticSnapshots.save(createFixtureStatisticSnapshot({
+      id: snapshotId,
+      batchId: batch.batchId,
+      fixtureId,
+      providerFixtureId: record.providerFixtureId,
+      providerCode: record.providerCode,
+      statKey: record.statKey,
+      scope: record.scope,
+      ...(record.valueNumeric !== undefined ? { valueNumeric: record.valueNumeric } : {}),
+      capturedAt: record.sourceUpdatedAt ?? batch.extractionTime,
+      ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt } : {}),
+      payload: record.payload,
+      createdAt: batch.extractionTime,
+      updatedAt: batch.extractionTime,
+    }));
+    upserted += 1;
+  }
+
+  return upserted;
+};
+
 const createPersistenceContext = (
   config: RuntimeConfig,
   options: IngestionWorkerRuntimeOptions,
@@ -1064,6 +1143,7 @@ const persistTaskExecution = async (
         canonicalLineups: output?.canonicalLineups ?? null,
         canonicalMarkets: output?.canonicalMarkets ?? null,
         canonicalMatches: output?.canonicalMatches ?? null,
+        upsertedStatisticSnapshots: output?.upsertedStatisticSnapshots ?? null,
         checksum: output?.checksum ?? null,
         error: execution.error ?? null,
         errorDetails: execution.errorDetails ?? null,
@@ -1110,6 +1190,7 @@ const toTaskOutput = (
     readonly upsertedMatches: number;
     readonly upsertedMarkets: number;
   },
+  upsertedStatisticSnapshots = 0,
 ): IngestionWorkerTaskOutput => ({
   batchId: batch.batchId,
   canonicalAvailabilityEntries: countAvailabilityEntries(canonical.snapshot),
@@ -1129,6 +1210,7 @@ const toTaskOutput = (
   upsertedLineups: canonical.upsertedLineups,
   upsertedMarkets: canonical.upsertedMarkets,
   upsertedMatches: canonical.upsertedMatches,
+  upsertedStatisticSnapshots,
   warnings: batch.warnings,
 });
 
@@ -1193,6 +1275,21 @@ const toLineupsPayload = (
   };
 };
 
+const toStatisticsPayload = (
+  payload: Record<string, unknown>,
+  fallbackFixtureIds: readonly string[],
+): FetchFixtureStatisticsInput => {
+  const input = payload as Partial<FetchFixtureStatisticsInput>;
+  if (!input.window) {
+    throw new Error("ingest-fixture-statistics payload requires window");
+  }
+
+  return {
+    fixtureIds: input.fixtureIds ?? fallbackFixtureIds,
+    window: input.window,
+  };
+};
+
 const createClient = (
   runtimeConfig: RuntimeConfig,
   options: IngestionWorkerRuntimeOptions,
@@ -1217,6 +1314,7 @@ const createClient = (
     options.odds ?? sampleOdds(),
     options.availability ?? sampleAvailability(),
     options.lineups ?? sampleLineups(),
+    options.statistics ?? sampleStatistics(),
   );
 };
 
@@ -1333,6 +1431,39 @@ export const createIngestionWorkerRuntime = (
           result.observedRecords,
           result.batch,
           canonical,
+        );
+      },
+    },
+    {
+      intent: "ingest-fixture-statistics" as WorkflowIntent,
+      async handle(envelope: TaskEnvelope<Record<string, unknown>>) {
+        const facade = createFacade(client, config, now, `${workspaceInfo.workspaceName}:${envelope.id}`);
+        const result = await ingestStatisticsWindow(
+          facade,
+          toStatisticsPayload(envelope.payload, fallbackFixtureIds),
+        );
+        const canonical = {
+          insertedCompetitions: 0,
+          insertedPlayers: 0,
+          insertedTeams: 0,
+          snapshot: pipeline.repository.createSnapshot(now().toISOString(), [result.batch.batchId]),
+          upsertedAvailabilityEntries: 0,
+          upsertedLineups: 0,
+          upsertedMatches: 0,
+          upsertedMarkets: 0,
+        };
+        const upsertedStatisticSnapshots = await persistFixtureStatisticSnapshots(
+          persistence.prismaClient,
+          persistence.unitOfWork,
+          result.batch,
+        );
+        return toTaskOutput(
+          "ingest-fixture-statistics",
+          result.jobName,
+          result.observedRecords,
+          result.batch,
+          canonical,
+          upsertedStatisticSnapshots,
         );
       },
     },
@@ -1488,6 +1619,12 @@ const toDefaultOddsWindow = (nowDate: Date): SourceCoverageWindow => ({
   start: new Date(nowDate.getTime() - 15 * 60 * 1000).toISOString(),
 });
 
+const toDefaultStatisticsWindow = (nowDate: Date): SourceCoverageWindow => ({
+  end: nowDate.toISOString(),
+  granularity: "intraday",
+  start: new Date(nowDate.getTime() - 6 * 60 * 60 * 1000).toISOString(),
+});
+
 const buildLiveRuntimeEnv = (
   env: Readonly<Record<string, string | undefined>> = process.env,
   provider: LiveIngestionProviderOverrides | undefined = undefined,
@@ -1516,7 +1653,7 @@ const buildLiveFixturesEnvelope = (
   } as const;
 
   return {
-    envelope: createTaskEnvelope({
+    envelope: createIngestionTaskEnvelope({
       createdAt: nowIso,
       intent: "ingest-fixtures",
       metadata: {
@@ -1605,6 +1742,47 @@ const buildLiveOddsEnvelope = (
   };
 };
 
+const buildLiveStatisticsEnvelope = (
+  nowDate: Date,
+  fixtureIds: readonly string[],
+  options: RunLiveIngestionOptions,
+): {
+  readonly envelope: TaskEnvelope<Record<string, unknown>>;
+  readonly request: NonNullable<IngestionExecutionManifest["request"]>;
+} => {
+  const nowIso = nowDate.toISOString();
+  const request = {
+    fixtureIds,
+    quirksApplied: [
+      ...(options.statisticsFixtureIds === undefined ? ["statistics-fixture-ids-loaded-from-db"] : []),
+      ...(options.statisticsWindow === undefined ? ["default-statistics-window-intraday"] : []),
+    ],
+    window: options.statisticsWindow ?? toDefaultStatisticsWindow(nowDate),
+  } as const;
+
+  return {
+    envelope: createIngestionTaskEnvelope({
+      createdAt: nowIso,
+      intent: "ingest-fixture-statistics",
+      metadata: {
+        labels: ["official", "live", "statistics"],
+        source: "ingestion-worker/live-runner",
+      },
+      payload: {
+        fixtureIds: request.fixtureIds,
+        quirksApplied: request.quirksApplied,
+        window: request.window,
+      },
+      priority: 70,
+      scheduledFor: nowIso,
+      taskKind: "fixture-ingestion",
+      traceId: `live:statistics:${nowIso}`,
+      workflowId: "ingestion-worker-live-statistics",
+    }),
+    request,
+  };
+};
+
 export const runLiveIngestion = async (
   options: RunLiveIngestionOptions = {},
 ): Promise<LiveIngestionRunSummary> => {
@@ -1671,6 +1849,46 @@ export const runLiveIngestion = async (
             request,
           ),
           mode: "odds",
+          ...(execution.output ? { output: execution.output } : {}),
+          status: execution.status,
+        });
+      }
+    }
+
+    if (mode === "statistics") {
+      const fixtureIds = options.statisticsFixtureIds ??
+        (options.prismaClient ? await listProviderFixtureIdsForUpcomingScheduledFixtures(options.prismaClient, nowDate) : []);
+
+      if (fixtureIds.length === 0) {
+        const { envelope, request } = buildLiveStatisticsEnvelope(nowDate, [], options);
+        results.push({
+          manifest: createExecutionManifest(
+            envelope,
+            { finishedAt: nowDate.toISOString(), status: "cancelled" },
+            runtime.config,
+            nowDate.toISOString(),
+            "live-runner",
+            request,
+          ),
+          mode: "statistics",
+          reason: "No fixtures found for live statistics window",
+          status: "skipped",
+        });
+      } else {
+        const { envelope, request } = buildLiveStatisticsEnvelope(nowDate, fixtureIds, options);
+        const execution = await runtime.dispatch(envelope);
+        results.push({
+          ...(execution.error ? { error: execution.error } : {}),
+          fixtureCount: fixtureIds.length,
+          manifest: createExecutionManifest(
+            envelope,
+            execution,
+            runtime.config,
+            nowDate.toISOString(),
+            "live-runner",
+            request,
+          ),
+          mode: "statistics",
           ...(execution.output ? { output: execution.output } : {}),
           status: execution.status,
         });

@@ -1,13 +1,16 @@
 import {
   type FetchAvailabilityWindowInput,
+  type FetchFixtureStatisticsInput,
   type FetchFixturesWindowInput,
   type FetchLineupsWindowInput,
   type FetchOddsWindowInput,
   type RawAvailabilityRecord,
   type FootballApiClient,
+  type RawFixtureStatisticRecord,
   type RawFixtureRecord,
   type RawLineupRecord,
   type RawOddsMarketRecord,
+  type SourceDomain,
   type SourceCoverageWindow,
   type SourceIngestionBatch,
   type RawSourceRecord,
@@ -107,6 +110,29 @@ export class FootballApiFacade {
     });
   }
 
+  async fetchStatisticsBatch(
+    input: FetchFixtureStatisticsInput,
+  ): Promise<SourceIngestionBatch<RawFixtureStatisticRecord>> {
+    const runId = this.runIdFactory();
+    const extractionTime = this.now().toISOString();
+    const records = await this.client.fetchFixtureStatistics(input);
+
+    return this.createBatch({
+      coverageWindow: input.window,
+      endpointFamily: "statistics",
+      extractionTime,
+      records,
+      runId,
+      sourceEndpoint: "football.statistics.fixture",
+      warningHint:
+        records.length === 0
+          ? ["statistics_window_empty"]
+          : input.fixtureIds.length > 0
+            ? []
+            : ["statistics_fixture_scope_unspecified"],
+    });
+  }
+
   async fetchOddsBatch(input: FetchOddsWindowInput): Promise<SourceIngestionBatch<RawOddsMarketRecord>> {
     const runId = this.runIdFactory();
     const extractionTime = this.now().toISOString();
@@ -127,7 +153,7 @@ export class FootballApiFacade {
     readonly runId: string;
     readonly extractionTime: string;
     readonly coverageWindow: SourceCoverageWindow;
-    readonly endpointFamily: "fixtures" | "odds" | "availability" | "lineups";
+    readonly endpointFamily: SourceDomain;
     readonly sourceEndpoint: string;
     readonly records: readonly TRecord[];
     readonly warningHint: readonly string[];

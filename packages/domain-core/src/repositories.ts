@@ -10,6 +10,7 @@ import type {
 } from './entities/operational-telemetry.js';
 import type { DailyAutomationPolicyEntity } from './entities/daily-automation-policy.js';
 import type { AvailabilitySnapshotEntity } from './entities/availability-snapshot.js';
+import type { FixtureStatisticSnapshotEntity } from './entities/fixture-statistic-snapshot.js';
 import type { FeatureSnapshotEntity } from './entities/feature-snapshot.js';
 import type { FixtureEntity } from './entities/fixture.js';
 import type { FixtureWorkflowEntity } from './entities/fixture-workflow.js';
@@ -218,6 +219,11 @@ export interface FeatureSnapshotRepository extends Repository<FeatureSnapshotEnt
 export interface AvailabilitySnapshotRepository extends Repository<AvailabilitySnapshotEntity> {
   findByFixtureId(fixtureId: EntityId): Promise<AvailabilitySnapshotEntity[]>;
   findByBatchId(batchId: EntityId): Promise<AvailabilitySnapshotEntity[]>;
+}
+
+export interface FixtureStatisticSnapshotRepository extends Repository<FixtureStatisticSnapshotEntity> {
+  findByFixtureId(fixtureId: EntityId): Promise<FixtureStatisticSnapshotEntity[]>;
+  findByBatchId(batchId: EntityId): Promise<FixtureStatisticSnapshotEntity[]>;
 }
 
 export interface LineupSnapshotRepository extends Repository<LineupSnapshotEntity> {

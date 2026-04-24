@@ -1,10 +1,12 @@
 import type {
   FetchAvailabilityWindowInput,
+  FetchFixtureStatisticsInput,
   FetchFixturesWindowInput,
   FetchLineupsWindowInput,
   FetchOddsWindowInput,
   FootballApiClient,
   RawAvailabilityRecord,
+  RawFixtureStatisticRecord,
   RawFixtureRecord,
   RawLineupRecord,
   RawOddsMarketRecord,
@@ -16,6 +18,7 @@ export class FakeFootballApiClient implements FootballApiClient {
     private readonly odds: readonly RawOddsMarketRecord[],
     private readonly availability: readonly RawAvailabilityRecord[] = sampleAvailability(),
     private readonly lineups: readonly RawLineupRecord[] = sampleLineups(),
+    private readonly statistics: readonly RawFixtureStatisticRecord[] = sampleStatistics(),
   ) {}
 
   async fetchFixturesWindow(_input: FetchFixturesWindowInput): Promise<readonly RawFixtureRecord[]> {
@@ -32,6 +35,12 @@ export class FakeFootballApiClient implements FootballApiClient {
 
   async fetchLineupsWindow(_input: FetchLineupsWindowInput): Promise<readonly RawLineupRecord[]> {
     return this.lineups;
+  }
+
+  async fetchFixtureStatistics(
+    _input: FetchFixtureStatisticsInput,
+  ): Promise<readonly RawFixtureStatisticRecord[]> {
+    return this.statistics;
   }
 }
 
@@ -246,5 +255,46 @@ export const sampleLineups = (): readonly RawLineupRecord[] => [
       providerTeamId: "ars",
       shortName: "ARS",
     },
+  },
+];
+
+export const sampleStatistics = (): readonly RawFixtureStatisticRecord[] => [
+  {
+    payload: {
+      fixtureId: "fix-100",
+      type: "Corner Kicks",
+      value: 6,
+    },
+    providerCode: "api-football",
+    providerFixtureId: "fix-100",
+    recordType: "fixture-statistic",
+    scope: "home",
+    statKey: "corners",
+    valueNumeric: 6,
+  },
+  {
+    payload: {
+      fixtureId: "fix-100",
+      type: "Corner Kicks",
+      value: 3,
+    },
+    providerCode: "api-football",
+    providerFixtureId: "fix-100",
+    recordType: "fixture-statistic",
+    scope: "away",
+    statKey: "corners",
+    valueNumeric: 3,
+  },
+  {
+    payload: {
+      derived: true,
+      fixtureId: "fix-100",
+    },
+    providerCode: "api-football",
+    providerFixtureId: "fix-100",
+    recordType: "fixture-statistic",
+    scope: "match",
+    statKey: "corners",
+    valueNumeric: 9,
   },
 ];

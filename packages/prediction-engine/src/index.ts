@@ -38,7 +38,14 @@ export interface ResearchDossierLike {
 }
 
 export type PredictionStatus = "draft" | "published" | "settled" | "voided";
-export type PredictionMarket = "moneyline" | "totals" | "spread" | "both-teams-score" | "double-chance";
+export type PredictionMarket =
+  | "moneyline"
+  | "totals"
+  | "spread"
+  | "both-teams-score"
+  | "double-chance"
+  | "corners-total"
+  | "corners-h2h";
 export type PredictionOutcome =
   | "home"
   | "away"
@@ -169,6 +176,8 @@ const scoreDerivedMarketOutcomes: Readonly<Record<string, readonly PredictionOut
   totals: ["over", "under"],
   "both-teams-score": ["yes", "no"],
   "double-chance": ["home-draw", "home-away", "draw-away"],
+  "corners-total": ["over", "under"],
+  "corners-h2h": ["home", "draw", "away"],
 };
 
 export const isScoreDerivedMarketOutcome = (
@@ -267,6 +276,12 @@ const marketDisplayName = (market: PredictionMarket): string => {
   }
   if (market === "double-chance") {
     return "double chance";
+  }
+  if (market === "corners-total") {
+    return "corners total";
+  }
+  if (market === "corners-h2h") {
+    return "corners h2h";
   }
 
   return market;

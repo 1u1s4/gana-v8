@@ -37,9 +37,56 @@ test("router registers the ingestion intents", () => {
 
   assert.deepEqual(
     [...router.intents()].sort(),
-    ["ingest-availability", "ingest-fixtures", "ingest-lineups", "ingest-odds"],
+    ["ingest-availability", "ingest-fixture-statistics", "ingest-fixtures", "ingest-lineups", "ingest-odds"],
   );
   assert.match(describeWorkspace(), /ingestion-worker/);
+});
+
+test("runtime persists fixture statistics snapshots", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const runtime = createIngestionWorkerRuntime({
+    env: TEST_RUNTIME_ENV,
+    unitOfWork,
+    now: () => new Date("2026-04-15T21:00:00.000Z"),
+  });
+
+  const result = await runtime.dispatch(
+    createIngestionTaskEnvelope({
+      createdAt: "2026-04-15T21:00:00.000Z",
+      intent: "ingest-fixture-statistics",
+      metadata: {
+        labels: ["test", "statistics"],
+        source: "tests/runtime",
+      },
+      payload: {
+        fixtureIds: ["fix-100"],
+        window: {
+          end: "2026-04-15T21:00:00.000Z",
+          granularity: "intraday",
+          start: "2026-04-15T20:00:00.000Z",
+        },
+      },
+      scheduledFor: "2026-04-15T21:00:00.000Z",
+      taskKind: "fixture-ingestion",
+      traceId: "trace-statistics",
+      workflowId: "wf-statistics",
+    }),
+  );
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.output?.intent, "ingest-fixture-statistics");
+  assert.equal(result.output?.observedRecords, 3);
+  assert.equal(result.output?.upsertedStatisticSnapshots, 3);
+
+  const snapshots = await unitOfWork.fixtureStatisticSnapshots.findByFixtureId("fixture:api-football:fix-100");
+  assert.deepEqual(
+    snapshots.map((snapshot) => [snapshot.statKey, snapshot.scope, snapshot.valueNumeric]),
+    [
+      ["corners", "home", 6],
+      ["corners", "away", 3],
+      ["corners", "match", 9],
+    ],
+  );
 });
 
 test("runtime switches to API-Football client when live-readonly credentials are present", async () => {

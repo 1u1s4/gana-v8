@@ -13,6 +13,8 @@ import type {
   EntityId,
   FeatureSnapshotEntity,
   FeatureSnapshotRepository,
+  FixtureStatisticSnapshotEntity,
+  FixtureStatisticSnapshotRepository,
   FixtureEntity,
   FixtureRepository,
   FixtureWorkflowEntity,
@@ -537,6 +539,21 @@ export class InMemoryAvailabilitySnapshotRepository
   }
 
   async findByBatchId(batchId: EntityId): Promise<AvailabilitySnapshotEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.batchId === batchId);
+  }
+}
+
+export class InMemoryFixtureStatisticSnapshotRepository
+  extends InMemoryRepository<FixtureStatisticSnapshotEntity>
+  implements FixtureStatisticSnapshotRepository
+{
+  async findByFixtureId(fixtureId: EntityId): Promise<FixtureStatisticSnapshotEntity[]> {
+    const items = await this.list();
+    return items.filter((item) => item.fixtureId === fixtureId);
+  }
+
+  async findByBatchId(batchId: EntityId): Promise<FixtureStatisticSnapshotEntity[]> {
     const items = await this.list();
     return items.filter((item) => item.batchId === batchId);
   }

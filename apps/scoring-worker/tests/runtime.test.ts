@@ -19,6 +19,7 @@ import {
   buildResearchDossierFromFixture,
   deriveMarketImpliedProbabilities,
   describeWorkspace,
+  isCornersMarketScoringEnabled,
   loadEligibleFixturesForScoring,
   resolveScoringAiConfig,
   runScoringWorker,
@@ -75,7 +76,7 @@ const snapshot = (overrides: Partial<FakeOddsSnapshot> = {}): FakeOddsSnapshot =
 });
 
 const marketSnapshot = (
-  marketKey: "totals-goals" | "both-teams-score" | "double-chance",
+  marketKey: string,
   selections: readonly FakeSelection[],
   overrides: Partial<FakeOddsSnapshot> = {},
 ): FakeOddsSnapshot =>
@@ -317,6 +318,25 @@ test("deriveMarketImpliedProbabilities normalizes score-derived odds snapshots",
     ),
     { "home-draw": 0.3678, "home-away": 0.3536, "draw-away": 0.2786 },
   );
+  assert.deepEqual(
+    deriveMarketImpliedProbabilities(
+      marketSnapshot("corners-total", [
+        { selectionKey: "over", label: "Over 10.5", priceDecimal: 1.91 },
+        { selectionKey: "under", label: "Under 10.5", priceDecimal: 2.05 },
+      ]),
+    ),
+    { over: 0.5177, under: 0.4823 },
+  );
+  assert.deepEqual(
+    deriveMarketImpliedProbabilities(
+      marketSnapshot("corners-h2h", [
+        { selectionKey: "home", priceDecimal: 2.1 },
+        { selectionKey: "draw", priceDecimal: 7 },
+        { selectionKey: "away", priceDecimal: 1.8 },
+      ]),
+    ),
+    { home: 0.4054, draw: 0.1216, away: 0.473 },
+  );
 });
 
 test("buildResearchDossierFromFixture incorporates ready research metadata into the dossier", () => {
@@ -481,6 +501,59 @@ test("scoreFixtureMarkets persists one prediction per eligible market snapshot",
   assert.equal(predictions.every((prediction) => prediction.id.includes(`:${prediction.market}:${prediction.outcome}:`)), true);
   assert.equal(predictions.find((prediction) => prediction.market === "totals")?.probabilities.line, 2.5);
   assert.equal(new Set(predictions.map((prediction) => prediction.aiRunId)).size, 1);
+});
+
+test("scoreFixtureMarkets persists experimental corners predictions only when the flag is enabled", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const baseFixture = fixture();
+  const snapshots = [
+    snapshot(),
+    marketSnapshot("corners-total", [
+      { selectionKey: "over", label: "Over 10.5", priceDecimal: 1.91 },
+      { selectionKey: "under", label: "Under 10.5", priceDecimal: 2.05 },
+    ]),
+    marketSnapshot("corners-h2h", [
+      { selectionKey: "home", priceDecimal: 2.1 },
+      { selectionKey: "draw", priceDecimal: 7 },
+      { selectionKey: "away", priceDecimal: 1.8 },
+    ]),
+  ];
+
+  await unitOfWork.fixtures.save(baseFixture);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
+
+  const disabledResult = await scoreFixtureMarkets(undefined, baseFixture.id, undefined, {
+    client: createFakeClient([baseFixture], snapshots) as never,
+    generatedAt: "2026-04-15T12:10:00.000Z",
+    unitOfWork,
+    env: { GANA_ENABLE_CORNERS_MARKETS: "0" },
+  });
+
+  assert.equal(isCornersMarketScoringEnabled({ GANA_ENABLE_CORNERS_MARKETS: "1" }), true);
+  assert.equal(disabledResult.status, "scored");
+  assert.deepEqual((await unitOfWork.predictions.list()).map((item) => item.market), ["moneyline"]);
+
+  const enabledUnitOfWork = createInMemoryUnitOfWork();
+  await enabledUnitOfWork.fixtures.save(baseFixture);
+  await seedPublishableResearch(enabledUnitOfWork, baseFixture.id);
+
+  const enabledResult = await scoreFixtureMarkets(undefined, baseFixture.id, undefined, {
+    client: createFakeClient([baseFixture], snapshots) as never,
+    generatedAt: "2026-04-15T12:15:00.000Z",
+    unitOfWork: enabledUnitOfWork,
+    env: { GANA_ENABLE_CORNERS_MARKETS: "1" },
+  });
+
+  const predictions = await enabledUnitOfWork.predictions.list();
+  const markets = predictions.map((prediction) => prediction.market).sort();
+
+  assert.equal(enabledResult.status, "scored");
+  assert.deepEqual(markets, ["corners-h2h", "corners-total", "moneyline"]);
+  assert.equal(predictions.find((prediction) => prediction.market === "corners-total")?.probabilities.line, 10.5);
+  assert.match(
+    predictions.find((prediction) => prediction.market === "corners-h2h")?.rationale.join("\n") ?? "",
+    /GANA_ENABLE_CORNERS_MARKETS=1/,
+  );
 });
 
 test("scoreFixturePrediction skips fixtures that are force-excluded by workflow ops", async () => {

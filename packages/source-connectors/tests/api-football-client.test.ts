@@ -495,6 +495,66 @@ test("ApiFootballHttpClient maps fixture lineups into raw lineup records", async
   assert.match(requests[0] ?? "", /fixtures\/lineups\?fixture=123/);
 });
 
+test("ApiFootballHttpClient maps fixture statistics Corner Kicks into corners scopes", async () => {
+  const requests: string[] = [];
+  const client = new ApiFootballHttpClient({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v3",
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+
+      return createJsonResponse({
+        response: [
+          {
+            statistics: [
+              { type: "Shots on Goal", value: 4 },
+              { type: "Corner Kicks", value: 6 },
+            ],
+            team: {
+              code: "CHE",
+              id: 41,
+              name: "Chelsea",
+            },
+          },
+          {
+            statistics: [
+              { type: "Shots on Goal", value: 3 },
+              { type: "Corner Kicks", value: "3" },
+            ],
+            team: {
+              code: "ARS",
+              id: 42,
+              name: "Arsenal",
+            },
+          },
+        ],
+      });
+    },
+  });
+
+  const records = await client.fetchFixtureStatistics({
+    fixtureIds: ["123"],
+    window: {
+      end: "2026-04-15T21:00:00.000Z",
+      granularity: "intraday",
+      start: "2026-04-15T19:00:00.000Z",
+    },
+  });
+  const corners = records.filter((record) => record.statKey === "corners");
+
+  assert.equal(requests.length, 1);
+  assert.match(requests[0] ?? "", /fixtures\/statistics\?fixture=123/);
+  assert.deepEqual(
+    corners.map((record) => [record.scope, record.valueNumeric]),
+    [
+      ["home", 6],
+      ["away", 3],
+      ["match", 9],
+    ],
+  );
+  assert.ok(corners.every((record) => record.recordType === "fixture-statistic"));
+});
+
 test("ApiFootballHttpClient rejects provider-level errors with structured metadata", async () => {
   const client = new ApiFootballHttpClient({
     apiKey: "test-key",

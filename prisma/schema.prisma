@@ -84,6 +84,8 @@ enum PredictionMarket {
   spread
   both_teams_score @map("both-teams-score")
   double_chance    @map("double-chance")
+  corners_total    @map("corners-total")
+  corners_h2h      @map("corners-h2h")
 }
 
 enum PredictionOutcome {
@@ -218,6 +220,7 @@ model Fixture {
   predictions           Prediction[]
   parlayLegs            ParlayLeg[]
   oddsSnapshots         OddsSnapshot[]
+  statisticSnapshots    FixtureStatisticSnapshot[]
   researchBundles       ResearchBundle[]
   researchSources       ResearchSource[]
   researchClaims        ResearchClaim[]
@@ -292,6 +295,7 @@ model RawIngestionBatch {
   rawObjectRefs         Json
   oddsSnapshots         OddsSnapshot[]
   availabilitySnapshots AvailabilitySnapshot[]
+  statisticSnapshots    FixtureStatisticSnapshot[]
   lineupSnapshots       LineupSnapshot[]
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
@@ -332,6 +336,27 @@ model OddsSelectionSnapshot {
 
   @@unique([oddsSnapshotId, index])
   @@index([selectionKey])
+}
+
+model FixtureStatisticSnapshot {
+  id                String            @id
+  batchId           String
+  batch             RawIngestionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  fixtureId         String?
+  fixture           Fixture?          @relation(fields: [fixtureId], references: [id], onDelete: SetNull)
+  providerFixtureId String
+  providerCode      String
+  statKey           String
+  scope             String            @db.VarChar(32)
+  valueNumeric      Float?
+  capturedAt        DateTime
+  sourceUpdatedAt   DateTime?
+  payload           Json
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([batchId, providerFixtureId, statKey, scope])
+  @@index([fixtureId, statKey, capturedAt])
 }
 
 model Task {

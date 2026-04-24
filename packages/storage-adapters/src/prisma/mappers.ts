@@ -9,6 +9,7 @@ import type {
   AuditEventEntity,
   DailyAutomationPolicyEntity,
   FeatureSnapshotEntity,
+  FixtureStatisticSnapshotEntity,
   FixtureEntity,
   FixtureManualSelectionStatus,
   FixtureSelectionOverride,
@@ -65,6 +66,7 @@ import {
   type DailyAutomationPolicy,
   type Environment as PrismaEnvironment,
   type FeatureSnapshot,
+  type FixtureStatisticSnapshot,
   type Fixture,
   type FixtureManualSelectionStatus as PrismaFixtureManualSelectionStatus,
   type FixtureSelectionOverride as PrismaFixtureSelectionOverride,
@@ -371,6 +373,11 @@ export type FeatureSnapshotRecord = Prisma.FeatureSnapshotGetPayload<typeof feat
 export const availabilitySnapshotInclude = {} as const satisfies Prisma.AvailabilitySnapshotDefaultArgs;
 export type AvailabilitySnapshotRecord = Prisma.AvailabilitySnapshotGetPayload<
   typeof availabilitySnapshotInclude
+>;
+
+export const fixtureStatisticSnapshotInclude = {} as const satisfies Prisma.FixtureStatisticSnapshotDefaultArgs;
+export type FixtureStatisticSnapshotRecord = Prisma.FixtureStatisticSnapshotGetPayload<
+  typeof fixtureStatisticSnapshotInclude
 >;
 
 export const lineupSnapshotInclude = {} as const satisfies Prisma.LineupSnapshotDefaultArgs;
@@ -1489,6 +1496,48 @@ export const availabilitySnapshotDomainToCreateInput = (
   capturedAt: new Date(entity.capturedAt),
   sourceUpdatedAt: toDate(entity.sourceUpdatedAt) ?? null,
   summary: entity.summary,
+  payload: entity.payload as Prisma.InputJsonValue,
+  createdAt: new Date(entity.createdAt),
+  updatedAt: new Date(entity.updatedAt),
+});
+
+export const fixtureStatisticSnapshotRecordToDomain = (
+  record: FixtureStatisticSnapshot | FixtureStatisticSnapshotRecord,
+): FixtureStatisticSnapshotEntity => {
+  const base: FixtureStatisticSnapshotEntity = {
+    id: record.id,
+    batchId: record.batchId,
+    providerFixtureId: record.providerFixtureId,
+    providerCode: record.providerCode,
+    statKey: record.statKey,
+    scope: record.scope as FixtureStatisticSnapshotEntity["scope"],
+    capturedAt: record.capturedAt.toISOString(),
+    payload: asRecord(record.payload),
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+    ...(record.fixtureId ? { fixtureId: record.fixtureId } : {}),
+  };
+
+  return {
+    ...base,
+    ...(record.valueNumeric !== null ? { valueNumeric: record.valueNumeric } : {}),
+    ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt.toISOString() } : {}),
+  };
+};
+
+export const fixtureStatisticSnapshotDomainToCreateInput = (
+  entity: FixtureStatisticSnapshotEntity,
+): Prisma.FixtureStatisticSnapshotUncheckedCreateInput => ({
+  id: entity.id,
+  batchId: entity.batchId,
+  fixtureId: entity.fixtureId ?? null,
+  providerFixtureId: entity.providerFixtureId,
+  providerCode: entity.providerCode,
+  statKey: entity.statKey,
+  scope: entity.scope,
+  valueNumeric: entity.valueNumeric ?? null,
+  capturedAt: new Date(entity.capturedAt),
+  sourceUpdatedAt: toDate(entity.sourceUpdatedAt) ?? null,
   payload: entity.payload as Prisma.InputJsonValue,
   createdAt: new Date(entity.createdAt),
   updatedAt: new Date(entity.updatedAt),

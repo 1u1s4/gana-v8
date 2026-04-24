@@ -5,6 +5,7 @@ import type {
   AuditEventRepository,
   DailyAutomationPolicyRepository,
   FeatureSnapshotRepository,
+  FixtureStatisticSnapshotRepository,
   FixtureRepository,
   FixtureWorkflowRepository,
   LeagueCoveragePolicyRepository,
@@ -37,6 +38,7 @@ import {
   InMemoryAuditEventRepository,
   InMemoryDailyAutomationPolicyRepository,
   InMemoryFeatureSnapshotRepository,
+  InMemoryFixtureStatisticSnapshotRepository,
   InMemoryFixtureRepository,
   InMemoryFixtureWorkflowRepository,
   InMemoryLeagueCoveragePolicyRepository,
@@ -68,6 +70,7 @@ import {
   PrismaAuditEventRepository,
   PrismaDailyAutomationPolicyRepository,
   PrismaFeatureSnapshotRepository,
+  PrismaFixtureStatisticSnapshotRepository,
   PrismaFixtureRepository,
   PrismaFixtureWorkflowRepository,
   PrismaLeagueCoveragePolicyRepository,
@@ -108,6 +111,7 @@ export interface StorageUnitOfWork {
   researchClaimSources: ResearchClaimSourceRepository;
   researchConflicts: ResearchConflictRepository;
   featureSnapshots: FeatureSnapshotRepository;
+  fixtureStatisticSnapshots: FixtureStatisticSnapshotRepository;
   availabilitySnapshots: AvailabilitySnapshotRepository;
   lineupSnapshots: LineupSnapshotRepository;
   lineupParticipants: LineupParticipantRepository;
@@ -146,6 +150,7 @@ export const createInMemoryUnitOfWork = (): InMemoryUnitOfWork => ({
   researchClaimSources: new InMemoryResearchClaimSourceRepository(),
   researchConflicts: new InMemoryResearchConflictRepository(),
   featureSnapshots: new InMemoryFeatureSnapshotRepository(),
+  fixtureStatisticSnapshots: new InMemoryFixtureStatisticSnapshotRepository(),
   availabilitySnapshots: new InMemoryAvailabilitySnapshotRepository(),
   lineupSnapshots: new InMemoryLineupSnapshotRepository(),
   lineupParticipants: new InMemoryLineupParticipantRepository(),
@@ -181,6 +186,7 @@ export const createPrismaUnitOfWork = (
   researchClaimSources: new PrismaResearchClaimSourceRepository(client),
   researchConflicts: new PrismaResearchConflictRepository(client),
   featureSnapshots: new PrismaFeatureSnapshotRepository(client),
+  fixtureStatisticSnapshots: new PrismaFixtureStatisticSnapshotRepository(client),
   availabilitySnapshots: new PrismaAvailabilitySnapshotRepository(client),
   lineupSnapshots: new PrismaLineupSnapshotRepository(client),
   lineupParticipants: new PrismaLineupParticipantRepository(client),

@@ -63,8 +63,8 @@ const parseWindow = (prefix, env) => {
 
 const main = async () => {
   const argvMode = process.argv[2] ?? "both";
-  if (!["fixtures", "odds", "both"].includes(argvMode)) {
-    throw new Error(`Unsupported mode ${process.argv[2] ?? ""}. Use fixtures|odds|both`);
+  if (!["fixtures", "odds", "statistics", "both"].includes(argvMode)) {
+    throw new Error(`Unsupported mode ${process.argv[2] ?? ""}. Use fixtures|odds|statistics|both`);
   }
 
   const now = new Date();
@@ -120,12 +120,16 @@ const main = async () => {
       ...(parseCsv(process.env.GANA_LIVE_ODDS_FIXTURE_IDS ?? dotenv.GANA_LIVE_ODDS_FIXTURE_IDS)
         ? { oddsFixtureIds: parseCsv(process.env.GANA_LIVE_ODDS_FIXTURE_IDS ?? dotenv.GANA_LIVE_ODDS_FIXTURE_IDS) }
         : {}),
+      ...(parseCsv(process.env.GANA_LIVE_STATISTICS_FIXTURE_IDS ?? dotenv.GANA_LIVE_STATISTICS_FIXTURE_IDS)
+        ? { statisticsFixtureIds: parseCsv(process.env.GANA_LIVE_STATISTICS_FIXTURE_IDS ?? dotenv.GANA_LIVE_STATISTICS_FIXTURE_IDS) }
+        : {}),
       ...(marketKeys
         ? { marketKeys }
         : {}),
       mode: argvMode,
       now: () => now,
       oddsWindow: parseWindow("GANA_FOOTBALL_ODDS_WINDOW", env),
+      statisticsWindow: parseWindow("GANA_FOOTBALL_STATISTICS_WINDOW", env),
       prismaClient: prisma,
       provider: {
         ...(env.GANA_PROVIDER_SOURCE ? { source: env.GANA_PROVIDER_SOURCE } : {}),

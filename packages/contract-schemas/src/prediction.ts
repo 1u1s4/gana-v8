@@ -14,6 +14,8 @@ export const predictionMarketSchema = z.enum([
   "spread",
   "both-teams-score",
   "double-chance",
+  "corners-total",
+  "corners-h2h",
 ]);
 export const predictionOutcomeSchema = z.enum([
   "home",

@@ -1,10 +1,12 @@
 import type {
   FetchAvailabilityWindowInput,
+  FetchFixtureStatisticsInput,
   FetchFixturesWindowInput,
   FetchLineupsWindowInput,
   FetchOddsWindowInput,
   FootballApiClient,
   RawAvailabilityRecord,
+  RawFixtureStatisticRecord,
   RawFixtureRecord,
   RawLineupPlayer,
   RawLineupRecord,
@@ -165,6 +167,17 @@ interface ApiFootballLineupsResponse {
   readonly substitutes?: readonly ApiFootballLineupPlayerResponse[];
   readonly team?: ApiFootballTeamResponse;
   readonly update?: string;
+}
+
+interface ApiFootballFixtureStatisticsResponse {
+  readonly statistics?: readonly ApiFootballFixtureStatisticResponse[];
+  readonly team?: ApiFootballTeamResponse;
+  readonly update?: string;
+}
+
+interface ApiFootballFixtureStatisticResponse {
+  readonly type?: string;
+  readonly value?: number | string | null;
 }
 
 interface ApiFootballLineupPlayerResponse {
@@ -408,6 +421,42 @@ const normalizeIds = (ids: readonly string[] | undefined): readonly string[] =>
 
 const matchesIdFilter = (candidate: string, allowedIds: readonly string[]): boolean =>
   allowedIds.length === 0 || allowedIds.includes(candidate);
+
+const normalizeStatisticKey = (type: string | undefined): string => {
+  const normalized = String(type ?? "").trim().toLowerCase();
+
+  if (normalized === "corner kicks" || normalized.includes("corner")) {
+    return "corners";
+  }
+
+  return (
+    normalized
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "unknown"
+  );
+};
+
+const toStatisticValueNumeric = (value: number | string | null | undefined): number | undefined => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  const numericValue =
+    typeof value === "number" ? value : Number(value.trim().replace(/%$/, ""));
+
+  return Number.isFinite(numericValue) ? numericValue : undefined;
+};
+
+const toStatisticScope = (
+  index: number,
+  responseCount: number,
+): RawFixtureStatisticRecord["scope"] => {
+  if (responseCount < 2) {
+    return "match";
+  }
+
+  return index === 0 ? "home" : index === 1 ? "away" : "match";
+};
 
 const toAvailabilityStatus = (
   type: string | undefined,
@@ -703,6 +752,85 @@ export class ApiFootballHttpClient implements FootballApiClient {
           } satisfies RawLineupRecord,
         ];
       });
+    });
+  }
+
+  async fetchFixtureStatistics(
+    input: FetchFixtureStatisticsInput,
+  ): Promise<readonly RawFixtureStatisticRecord[]> {
+    const fixtureIds = normalizeIds(input.fixtureIds);
+
+    if (fixtureIds.length === 0) {
+      return [];
+    }
+
+    const responses = await Promise.all(
+      fixtureIds.map(async (fixtureId) =>
+        this.request<ApiFootballFixtureStatisticsResponse>("fixtures/statistics", {
+          fixture: fixtureId,
+        }),
+      ),
+    );
+
+    return responses.flatMap((items, responseIndex) => {
+      const providerFixtureId = fixtureIds[responseIndex] ?? `fixture-${responseIndex}`;
+      const teamRecords = items.flatMap((entry, entryIndex) => {
+        const scope = toStatisticScope(entryIndex, items.length);
+        const team = toTeam(entry.team, `team-${responseIndex}-${entryIndex}`);
+
+        return ensureArray(entry.statistics).map((statistic) => {
+          const valueNumeric = toStatisticValueNumeric(statistic.value);
+
+          return {
+            payload: {
+              fixtureId: providerFixtureId,
+              statistic,
+              team,
+            },
+            providerCode: this.providerCode,
+            providerFixtureId,
+            recordType: "fixture-statistic",
+            scope,
+            ...(entry.update ? { sourceUpdatedAt: entry.update } : {}),
+            statKey: normalizeStatisticKey(statistic.type),
+            ...(valueNumeric !== undefined ? { valueNumeric } : {}),
+          } satisfies RawFixtureStatisticRecord;
+        });
+      });
+
+      const homeCorners = teamRecords.find(
+        (record) => record.statKey === "corners" && record.scope === "home",
+      );
+      const awayCorners = teamRecords.find(
+        (record) => record.statKey === "corners" && record.scope === "away",
+      );
+      const hasMatchCorners = teamRecords.some(
+        (record) => record.statKey === "corners" && record.scope === "match",
+      );
+
+      if (
+        homeCorners?.valueNumeric === undefined ||
+        awayCorners?.valueNumeric === undefined ||
+        hasMatchCorners
+      ) {
+        return teamRecords;
+      }
+
+      return [
+        ...teamRecords,
+        {
+          payload: {
+            derivedFrom: [homeCorners.payload, awayCorners.payload],
+            fixtureId: providerFixtureId,
+          },
+          providerCode: this.providerCode,
+          providerFixtureId,
+          recordType: "fixture-statistic",
+          scope: "match",
+          statKey: "corners",
+          valueNumeric: homeCorners.valueNumeric + awayCorners.valueNumeric,
+        } satisfies RawFixtureStatisticRecord,
+      ];
     });
   }
 

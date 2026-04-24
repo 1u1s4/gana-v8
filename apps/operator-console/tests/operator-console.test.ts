@@ -516,6 +516,42 @@ test("operator console derives an ops-focused snapshot from public-api operation
   assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /predictions 1/);
 });
 
+test("operator console renders fixture corners statistics in fixture ops", () => {
+  const operationSnapshot = createOperationLikeSnapshot({
+    fixtureStatisticSnapshots: [
+      {
+        id: "stat-corners-home",
+        fixtureId: "fixture:api-football:123",
+        statKey: "corners",
+        scope: "home",
+        valueNumeric: 6,
+        capturedAt: "2026-04-15T03:45:00.000Z",
+      },
+      {
+        id: "stat-corners-away",
+        fixtureId: "fixture:api-football:123",
+        statKey: "corners",
+        scope: "away",
+        valueNumeric: 2,
+        capturedAt: "2026-04-15T03:44:00.000Z",
+      },
+    ],
+  });
+  const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot as never);
+  const model = buildOperatorConsoleModel(snapshot);
+  const fixtureOpsPanel = model.panels.find((panel) => panel.title === "Fixture ops");
+
+  assert.deepEqual(snapshot.fixtures[0]?.statistics?.corners, {
+    status: "available",
+    homeCorners: 6,
+    awayCorners: 2,
+    totalCorners: 8,
+    capturedAt: "2026-04-15T03:45:00.000Z",
+  });
+  assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /corners available/);
+  assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /home 6 \| away 2 \| total 8/);
+});
+
 test("operator console renders readable market labels while retaining raw market data", async () => {
   const fixtureId = "fixture:api-football:123";
   const predictions = [

@@ -1532,6 +1532,99 @@ test("public api loads recent fixture workflow audit events from the unit of wor
   assert.match(fixtureOps?.scoringEligibility.reason ?? "", /force-included/i);
 });
 
+test("public api exposes fixture ops corners statistics from statistic snapshots", () => {
+  const fixtureWithCorners = createFixture({
+    id: "fixture:corners:available",
+    sport: "football",
+    competition: "Liga Nacional",
+    homeTeam: "Antigua",
+    awayTeam: "Coban",
+    scheduledAt: "2026-04-15T18:00:00.000Z",
+    status: "scheduled",
+    metadata: {},
+  });
+  const fixtureWithPartialCorners = createFixture({
+    id: "fixture:corners:pending",
+    sport: "football",
+    competition: "Liga Nacional",
+    homeTeam: "Municipal",
+    awayTeam: "Comunicaciones",
+    scheduledAt: "2026-04-15T20:00:00.000Z",
+    status: "scheduled",
+    metadata: {},
+  });
+  const fixtureWithoutCorners = createFixture({
+    id: "fixture:corners:missing",
+    sport: "football",
+    competition: "Liga Nacional",
+    homeTeam: "Xelaju",
+    awayTeam: "Malacateco",
+    scheduledAt: "2026-04-15T22:00:00.000Z",
+    status: "scheduled",
+    metadata: {},
+  });
+  const snapshot = createOperationSnapshot({
+    fixtures: [fixtureWithCorners, fixtureWithPartialCorners, fixtureWithoutCorners],
+    fixtureStatisticSnapshots: [
+      {
+        id: "stat-corners-old-home",
+        fixtureId: fixtureWithCorners.id,
+        statKey: "corners",
+        scope: "home",
+        valueNumeric: 2,
+        capturedAt: "2026-04-15T17:00:00.000Z",
+      },
+      {
+        id: "stat-corners-home",
+        fixtureId: fixtureWithCorners.id,
+        statKey: "corners",
+        scope: "home",
+        valueNumeric: 5,
+        capturedAt: "2026-04-15T18:05:00.000Z",
+      },
+      {
+        id: "stat-corners-away",
+        fixtureId: fixtureWithCorners.id,
+        statKey: "corners",
+        scope: "away",
+        valueNumeric: 3,
+        capturedAt: "2026-04-15T18:03:00.000Z",
+      },
+      {
+        id: "stat-corners-pending-home",
+        fixtureId: fixtureWithPartialCorners.id,
+        statKey: "corners",
+        scope: "home",
+        valueNumeric: 4,
+        capturedAt: "2026-04-15T20:05:00.000Z",
+      },
+    ],
+  });
+  const handlers = createPublicApiHandlers(snapshot);
+
+  assert.deepEqual(handlers.fixtureOpsById(fixtureWithCorners.id)?.statistics.corners, {
+    status: "available",
+    homeCorners: 5,
+    awayCorners: 3,
+    totalCorners: 8,
+    capturedAt: "2026-04-15T18:05:00.000Z",
+  });
+  assert.deepEqual(handlers.fixtureOpsById(fixtureWithPartialCorners.id)?.statistics.corners, {
+    status: "pending",
+    homeCorners: 4,
+    awayCorners: null,
+    totalCorners: null,
+    capturedAt: "2026-04-15T20:05:00.000Z",
+  });
+  assert.deepEqual(handlers.fixtureOpsById(fixtureWithoutCorners.id)?.statistics.corners, {
+    status: "missing",
+    homeCorners: null,
+    awayCorners: null,
+    totalCorners: null,
+    capturedAt: null,
+  });
+});
+
 test("public api returns consistent 404 payloads for missing detail resources", () => {
   const handlers = createPublicApiHandlers(createDemoOperationSnapshot());
 

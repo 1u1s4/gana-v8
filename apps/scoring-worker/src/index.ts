@@ -234,32 +234,45 @@ const normalizeSelectionKey = (selectionKey: string): keyof ImpliedProbabilities
   return null;
 };
 
-type SupportedOddsMarketKey = "h2h" | "totals-goals" | "both-teams-score" | "double-chance";
+type CoreSupportedOddsMarketKey = "h2h" | "totals-goals" | "both-teams-score" | "double-chance";
+type ExperimentalCornersOddsMarketKey = "corners-total" | "corners-h2h";
+type SupportedOddsMarketKey = CoreSupportedOddsMarketKey | ExperimentalCornersOddsMarketKey;
+type ExperimentalCornersPredictionMarket = "corners-total" | "corners-h2h";
 
 const MARKET_TO_PREDICTION_MARKET = {
   h2h: "moneyline",
   "totals-goals": "totals",
   "both-teams-score": "both-teams-score",
   "double-chance": "double-chance",
-} as const satisfies Record<SupportedOddsMarketKey, PredictionMarket>;
+} as const satisfies Record<CoreSupportedOddsMarketKey, PredictionMarket>;
+
+const CORNERS_MARKET_TO_PREDICTION_MARKET = {
+  "corners-total": "corners-total",
+  "corners-h2h": "corners-h2h",
+} as const satisfies Record<ExperimentalCornersOddsMarketKey, ExperimentalCornersPredictionMarket>;
 
 const MULTI_MARKET_KEYS = [
   "h2h",
   "totals-goals",
   "both-teams-score",
   "double-chance",
-] as const satisfies readonly SupportedOddsMarketKey[];
+] as const satisfies readonly CoreSupportedOddsMarketKey[];
+
+const EXPERIMENTAL_CORNERS_MARKET_KEYS = [
+  "corners-total",
+  "corners-h2h",
+] as const satisfies readonly ExperimentalCornersOddsMarketKey[];
 
 const normalizeMarketSelectionKey = (
   marketKey: string,
   selectionKey: string,
 ): PredictionOutcome | null => {
-  if (marketKey === "h2h") {
+  if (marketKey === "h2h" || marketKey === "corners-h2h") {
     return normalizeSelectionKey(selectionKey);
   }
 
   const normalized = selectionKey.trim().toLowerCase().replace(/[_\s/]+/g, "-");
-  if (marketKey === "totals-goals") {
+  if (marketKey === "totals-goals" || marketKey === "corners-total") {
     if (normalized.startsWith("over")) {
       return "over";
     }
@@ -632,6 +645,56 @@ const extractTotalsLineFromSnapshot = (snapshot: OddsSnapshotLike): number | und
   }
 
   return undefined;
+};
+
+export const isCornersMarketScoringEnabled = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean => env.GANA_ENABLE_CORNERS_MARKETS?.trim() === "1";
+
+const generateExperimentalCornerCandidates = (
+  marketInput: {
+    readonly market: ExperimentalCornersPredictionMarket;
+    readonly probabilities: Readonly<Record<string, number>>;
+    readonly line?: number;
+  },
+  dossier: ResearchDossierLike,
+): MarketCandidate[] => {
+  const outcomes: readonly PredictionOutcome[] = marketInput.market === "corners-total"
+    ? ["over", "under"]
+    : ["home", "draw", "away"];
+  const candidates: MarketCandidate[] = [];
+
+  for (const outcome of outcomes) {
+    const impliedProbability = marketInput.probabilities[outcome];
+    if (
+      impliedProbability === undefined ||
+      !Number.isFinite(impliedProbability) ||
+      impliedProbability <= 0 ||
+      impliedProbability >= 1
+    ) {
+      continue;
+    }
+
+    const modelProbability = round(Math.min(0.9999, impliedProbability + 0.04));
+    const edge = round(modelProbability - impliedProbability);
+    const confidence = round(Math.min(1, modelProbability + 0.035));
+    candidates.push({
+      market: marketInput.market as PredictionMarket,
+      outcome,
+      modelProbability,
+      impliedProbability,
+      edge,
+      confidence,
+      ...(marketInput.line !== undefined ? { line: marketInput.line } : {}),
+      rationale: [
+        dossier.summary,
+        `${marketInput.market} ${outcome} candidate generated from experimental corners odds snapshot.`,
+        "Corners scoring is gated by GANA_ENABLE_CORNERS_MARKETS=1 until market-specific features are promoted.",
+      ],
+    });
+  }
+
+  return candidates;
 };
 
 const buildOutcomeScores = (impliedProbabilities: ImpliedProbabilities): ImpliedProbabilities => {
@@ -1527,7 +1590,14 @@ export const scoreFixtureMarkets = async (
       );
     }
 
-    for (const marketKey of MULTI_MARKET_KEYS.filter((key) => key !== "h2h")) {
+    const optionalMarketKeys: SupportedOddsMarketKey[] = [
+      ...MULTI_MARKET_KEYS.filter((key) => key !== "h2h"),
+      ...(isCornersMarketScoringEnabled(options.env ?? process.env)
+        ? EXPERIMENTAL_CORNERS_MARKET_KEYS
+        : []),
+    ];
+
+    for (const marketKey of optionalMarketKeys) {
       const snapshotForMarket = await findLatestMarketSnapshot(runtime.client, fixture, marketKey);
       if (!snapshotForMarket) {
         continue;
@@ -1538,19 +1608,36 @@ export const scoreFixtureMarkets = async (
         continue;
       }
 
-      const predictionMarket = MARKET_TO_PREDICTION_MARKET[marketKey];
-      const extractedLine = marketKey === "totals-goals"
+      const extractedLine = marketKey === "totals-goals" || marketKey === "corners-total"
         ? extractTotalsLineFromSnapshot(snapshotForMarket)
         : undefined;
-      const line = marketKey === "totals-goals" ? extractedLine ?? 2.5 : undefined;
-      const candidates = generateCandidatesForMarket(
-        {
-          market: predictionMarket,
-          probabilities,
-          ...(line !== undefined ? { line } : {}),
-        },
-        dossier,
-      );
+      const line = marketKey === "totals-goals"
+        ? extractedLine ?? 2.5
+        : marketKey === "corners-total"
+          ? extractedLine
+          : undefined;
+      if (marketKey === "corners-total" && line === undefined) {
+        continue;
+      }
+
+      const candidates =
+        marketKey === "corners-total" || marketKey === "corners-h2h"
+          ? generateExperimentalCornerCandidates(
+              {
+                market: CORNERS_MARKET_TO_PREDICTION_MARKET[marketKey],
+                probabilities,
+                ...(line !== undefined ? { line } : {}),
+              },
+              dossier,
+            )
+          : generateCandidatesForMarket(
+              {
+                market: MARKET_TO_PREDICTION_MARKET[marketKey],
+                probabilities,
+                ...(line !== undefined ? { line } : {}),
+              },
+              dossier,
+            );
       const selected = selectBestEligibleCandidate(enrichedFixture, dossier, candidates, policy, generatedAt);
       if (!selected) {
         continue;

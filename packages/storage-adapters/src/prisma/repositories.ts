@@ -12,6 +12,8 @@ import type {
   EntityId,
   FeatureSnapshotEntity,
   FeatureSnapshotRepository,
+  FixtureStatisticSnapshotEntity,
+  FixtureStatisticSnapshotRepository,
   FixtureEntity,
   FixtureRepository,
   FixtureWorkflowEntity,
@@ -87,6 +89,9 @@ import {
   featureSnapshotDomainToCreateInput,
   featureSnapshotInclude,
   featureSnapshotRecordToDomain,
+  fixtureStatisticSnapshotDomainToCreateInput,
+  fixtureStatisticSnapshotInclude,
+  fixtureStatisticSnapshotRecordToDomain,
   fixtureDomainToCreateInput,
   fixtureInclude,
   fixtureRecordToDomain,
@@ -176,6 +181,7 @@ export type PrismaClientLike = Pick<
   | "researchSource"
   | "researchConflict"
   | "featureSnapshot"
+  | "fixtureStatisticSnapshot"
   | "availabilitySnapshot"
   | "lineupSnapshot"
   | "lineupParticipant"
@@ -913,6 +919,58 @@ export class PrismaAvailabilitySnapshotRepository implements AvailabilitySnapsho
       ...availabilitySnapshotInclude,
     });
     return records.map(availabilitySnapshotRecordToDomain);
+  }
+}
+
+export class PrismaFixtureStatisticSnapshotRepository implements FixtureStatisticSnapshotRepository {
+  constructor(private readonly client: PrismaClientLike) {}
+
+  async save(entity: FixtureStatisticSnapshotEntity): Promise<FixtureStatisticSnapshotEntity> {
+    const record = await this.client.fixtureStatisticSnapshot.upsert({
+      where: { id: entity.id },
+      create: fixtureStatisticSnapshotDomainToCreateInput(entity),
+      update: fixtureStatisticSnapshotDomainToCreateInput(entity),
+      ...fixtureStatisticSnapshotInclude,
+    });
+    return fixtureStatisticSnapshotRecordToDomain(record);
+  }
+
+  async getById(id: EntityId): Promise<FixtureStatisticSnapshotEntity | null> {
+    const record = await this.client.fixtureStatisticSnapshot.findUnique({
+      where: { id },
+      ...fixtureStatisticSnapshotInclude,
+    });
+    return record ? fixtureStatisticSnapshotRecordToDomain(record) : null;
+  }
+
+  async list(): Promise<FixtureStatisticSnapshotEntity[]> {
+    const records = await this.client.fixtureStatisticSnapshot.findMany({
+      orderBy: { capturedAt: "asc" },
+      ...fixtureStatisticSnapshotInclude,
+    });
+    return records.map(fixtureStatisticSnapshotRecordToDomain);
+  }
+
+  async delete(id: EntityId): Promise<void> {
+    await this.client.fixtureStatisticSnapshot.delete({ where: { id } });
+  }
+
+  async findByFixtureId(fixtureId: EntityId): Promise<FixtureStatisticSnapshotEntity[]> {
+    const records = await this.client.fixtureStatisticSnapshot.findMany({
+      where: { fixtureId },
+      orderBy: { capturedAt: "asc" },
+      ...fixtureStatisticSnapshotInclude,
+    });
+    return records.map(fixtureStatisticSnapshotRecordToDomain);
+  }
+
+  async findByBatchId(batchId: EntityId): Promise<FixtureStatisticSnapshotEntity[]> {
+    const records = await this.client.fixtureStatisticSnapshot.findMany({
+      where: { batchId },
+      orderBy: { capturedAt: "asc" },
+      ...fixtureStatisticSnapshotInclude,
+    });
+    return records.map(fixtureStatisticSnapshotRecordToDomain);
   }
 }
 

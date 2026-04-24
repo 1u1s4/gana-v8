@@ -307,6 +307,7 @@ export function createDemoOperationSnapshot(
   const taskRuns = [...(input.taskRuns ?? createDemoTaskRuns(tasks))];
   const rawBatches = [...(input.rawBatches ?? [])];
   const oddsSnapshots = [...(input.oddsSnapshots ?? [])];
+  const fixtureStatisticSnapshots = [...(input.fixtureStatisticSnapshots ?? [])];
   const aiRuns = [...(input.aiRuns ?? createDemoAiRuns(tasks))];
   const providerStates = [...(input.providerStates ?? createDemoProviderStates(aiRuns, rawBatches))];
   const predictions = [...(input.predictions ?? createDemoPredictions(fixtures, aiRuns))];
@@ -329,6 +330,7 @@ export function createDemoOperationSnapshot(
     providerStates,
     rawBatches,
     oddsSnapshots,
+    fixtureStatisticSnapshots,
     predictions,
     parlays,
     validations,

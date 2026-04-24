@@ -6,7 +6,15 @@ import { ingestAvailabilityWindow } from "../src/jobs/ingest-availability-window
 import { ingestFixturesWindow } from "../src/jobs/ingest-fixtures-window.js";
 import { ingestLineupsWindow } from "../src/jobs/ingest-lineups-window.js";
 import { ingestOddsWindow } from "../src/jobs/ingest-odds-window.js";
-import { FakeFootballApiClient, sampleAvailability, sampleFixtures, sampleLineups, sampleOdds } from "../src/testing/fakes.js";
+import { ingestStatisticsWindow } from "../src/jobs/ingest-statistics-window.js";
+import {
+  FakeFootballApiClient,
+  sampleAvailability,
+  sampleFixtures,
+  sampleLineups,
+  sampleOdds,
+  sampleStatistics,
+} from "../src/testing/fakes.js";
 
 const createFacade = () =>
   new FootballApiFacade(
@@ -15,6 +23,7 @@ const createFacade = () =>
       sampleOdds(),
       sampleAvailability(),
       sampleLineups(),
+      sampleStatistics(),
     ),
     {
       now: () => new Date("2026-04-14T21:00:00.000Z"),
@@ -86,5 +95,29 @@ test("ingest.lineups.window materializes team lineup snapshots", async () => {
   assert.equal(result.jobName, "ingest.lineups.window");
   assert.equal(result.batch.records.length, 2);
   assert.equal(result.batch.records[0]?.players.length, 3);
+  assert.equal(result.batch.extractionStatus, "success");
+});
+
+test("ingest.statistics.window materializes fixture corners statistics", async () => {
+  const result = await ingestStatisticsWindow(createFacade(), {
+    fixtureIds: ["fix-100"],
+    window: {
+      end: "2026-04-15T21:00:00.000Z",
+      granularity: "intraday",
+      start: "2026-04-15T19:00:00.000Z",
+    },
+  });
+
+  assert.equal(result.jobName, "ingest.statistics.window");
+  assert.equal(result.batch.lineage.endpointFamily, "statistics");
+  assert.equal(result.batch.records.length, 3);
+  assert.deepEqual(
+    result.batch.records.map((record) => [record.scope, record.statKey, record.valueNumeric]),
+    [
+      ["home", "corners", 6],
+      ["away", "corners", 3],
+      ["match", "corners", 9],
+    ],
+  );
   assert.equal(result.batch.extractionStatus, "success");
 });

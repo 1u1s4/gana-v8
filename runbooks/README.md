@@ -14,6 +14,7 @@ Este archivo es el indice canonico para descubrir procedimientos operativos. Los
 - `sandbox-certification-drift.md`: drift de goldens, evidence packs o certificacion sintetica.
 - `sandbox-certification.md`: certificacion deterministica de sandbox contra goldens versionadas.
 - `smoke-e2e-runtime-failure.md`: diagnostico del smoke Hermes end-to-end.
+- `webscraping-gambeta.md`: scraping HTML simple hacia la base aislada `webscraping_gambeta` en MySQL.
 - `worktree-bootstrap-validation.md`: bootstrap aislado por worktree y validacion ejecutable HTTP/UI del harness vivo.
 
 ## Routing operativo
@@ -30,6 +31,7 @@ Este archivo es el indice canonico para descubrir procedimientos operativos. Los
 | Investigar staleness de lectura | `public-api` y `operator-console` divergen o muestran datos viejos | Acceso al entorno afectado o replica de consulta | [`public-api-operator-console-read-model-staleness.md`](./public-api-operator-console-read-model-staleness.md) |
 | Investigar incidente de observabilidad | Health/readiness/logs no explican el estado real | Ventana temporal y entorno afectados identificados | [`observability-traceability-incident.md`](./observability-traceability-incident.md) |
 | Ejecutar rollback de release | Candidato aprobado pierde confiabilidad o falla evidencia critica | SHA/branch bueno identificado y owner humano de rollback | [`rollback.md`](./rollback.md) |
+| Persistir resultados de scraping HTML aislado | Se necesita probar o supervisar scraping web sin mezclarlo con la DB operativa principal | Credenciales MySQL disponibles y URLs objetivo definidas | [`webscraping-gambeta.md`](./webscraping-gambeta.md) |
 | Levantar y validar un harness por worktree | Trabajo agentic paralelo, bug repro local o evidencia viva de consola/API | Worktree dedicado y puertos elegidos | [`worktree-bootstrap-validation.md`](./worktree-bootstrap-validation.md) |
 
 ## Matriz canonica de bootstrap y preparacion
