@@ -7,18 +7,23 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 - `completado/`: planes cuyo alcance principal ya quedó materializado de forma sustancial en el repo actual.
 - `falta/`: planes canónicos vigentes para cerrar brechas reales del repo actual.
 - `archivado/2026-04-21-falta-originales/`: snapshot íntegro de los 7 planes previos que se consolidaron durante la limpieza documental del 21 de abril de 2026.
+- `archivado/2026-04-24-harness-falta-consolidado/`: snapshot de los 3 planes activos de harness que fueron reemplazados por un único plan consolidado de evidencia/cobertura/remediación.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-harness-qa-navegable-y-flujos-operativos.md`
-- `gana-v8-harness-registro-goldens-y-cobertura.md`
-- `gana-v8-harness-remediacion-legible-por-agentes.md`
+- `gana-v8-corners-experimental-guardrails.md`
+- `gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`
+- `gana-v8-live-multimarket-provider-validation.md`
+- `gana-v8-market-line-extraction-hardening.md`
+- `gana-v8-provider-market-alias-hardening.md`
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 
 ## Estado actual del backlog
 
-- El analisis de harness del 23 de abril de 2026 mantiene backlog activo solo para gaps no cubiertos por cierres previos: QA navegable de flujos operativos, registro de goldens/cobertura y remediacion legible por agentes.
+- El analisis de harness del 24 de abril de 2026 consolida los tres planes activos de QA navegable, registro de goldens/cobertura y remediacion legible por agentes en `gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`.
+- Los tres planes reemplazados quedaron preservados en `docs/plans/archivado/2026-04-24-harness-falta-consolidado/` para trazabilidad, sin competir como fuente activa.
+- El frente de multi-mercado ya quedo implementado, pero quedan hardenings activos: validacion live contra provider, expansion de aliases, extraccion segura de lineas y guardrails de corners.
 - El frente de principios dorados y garbage collection ya quedo materializado con contrato canonico, scorecard advisory, enforcement estructural y runbook de patrullaje.
 - El cierre principal de harness, release ops y runbooks ya quedo materializado en `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`.
 - El cierre complementario de adopcion operativa de `runtime-release` ya quedo materializado en `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`.

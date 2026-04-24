@@ -236,11 +236,14 @@ La skill reusable del repo vive en `skills/gana-v8-verification-guard/` con su `
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
-- `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
-- `docs/plans/falta/gana-v8-harness-remediacion-legible-por-agentes.md`
+- `docs/plans/falta/gana-v8-corners-experimental-guardrails.md`
+- `docs/plans/falta/gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`
+- `docs/plans/falta/gana-v8-live-multimarket-provider-validation.md`
+- `docs/plans/falta/gana-v8-market-line-extraction-hardening.md`
+- `docs/plans/falta/gana-v8-provider-market-alias-hardening.md`
 
 Cierre reciente y contexto histórico:
+- `docs/plans/archivado/2026-04-24-harness-falta-consolidado/`
 - `docs/plans/completado/gana-v8-corners-stats-prediction-validation.md`
 - `docs/plans/completado/gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `docs/plans/completado/gana-v8-multi-market-scoring-publishing-validation.md`
