@@ -146,6 +146,16 @@ export interface FixtureOpsStatisticsReadModel {
   readonly corners: FixtureCornersStatisticsReadModel;
 }
 
+export type FixtureCornersGuardrailStatus =
+  | "stats-missing"
+  | "line-missing"
+  | "settlement-ready";
+
+export interface FixtureCornersGuardrailReadModel {
+  readonly statuses: readonly FixtureCornersGuardrailStatus[];
+  readonly actionableText: string;
+}
+
 export type FixtureResearchBundleStatus = "publishable" | "degraded" | "hold";
 
 export interface FixtureResearchGateReasonReadModel {
@@ -421,6 +431,7 @@ export interface FixtureOpsDetailReadModel {
   readonly research: FixtureResearchReadModel | null;
   readonly latestOddsSnapshot: OddsSnapshotReadModel | null;
   readonly statistics: FixtureOpsStatisticsReadModel;
+  readonly cornersGuardrail: FixtureCornersGuardrailReadModel;
   readonly scoringEligibility: {
     readonly eligible: boolean;
     readonly reason?: string;
@@ -4721,6 +4732,60 @@ const buildFixtureOpsStatistics = (
   };
 };
 
+const isCornersPrediction = (prediction: Pick<PredictionEntity, "market">): boolean =>
+  prediction.market === "corners-total" || prediction.market === "corners-h2h";
+
+const isCornersTotalPrediction = (prediction: Pick<PredictionEntity, "market">): boolean =>
+  prediction.market === "corners-total";
+
+const hasFinitePredictionLine = (prediction: Pick<PredictionEntity, "probabilities">): boolean =>
+  typeof prediction.probabilities.line === "number" && Number.isFinite(prediction.probabilities.line);
+
+export const createFixtureCornersGuardrailSummary = (input: {
+  readonly fixture: FixtureEntity;
+  readonly predictions: readonly PredictionEntity[];
+  readonly statistics: FixtureOpsStatisticsReadModel;
+}): FixtureCornersGuardrailReadModel => {
+  const cornersPredictions = input.predictions.filter(isCornersPrediction);
+  const cornersTotalPredictions = cornersPredictions.filter(isCornersTotalPrediction);
+  const statsAvailable = input.statistics.corners.status === "available";
+  const statsMissing = cornersPredictions.length > 0 && !statsAvailable;
+  const lineMissing = cornersTotalPredictions.some((prediction) => !hasFinitePredictionLine(prediction));
+  const settlementReady = cornersPredictions.some((prediction) =>
+    input.fixture.status === "completed" &&
+    statsAvailable &&
+    (prediction.market === "corners-h2h" || hasFinitePredictionLine(prediction)),
+  );
+  const statuses: FixtureCornersGuardrailStatus[] = [];
+
+  if (statsMissing) {
+    statuses.push("stats-missing");
+  }
+  if (lineMissing) {
+    statuses.push("line-missing");
+  }
+  if (settlementReady) {
+    statuses.push("settlement-ready");
+  }
+
+  const actionableText = cornersPredictions.length === 0
+    ? "No corners predictions are present in the snapshot."
+    : statsMissing && lineMissing
+      ? "Corners settlement is not ready: fixture corners stats are missing or incomplete and a corners-total market line is missing. Ingest final home/away corners statistics and re-run corners line extraction before validation."
+      : statsMissing
+        ? "Corners settlement is not ready: fixture corners stats are missing or incomplete. Ingest final home/away corners statistics before validation."
+        : lineMissing
+          ? "Corners-total settlement is not ready: corners market line is missing or ambiguous. Re-run corners line extraction or exclude this corners-total prediction."
+          : settlementReady
+            ? "Corners settlement is ready: completed fixture, home/away corners stats, and required corners-total lines are present."
+            : "Corners guardrail is enabled, but settlement waits for fixture completion.";
+
+  return {
+    statuses,
+    actionableText,
+  };
+};
+
 export function findFixtureOpsById(
   snapshot: OperationSnapshot,
   fixtureId: string,
@@ -4738,6 +4803,7 @@ export function findFixtureOpsById(
       (oddsSnapshot) => oddsSnapshot.capturedAt,
     )[0] ?? null;
   const predictions = snapshot.predictions.filter((prediction) => prediction.fixtureId === fixtureId);
+  const statistics = buildFixtureOpsStatistics(snapshot, fixtureId);
   const predictionIds = new Set(predictions.map((prediction) => prediction.id));
   const parlays = snapshot.parlays.filter((parlay) =>
     parlay.legs.some((leg) => leg.fixtureId === fixtureId || predictionIds.has(leg.predictionId)),
@@ -4803,7 +4869,12 @@ export function findFixtureOpsById(
     research,
     ...(workflow ? { workflow } : {}),
     latestOddsSnapshot,
-    statistics: buildFixtureOpsStatistics(snapshot, fixtureId),
+    statistics,
+    cornersGuardrail: createFixtureCornersGuardrailSummary({
+      fixture,
+      predictions,
+      statistics,
+    }),
     scoringEligibility,
     recentAuditEvents,
     predictions,

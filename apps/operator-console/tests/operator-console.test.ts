@@ -552,6 +552,61 @@ test("operator console renders fixture corners statistics in fixture ops", () =>
   assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /home 6 \| away 2 \| total 8/);
 });
 
+test("operator console renders corners guardrail summary in fixture ops", () => {
+  const snapshot = createOperatorConsoleSnapshot({
+    fixtures: [
+      {
+        id: "fixture:corners:ready",
+        competition: "Liga Nacional",
+        homeTeam: "Antigua",
+        awayTeam: "Coban",
+        status: "completed",
+        cornersGuardrail: {
+          statuses: ["settlement-ready"],
+          actionableText: "Corners settlement is ready.",
+        },
+      },
+      {
+        id: "fixture:corners:stats-missing",
+        competition: "Liga Nacional",
+        homeTeam: "Municipal",
+        awayTeam: "Comunicaciones",
+        status: "completed",
+        cornersGuardrail: {
+          statuses: ["stats-missing"],
+          actionableText: "Corners settlement is not ready: fixture corners stats are missing or incomplete.",
+        },
+      },
+      {
+        id: "fixture:corners:line-missing",
+        competition: "Liga Nacional",
+        homeTeam: "Marquense",
+        awayTeam: "Mixco",
+        status: "completed",
+        cornersGuardrail: {
+          statuses: ["line-missing"],
+          actionableText: "Corners-total settlement is not ready: corners market line is missing or ambiguous.",
+        },
+      },
+    ],
+  });
+  const fixtureOpsPanel = buildOperatorConsoleModel(snapshot).panels.find((panel) => panel.title === "Fixture ops");
+  const lines = fixtureOpsPanel?.lines.join("\n") ?? "";
+
+  assert.deepEqual(snapshot.fixtures[0]?.cornersGuardrail?.statuses, [
+    "settlement-ready",
+  ]);
+  assert.deepEqual(snapshot.fixtures[1]?.cornersGuardrail?.statuses, [
+    "stats-missing",
+  ]);
+  assert.deepEqual(snapshot.fixtures[2]?.cornersGuardrail?.statuses, [
+    "line-missing",
+  ]);
+  assert.match(lines, /corners guardrail settlement-ready/i);
+  assert.match(lines, /stats are missing or incomplete/i);
+  assert.match(lines, /line is missing or ambiguous/i);
+});
+
 test("operator console renders readable market labels while retaining raw market data", async () => {
   const fixtureId = "fixture:api-football:123";
   const predictions = [
