@@ -12,6 +12,7 @@ import type {
   RawOddsSelection,
   RawPlayer,
 } from "../models/raw.js";
+import { normalizeProviderMarketKey, toProviderMarketSlug } from "../markets.js";
 
 export interface ApiFootballFetchRequest {
   readonly url: string;
@@ -292,23 +293,21 @@ const toFixtureScore = (fixture: ApiFootballFixtureResponse): RawFixtureRecord["
   return home !== undefined || away !== undefined ? { home: home ?? null, away: away ?? null } : undefined;
 };
 const toMarketKey = (bet: ApiFootballBetResponse): string => {
-  const name = bet.name?.trim();
-  const id = bet.id === undefined ? undefined : String(bet.id);
-
-  if (id === "1" || name?.toLowerCase() === "match winner") {
-    return "h2h";
-  }
-
-  return slugify(id ? `${id}-${name ?? "market"}` : name ?? "market");
+  return normalizeProviderMarketKey({ id: bet.id, name: bet.name });
 };
 
-const matchesMarketFilter = (bet: ApiFootballBetResponse, marketKeys: ReadonlySet<string>): boolean => {
+const matchesMarketFilter = (
+  bet: ApiFootballBetResponse,
+  marketKey: string,
+  marketKeys: ReadonlySet<string>,
+): boolean => {
   if (marketKeys.size === 0) {
     return true;
   }
 
   const candidates = [
-    toMarketKey(bet),
+    marketKey,
+    toProviderMarketSlug({ id: bet.id, name: bet.name }),
     bet.name?.trim().toLowerCase(),
     bet.id === undefined ? undefined : String(bet.id),
   ];
@@ -320,11 +319,49 @@ const toSelectionKey = (
   value: string | undefined,
   homeTeamName: string,
   awayTeamName: string,
+  marketKey = "h2h",
 ): string => {
   const normalized = value?.trim().toLowerCase();
 
   if (!normalized) {
     return "unknown";
+  }
+
+  if (marketKey === "both-teams-score") {
+    if (["yes", "y", "si", "sí"].includes(normalized)) {
+      return "yes";
+    }
+    if (["no", "n"].includes(normalized)) {
+      return "no";
+    }
+  }
+
+  if (marketKey === "double-chance") {
+    const home = homeTeamName.trim().toLowerCase();
+    const away = awayTeamName.trim().toLowerCase();
+    const compact = normalized.replace(/\s+/g, " ");
+    const hasHome = compact.includes(home) || compact.includes("home") || compact.includes("1");
+    const hasAway = compact.includes(away) || compact.includes("away") || compact.includes("2");
+    const hasDraw = compact.includes("draw") || compact.includes("x");
+
+    if (["home/draw", "home or draw", "1x", "1/x"].includes(compact) || (hasHome && hasDraw && !hasAway)) {
+      return "home-draw";
+    }
+    if (["home/away", "home or away", "12", "1/2"].includes(compact) || (hasHome && hasAway && !hasDraw)) {
+      return "home-away";
+    }
+    if (["draw/away", "draw or away", "x2", "x/2"].includes(compact) || (hasDraw && hasAway && !hasHome)) {
+      return "draw-away";
+    }
+  }
+
+  if (marketKey === "totals-goals" || marketKey === "corners-total") {
+    if (normalized.startsWith("over")) {
+      return "over";
+    }
+    if (normalized.startsWith("under")) {
+      return "under";
+    }
   }
 
   if (normalized === "home" || normalized === homeTeamName.trim().toLowerCase()) {
@@ -346,6 +383,7 @@ const toSelections = (
   bet: ApiFootballBetResponse,
   homeTeamName: string,
   awayTeamName: string,
+  marketKey: string,
 ): readonly RawOddsSelection[] =>
   ensureArray(bet.values)
     .map((value) => {
@@ -355,7 +393,7 @@ const toSelections = (
       }
 
       return {
-        key: toSelectionKey(value.value, homeTeamName, awayTeamName),
+        key: toSelectionKey(value.value, homeTeamName, awayTeamName, marketKey),
         label: value.value,
         priceDecimal,
       } satisfies RawOddsSelection;
@@ -527,11 +565,13 @@ export class ApiFootballHttpClient implements FootballApiClient {
           );
 
           return ensureArray(bookmaker.bets).flatMap((bet, betIndex) => {
-            if (!matchesMarketFilter(bet, marketKeys)) {
+            const marketKey = toMarketKey(bet);
+
+            if (!matchesMarketFilter(bet, marketKey, marketKeys)) {
               return [];
             }
 
-            const selections = toSelections(bet, homeTeamName, awayTeamName);
+            const selections = toSelections(bet, homeTeamName, awayTeamName, marketKey);
             if (selections.length === 0) {
               return [];
             }
@@ -539,7 +579,7 @@ export class ApiFootballHttpClient implements FootballApiClient {
             return [
               {
                 bookmakerKey,
-                marketKey: toMarketKey(bet),
+                marketKey,
                 payload: {
                   bet,
                   bookmaker,

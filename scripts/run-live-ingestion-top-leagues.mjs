@@ -46,6 +46,8 @@ const parseCsv = (value) =>
     ? value.split(",").map((entry) => entry.trim()).filter(Boolean)
     : undefined;
 
+const parseMarketKeys = (env) => parseCsv(env.GANA_FOOTBALL_MARKET_KEYS) ?? ["h2h"];
+
 const selectLeagues = (env) => {
   const requested = parseCsv(env.GANA_FOOTBALL_LEAGUES);
   if (!requested || requested.length === 0) return TOP_FOOTBALL_LEAGUES;
@@ -83,8 +85,7 @@ const main = async () => {
   const prisma = createPrismaClient(databaseUrl);
   const now = new Date();
   const leagues = selectLeagues(env);
-  const rawMarketKeys = process.env.GANA_FOOTBALL_MARKET_KEYS ?? dotenv.GANA_FOOTBALL_MARKET_KEYS;
-  const marketKeys = parseCsv(rawMarketKeys) ?? ["h2h"];
+  const marketKeys = parseMarketKeys(env);
 
   try {
     const results = [];
@@ -131,6 +132,7 @@ const main = async () => {
 
     console.log(JSON.stringify({
       mode,
+      marketKeys,
       ranAt: now.toISOString(),
       leagues: leagues.map((league) => ({ key: league.leagueKey, name: league.leagueName, season: league.season })),
       results,

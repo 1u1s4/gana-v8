@@ -233,10 +233,10 @@ Activos:
 - `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
 - `docs/plans/falta/gana-v8-harness-remediacion-legible-por-agentes.md`
-- `docs/plans/falta/gana-v8-multi-market-odds-taxonomy-ingestion.md`
 - `docs/plans/falta/gana-v8-multi-market-scoring-publishing-validation.md`
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-multi-market-odds-taxonomy-ingestion.md`
 - `docs/plans/completado/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 - `docs/plans/completado/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`

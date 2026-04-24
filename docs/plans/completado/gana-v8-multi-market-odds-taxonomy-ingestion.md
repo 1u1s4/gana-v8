@@ -1,5 +1,7 @@
 # Plan de taxonomia e ingestion multi-mercado - gana-v8
 
+> **Estado de cierre (2026-04-24):** taxonomia canonica, normalizacion multi-mercado, runners, coverage seed y reporte de disponibilidad quedaron materializados. La ingesta live acotada para fixtures `1388584` y `1378200` persistio `h2h`, `totals-goals`, `both-teams-score` y `double-chance`; `corners-total` queda soportado por taxonomia y opt-in de coverage sin forzarse por default.
+
 > **Para Hermes:** usar `subagent-driven-development` para implementar este plan task-by-task. Mantener TDD y commits chicos.
 
 **Goal:** hacer que el harness pueda ingerir y persistir odds de goles/totals, BTTS, doble oportunidad y corners sin romper el flujo h2h actual.

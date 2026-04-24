@@ -103,7 +103,7 @@ Estados esperados:
 
 ## Dependencias
 
-- Depende de `docs/plans/falta/gana-v8-multi-market-odds-taxonomy-ingestion.md` para odds de corners.
+- Depende de `docs/plans/completado/gana-v8-multi-market-odds-taxonomy-ingestion.md` para odds de corners.
 - Depende parcialmente de `docs/plans/falta/gana-v8-multi-market-scoring-publishing-validation.md` para publisher multi-mercado.
 - Requiere confirmar que el plan/API-Football contratado expone `/fixtures/statistics` para fixtures de las ligas objetivo.
 - No debe bloquear los mercados basados en goles si el provider no trae corners.
@@ -353,5 +353,5 @@ fixtureOps.statistics = {
 - Codigo actual: `Fixture.score` solo cubre goles, no corners.
 - Codigo actual: `source-connectors` no tiene dominio `statistics`.
 - Codigo actual: `validation-worker` no liquida mercados no-moneyline.
-- Plan previo requerido: `docs/plans/falta/gana-v8-multi-market-odds-taxonomy-ingestion.md`.
+- Plan previo requerido: `docs/plans/completado/gana-v8-multi-market-odds-taxonomy-ingestion.md`.
 - Plan relacionado: `docs/plans/falta/gana-v8-multi-market-scoring-publishing-validation.md`.
