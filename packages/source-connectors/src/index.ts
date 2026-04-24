@@ -14,6 +14,7 @@ export function describeWorkspace() {
 }
 
 export * from "./models/raw.js";
+export * from "./markets.js";
 export * from "./idempotency.js";
 export * from "./clients/api-football.js";
 export * from "./clients/football-api.js";

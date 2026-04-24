@@ -37,3 +37,17 @@ export const TOP_FOOTBALL_LEAGUES = [
 ];
 
 export const TOP_FOOTBALL_LEAGUE_KEYS = TOP_FOOTBALL_LEAGUES.map((league) => league.leagueKey);
+
+export const TOP_FOOTBALL_BASE_MARKETS = [
+  "h2h",
+  "totals-goals",
+  "both-teams-score",
+  "double-chance",
+];
+
+export const TOP_FOOTBALL_EXPERIMENTAL_MARKETS = ["corners-total"];
+
+export const resolveTopFootballMarketKeys = ({ enableCorners = false } = {}) => [
+  ...TOP_FOOTBALL_BASE_MARKETS,
+  ...(enableCorners ? TOP_FOOTBALL_EXPERIMENTAL_MARKETS : []),
+];
