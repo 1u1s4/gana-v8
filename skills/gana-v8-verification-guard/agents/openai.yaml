@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gana v8 Verify Guard"
+  short_description: "Stage expensive validation in gana-v8"
+  default_prompt: "Use $gana-v8-verification-guard to stage, triage, or recover a gana-v8 verification flow without triggering avoidable multi-hour reruns or shared-DB contamination."

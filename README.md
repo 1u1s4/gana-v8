@@ -29,6 +29,7 @@ El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-m
 - `docs/agentic-evaluation-rubric.md`: rúbrica para evaluador separado y salida `promotable`/`review-required`/`blocked`.
 - `docs/plans/falta/`: fuente de verdad para gaps activos del harness.
 - `runbooks/README.md`: índice canónico para elegir procedimientos operativos activos.
+- `skills/gana-v8-verification-guard/`: skill reusable versionada en git para escalonar verificaciones costosas del monorepo sin depender de `~/.codex/skills`.
 
 ## Workspaces incluidos
 
@@ -216,6 +217,10 @@ Runbooks operativos activos más usados:
 - `lint` valida convenciones mínimas del workspace, su manifest y los invariantes documentales del repo-as-harness.
 - `test` verifica que el artefacto compilado exporte metadata consistente.
 - `typecheck` ejecuta TypeScript sin emitir artefactos.
+
+## Skills versionadas
+
+La skill reusable del repo vive en `skills/gana-v8-verification-guard/` con su `SKILL.md`, metadata de `agents/` y referencias auxiliares. La idea es que quede portable en git: se puede copiar a otro entorno Codex o instalarla desde la ruta del repo en GitHub sin depender de una carpeta local fuera del control de versiones.
 
 ## Próximos pasos naturales
 

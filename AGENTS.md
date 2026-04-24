@@ -10,6 +10,7 @@ Entry point corto y canónico para agentes que trabajen en `gana-v8`.
 4. Usar `docs/agentic-handoff.md` cuando haya subagentes, handoff entre sesiones o trabajo largo.
 5. Usar `docs/agentic-sprint-contract.md` y `docs/agentic-evaluation-rubric.md` para trabajo agentic no trivial, paralelo o con evaluador separado.
 6. Ir a `runbooks/README.md` para elegir procedimientos operativos activos; usar `runbooks/expensive-verification-triage.md` para corridas largas o DB-backed y `runbooks/sandbox-certification.md` para la certificación sintética.
+7. Si hace falta escalar verificaciones costosas desde Codex, usar la skill versionada en `skills/gana-v8-verification-guard/`.
 
 ## Topología oficial hoy
 
@@ -27,6 +28,7 @@ Entry point corto y canónico para agentes que trabajen en `gana-v8`.
 - `fixtures/`: goldens y artefactos sintéticos versionados.
 - `tests/`: smoke, sandbox y suites del monorepo.
 - `scripts/`: utilidades operativas y checks mecánicos.
+- `skills/`: skills reusables versionadas en git para instalar o portar a otros entornos Codex.
 
 ## Reglas de trabajo
 
@@ -58,6 +60,9 @@ pnpm test:sandbox:certification
 - `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
 - `docs/plans/falta/gana-v8-harness-remediacion-legible-por-agentes.md`
+- `docs/plans/falta/gana-v8-corners-stats-prediction-validation.md`
+- `docs/plans/falta/gana-v8-multi-market-odds-taxonomy-ingestion.md`
+- `docs/plans/falta/gana-v8-multi-market-scoring-publishing-validation.md`
 
 Último cierre relevante:
 
