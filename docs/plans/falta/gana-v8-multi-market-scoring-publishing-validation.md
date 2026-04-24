@@ -97,7 +97,7 @@ Mostrar mercado/outcome de forma legible en:
 
 ## Dependencias
 
-- Depende de `docs/plans/falta/gana-v8-multi-market-odds-taxonomy-ingestion.md` para tener odds canonicas.
+- Depende de `docs/plans/completado/gana-v8-multi-market-odds-taxonomy-ingestion.md` para tener odds canonicas.
 - Corners queda fuera de este plan porque requiere estadisticas finales adicionales.
 - Debe preservar compatibilidad total con moneyline y parlays actuales.
 - Debe evitar publicar parlays de mercados correlacionados sin policy explicita.
@@ -441,5 +441,5 @@ Y correr scoring multi-market para 1 fixture scheduled con odds completas. Confi
 
 - Codigo actual: `packages/prediction-engine/src/index.ts`, `apps/scoring-worker/src/index.ts`, `apps/publisher-worker/src/index.ts`, `apps/validation-worker/src/index.ts`.
 - Estado actual confirmado: publisher y validation bloquean no-moneyline explicitamente.
-- Plan previo requerido: `docs/plans/falta/gana-v8-multi-market-odds-taxonomy-ingestion.md`.
+- Plan previo requerido: `docs/plans/completado/gana-v8-multi-market-odds-taxonomy-ingestion.md`.
 - Plan separado para corners: `docs/plans/falta/gana-v8-corners-stats-prediction-validation.md`.

@@ -56,6 +56,7 @@ pnpm test:sandbox:certification
 
 `docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
+- `docs/plans/falta/gana-v8-corners-stats-prediction-validation.md`
 - `docs/plans/falta/gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
@@ -66,6 +67,7 @@ pnpm test:sandbox:certification
 
 Último cierre relevante:
 
+- `docs/plans/completado/gana-v8-multi-market-odds-taxonomy-ingestion.md`
 - `docs/plans/completado/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 - `docs/plans/completado/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`

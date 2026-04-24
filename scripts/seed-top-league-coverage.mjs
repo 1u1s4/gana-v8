@@ -2,7 +2,7 @@ import process from "node:process";
 import { readFile } from "node:fs/promises";
 
 import { createPrismaClient, assertSchemaReadiness } from "../packages/storage-adapters/dist/src/index.js";
-import { TOP_FOOTBALL_LEAGUES } from "./top-football-leagues.mjs";
+import { TOP_FOOTBALL_LEAGUES, resolveTopFootballMarketKeys } from "./top-football-leagues.mjs";
 
 const readDotenv = async (path) => {
   try {
@@ -42,6 +42,10 @@ const main = async () => {
   assertSchemaReadiness({ env });
   const prisma = createPrismaClient(databaseUrl);
   const now = new Date();
+  const enableCorners = ["1", "true", "yes"].includes(
+    String(env.GANA_ENABLE_CORNERS_MARKETS ?? "").trim().toLowerCase(),
+  );
+  const marketsAllowed = resolveTopFootballMarketKeys({ enableCorners });
 
   try {
     const results = [];
@@ -63,8 +67,10 @@ const main = async () => {
           enabled: true,
           alwaysOn: true,
           priority: league.priority,
-          marketsAllowed: ["h2h"],
-          notes: "Top European league tracked for live analysis.",
+          marketsAllowed,
+          notes: enableCorners
+            ? "Top European league tracked for live multi-market analysis, including experimental corners."
+            : "Top European league tracked for live multi-market analysis.",
           createdAt: now,
           updatedAt: now,
         },
@@ -73,8 +79,10 @@ const main = async () => {
           enabled: true,
           alwaysOn: true,
           priority: league.priority,
-          marketsAllowed: ["h2h"],
-          notes: "Top European league tracked for live analysis.",
+          marketsAllowed,
+          notes: enableCorners
+            ? "Top European league tracked for live multi-market analysis, including experimental corners."
+            : "Top European league tracked for live multi-market analysis.",
           updatedAt: now,
         },
       });

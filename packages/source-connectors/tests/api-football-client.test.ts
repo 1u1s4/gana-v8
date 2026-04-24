@@ -216,6 +216,150 @@ test("ApiFootballHttpClient maps and filters odds window responses", async () =>
   assert.deepEqual(records[0]?.selections.map((selection) => selection.priceDecimal), [2.1, 3.4, 3.2]);
 });
 
+test("ApiFootballHttpClient maps canonical market keys and market-aware selections", async () => {
+  const client = new ApiFootballHttpClient({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v3",
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: [
+          {
+            bookmakers: [
+              {
+                bets: [
+                  {
+                    id: 5,
+                    name: "Goals Over/Under",
+                    values: [
+                      { odd: "1.90", value: "Over 2.5" },
+                      { odd: "1.95", value: "Under 2.5" },
+                    ],
+                  },
+                  {
+                    id: 8,
+                    name: "Both Teams Score",
+                    values: [
+                      { odd: "1.75", value: "Yes" },
+                      { odd: "2.05", value: "No" },
+                    ],
+                  },
+                  {
+                    id: 12,
+                    name: "Double Chance",
+                    values: [
+                      { odd: "1.30", value: "1X" },
+                      { odd: "1.25", value: "12" },
+                      { odd: "1.60", value: "X2" },
+                    ],
+                  },
+                  {
+                    id: 45,
+                    name: "Corners Over Under",
+                    values: [
+                      { odd: "1.88", value: "Over 8.5" },
+                      { odd: "1.92", value: "Under 8.5" },
+                    ],
+                  },
+                ],
+                id: 8,
+                name: "Bet365",
+              },
+            ],
+            fixture: {
+              id: 123,
+            },
+            teams: {
+              away: { name: "Arsenal" },
+              home: { name: "Chelsea" },
+            },
+            update: "2026-04-15T18:05:00.000Z",
+          },
+        ],
+      }),
+  });
+
+  const records = await client.fetchOddsWindow({
+    fixtureIds: ["123"],
+    marketKeys: ["totals-goals", "both-teams-score", "double-chance", "corners-total"],
+    window: {
+      end: "2026-04-15T13:00:00.000Z",
+      granularity: "intraday",
+      start: "2026-04-15T12:00:00.000Z",
+    },
+  });
+
+  const recordsByMarket = new Map(records.map((record) => [record.marketKey, record]));
+
+  assert.deepEqual(
+    records.map((record) => record.marketKey),
+    ["totals-goals", "both-teams-score", "double-chance", "corners-total"],
+  );
+  assert.deepEqual(recordsByMarket.get("totals-goals")?.selections.map((selection) => selection.key), [
+    "over",
+    "under",
+  ]);
+  assert.deepEqual(recordsByMarket.get("both-teams-score")?.selections.map((selection) => selection.key), [
+    "yes",
+    "no",
+  ]);
+  assert.deepEqual(recordsByMarket.get("double-chance")?.selections.map((selection) => selection.key), [
+    "home-draw",
+    "home-away",
+    "draw-away",
+  ]);
+  assert.deepEqual(recordsByMarket.get("corners-total")?.selections.map((selection) => selection.key), [
+    "over",
+    "under",
+  ]);
+});
+
+test("ApiFootballHttpClient still accepts legacy provider market filters", async () => {
+  const client = new ApiFootballHttpClient({
+    apiKey: "test-key",
+    baseUrl: "https://example.test/v3",
+    fetchImpl: async () =>
+      createJsonResponse({
+        response: [
+          {
+            bookmakers: [
+              {
+                bets: [
+                  {
+                    id: 5,
+                    name: "Goals Over/Under",
+                    values: [{ odd: "1.90", value: "Over 2.5" }],
+                  },
+                ],
+                id: 8,
+                name: "Bet365",
+              },
+            ],
+            fixture: {
+              id: 123,
+            },
+            teams: {
+              away: { name: "Arsenal" },
+              home: { name: "Chelsea" },
+            },
+          },
+        ],
+      }),
+  });
+
+  const records = await client.fetchOddsWindow({
+    fixtureIds: ["123"],
+    marketKeys: ["5-goals-over-under"],
+    window: {
+      end: "2026-04-15T13:00:00.000Z",
+      granularity: "intraday",
+      start: "2026-04-15T12:00:00.000Z",
+    },
+  });
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.marketKey, "totals-goals");
+});
+
 test("ApiFootballHttpClient maps availability window responses into raw availability records", async () => {
   const requests: string[] = [];
   const client = new ApiFootballHttpClient({

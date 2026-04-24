@@ -39,6 +39,8 @@ const parseCsv = (value) =>
     ? value.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0)
     : undefined;
 
+const parseMarketKeys = (env) => parseCsv(env.GANA_FOOTBALL_MARKET_KEYS);
+
 const parseWindow = (prefix, env) => {
   const start = firstDefined(env[`${prefix}_START`]);
   const end = firstDefined(env[`${prefix}_END`]);
@@ -109,7 +111,7 @@ const main = async () => {
 
   try {
     const rawSeason = process.env.GANA_FOOTBALL_SEASON ?? dotenv.GANA_FOOTBALL_SEASON;
-    const rawMarketKeys = process.env.GANA_FOOTBALL_MARKET_KEYS ?? dotenv.GANA_FOOTBALL_MARKET_KEYS;
+    const marketKeys = parseMarketKeys(env);
     const summary = await runLiveIngestion({
       env,
       fixturesWindow: parseWindow("GANA_FOOTBALL_FIXTURES_WINDOW", env),
@@ -118,8 +120,8 @@ const main = async () => {
       ...(parseCsv(process.env.GANA_LIVE_ODDS_FIXTURE_IDS ?? dotenv.GANA_LIVE_ODDS_FIXTURE_IDS)
         ? { oddsFixtureIds: parseCsv(process.env.GANA_LIVE_ODDS_FIXTURE_IDS ?? dotenv.GANA_LIVE_ODDS_FIXTURE_IDS) }
         : {}),
-      ...(parseCsv(rawMarketKeys)
-        ? { marketKeys: parseCsv(rawMarketKeys) }
+      ...(marketKeys
+        ? { marketKeys }
         : {}),
       mode: argvMode,
       now: () => now,
