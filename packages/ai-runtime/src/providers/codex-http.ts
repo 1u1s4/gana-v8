@@ -13,6 +13,7 @@ import type {
   AiProviderAdapter,
   NormalizedAiResponse,
   RunHttpAiInput,
+  WebSearchMode,
 } from "../types.js";
 
 export interface CreateCodexHttpProviderOptions {
@@ -22,6 +23,8 @@ export interface CreateCodexHttpProviderOptions {
 
 const DEFAULT_CODEX_INSTRUCTIONS =
   "Respond in Spanish when the prompt is in Spanish and return strict JSON when explicitly requested.";
+
+const CODEX_WEB_SEARCH_TOOL = { type: "web_search_preview" } as const;
 
 function toProviderInput(input: RunHttpAiInput["input"]): string {
   if (typeof input === "string") {
@@ -59,12 +62,27 @@ function extractOutputTextDelta(value: unknown): string | undefined {
 }
 
 function buildCodexRequest(input: RunHttpAiInput, defaultInstructions?: string) {
+  const webSearch = toCodexWebSearchOptions(input.webSearchMode);
   return {
     ...(input.requestedModel ? { model: input.requestedModel } : {}),
     instructions: input.instructions ?? defaultInstructions ?? DEFAULT_CODEX_INSTRUCTIONS,
     input: toProviderInput(input.input),
     ...(input.requestedReasoning ? { reasoning: input.requestedReasoning } : {}),
     ...(input.includeEvents !== undefined ? { includeEvents: input.includeEvents } : {}),
+    ...webSearch,
+  };
+}
+
+function toCodexWebSearchOptions(
+  mode: WebSearchMode,
+): { readonly tools?: Array<Record<string, unknown>>; readonly toolChoice?: "auto" | "required" } {
+  if (mode === "disabled") {
+    return {};
+  }
+
+  return {
+    tools: [{ ...CODEX_WEB_SEARCH_TOOL }],
+    toolChoice: mode === "required" ? "required" : "auto",
   };
 }
 

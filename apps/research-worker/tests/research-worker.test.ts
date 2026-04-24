@@ -211,6 +211,20 @@ test("resolveResearchAiConfig enables AI mode from environment defaults", () => 
   assert.equal(config.promptVersion, "v-custom");
 });
 
+test("resolveResearchAiConfig enables web search mode from environment", () => {
+  const autoConfig = resolveResearchAiConfig({
+    GANA_RESEARCH_SYNTHESIS_MODE: "ai-assisted",
+    GANA_RESEARCH_WEB_SEARCH_MODE: "auto",
+  });
+  const requiredConfig = resolveResearchAiConfig({
+    GANA_ENABLE_RESEARCH_AI: "1",
+    GANA_RESEARCH_WEB_SEARCH_MODE: "required",
+  });
+
+  assert.equal(autoConfig.webSearchMode, "auto");
+  assert.equal(requiredConfig.webSearchMode, "required");
+});
+
 test("AI fallback preserves deterministic dossier baseline when synthesis fails", async () => {
   const deterministic = await runResearchTask({
     fixture: scheduledFixture,

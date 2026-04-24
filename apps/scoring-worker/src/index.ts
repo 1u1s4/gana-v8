@@ -729,6 +729,7 @@ export const resolveScoringAiConfig = (
   const mode = env.GANA_SCORING_SYNTHESIS_MODE?.trim().toLowerCase();
   const enabled = mode === "ai-assisted" || env.GANA_ENABLE_SCORING_AI?.trim() === "1";
   const reasoning = env.GANA_SCORING_AI_REASONING?.trim().toLowerCase();
+  const webSearchMode = env.GANA_SCORING_WEB_SEARCH_MODE?.trim().toLowerCase();
 
   return {
     enabled,
@@ -742,7 +743,10 @@ export const resolveScoringAiConfig = (
     ...(env.GANA_SCORING_AI_PROMPT_VERSION?.trim()
       ? { promptVersion: env.GANA_SCORING_AI_PROMPT_VERSION.trim() }
       : {}),
-    webSearchMode: "disabled",
+    webSearchMode:
+      webSearchMode === "auto" || webSearchMode === "required"
+        ? webSearchMode
+        : "disabled",
   };
 };
 

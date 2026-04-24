@@ -52,6 +52,37 @@ test("runHttpAi falls back to bundled catalog when provider model listing fails"
   assert.equal(result.outputText, "fallback ok");
 });
 
+test("runHttpAi passes web search tool configuration to codex when required", async () => {
+  let capturedTools: Array<Record<string, unknown>> | undefined;
+  let capturedToolChoice: "auto" | "none" | "required" | undefined;
+  const adapter = createCodexHttpProvider({
+    client: {
+      ...createMockCodexClient({ outputText: "web ok" }),
+      async responses(args) {
+        capturedTools = args.tools;
+        capturedToolChoice = args.toolChoice;
+        return createMockCodexClient({ outputText: "web ok" }).responses(args);
+      },
+    },
+  });
+
+  const result = await runHttpAi(
+    {
+      provider: "codex",
+      requestedModel: "gpt-5.4",
+      requestedReasoning: "medium",
+      webSearchMode: "required",
+      input: "busca lesiones recientes",
+    },
+    { codexAdapter: adapter },
+  );
+
+  assert.equal(result.outputText, "web ok");
+  assert.equal(result.webSearchMode, "required");
+  assert.deepEqual(capturedTools, [{ type: "web_search_preview" }]);
+  assert.equal(capturedToolChoice, "required");
+});
+
 test("streamHttpAi emits selection, delta, event and complete", async () => {
   const events: string[] = [];
   const stream = streamHttpAi(

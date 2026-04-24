@@ -625,6 +625,13 @@ test("runScoringWorker reports skips without breaking the batch", async () => {
 
   assert.match(describeWorkspace(), /scoring-worker/);
   assert.deepEqual(resolveScoringAiConfig({ GANA_ENABLE_SCORING_AI: "1" }).enabled, true);
+  assert.equal(
+    resolveScoringAiConfig({
+      GANA_ENABLE_SCORING_AI: "1",
+      GANA_SCORING_WEB_SEARCH_MODE: "required",
+    }).webSearchMode,
+    "required",
+  );
   assert.equal(summary.totalFixtures, 2);
   assert.equal(summary.scoredCount, 1);
   assert.equal(summary.skippedCount, 1);
