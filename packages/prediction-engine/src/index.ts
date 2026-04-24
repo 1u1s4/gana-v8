@@ -38,8 +38,18 @@ export interface ResearchDossierLike {
 }
 
 export type PredictionStatus = "draft" | "published" | "settled" | "voided";
-export type PredictionMarket = "moneyline" | "totals" | "spread" | "both-teams-score";
-export type PredictionOutcome = "home" | "away" | "draw" | "over" | "under" | "yes" | "no";
+export type PredictionMarket = "moneyline" | "totals" | "spread" | "both-teams-score" | "double-chance";
+export type PredictionOutcome =
+  | "home"
+  | "away"
+  | "draw"
+  | "over"
+  | "under"
+  | "yes"
+  | "no"
+  | "home-draw"
+  | "home-away"
+  | "draw-away";
 
 export interface PredictionEntity {
   readonly id: string;
@@ -52,6 +62,7 @@ export interface PredictionEntity {
     readonly implied: number;
     readonly model: number;
     readonly edge: number;
+    readonly line?: number;
   };
   readonly rationale: readonly string[];
   readonly publishedAt?: string;
@@ -76,7 +87,14 @@ export interface MarketCandidate {
   readonly impliedProbability: number;
   readonly edge: number;
   readonly confidence: number;
+  readonly line?: number;
   readonly rationale: readonly string[];
+}
+
+export interface MarketProbabilityInput {
+  readonly market: PredictionMarket;
+  readonly probabilities: Readonly<Record<string, number>>;
+  readonly line?: number;
 }
 
 export interface CandidateEligibilityPolicy {
@@ -145,6 +163,18 @@ const kickoffLeadMinutes = (fixture: FixtureLike, generatedAt: string): number =
 
 const candidateKey = (candidate: MarketCandidate): string =>
   `${candidate.market}:${candidate.outcome}`;
+
+const scoreDerivedMarketOutcomes: Readonly<Record<string, readonly PredictionOutcome[]>> = {
+  moneyline: ["home", "draw", "away"],
+  totals: ["over", "under"],
+  "both-teams-score": ["yes", "no"],
+  "double-chance": ["home-draw", "home-away", "draw-away"],
+};
+
+export const isScoreDerivedMarketOutcome = (
+  market: PredictionMarket,
+  outcome: PredictionOutcome,
+): boolean => scoreDerivedMarketOutcomes[market]?.includes(outcome) ?? false;
 
 export const buildMatchForecast = (
   fixture: FixtureLike,
@@ -226,6 +256,60 @@ export const generateMarketCandidates = (
       rationale: [...baseRationale, `${fixture.awayTeam} profile remains live if its directional score sustains the model edge.`],
     },
   ];
+};
+
+const marketDisplayName = (market: PredictionMarket): string => {
+  if (market === "totals") {
+    return "goals totals";
+  }
+  if (market === "both-teams-score") {
+    return "BTTS";
+  }
+  if (market === "double-chance") {
+    return "double chance";
+  }
+
+  return market;
+};
+
+export const generateCandidatesForMarket = (
+  marketInput: MarketProbabilityInput,
+  dossier: ResearchDossierLike,
+): MarketCandidate[] => {
+  const outcomes = scoreDerivedMarketOutcomes[marketInput.market] ?? [];
+  const candidates: MarketCandidate[] = [];
+
+  for (const outcome of outcomes) {
+    const impliedProbability = marketInput.probabilities[outcome];
+    if (
+      impliedProbability === undefined ||
+      !Number.isFinite(impliedProbability) ||
+      impliedProbability <= 0 ||
+      impliedProbability >= 1
+    ) {
+      continue;
+    }
+
+    const modelProbability = round(clamp(impliedProbability + 0.05, 0.0001, 0.9999));
+    const edge = round(modelProbability - impliedProbability);
+    const confidence = round(clamp(modelProbability + 0.04, 0, 1));
+    candidates.push({
+      market: marketInput.market,
+      outcome,
+      modelProbability,
+      impliedProbability,
+      edge,
+      confidence,
+      ...(marketInput.market === "totals" && marketInput.line !== undefined ? { line: marketInput.line } : {}),
+      rationale: [
+        dossier.summary,
+        `${marketDisplayName(marketInput.market)} ${outcome} candidate generated from canonical odds snapshot.`,
+        "Score-derived market uses implied probability baseline until market-specific features are available.",
+      ],
+    });
+  }
+
+  return candidates;
 };
 
 export const evaluateCandidateEligibility = (
@@ -315,6 +399,7 @@ export const buildAtomicPrediction = (
       implied: candidate.impliedProbability,
       model: candidate.modelProbability,
       edge: candidate.edge,
+      ...(candidate.line !== undefined ? { line: candidate.line } : {}),
     },
     rationale: [...candidate.rationale],
     publishedAt: generatedAt,

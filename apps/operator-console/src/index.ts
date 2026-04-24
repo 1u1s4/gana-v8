@@ -5,8 +5,10 @@ import {
   type ServerResponse,
 } from "node:http";
 
-import { createOperationalSummary, type
-  AiRunReadModel,
+import {
+  createOperationalSummary,
+  formatPredictionMarketLabel,
+  type AiRunReadModel,
   type AutomationCycleReadModel,
   type CoverageDailyScopeReadModel,
   getDailyAutomationPolicy,
@@ -62,6 +64,7 @@ export interface OperatorConsolePrediction {
   readonly aiRunId?: string | null;
   readonly market: string;
   readonly outcome: string;
+  readonly marketLabel: string;
   readonly confidence: number;
   readonly status: string;
 }
@@ -73,6 +76,9 @@ export interface OperatorConsoleParlay {
   readonly legs: readonly {
     readonly predictionId: string;
     readonly fixtureId: string;
+    readonly market: string;
+    readonly outcome: string;
+    readonly marketLabel: string;
   }[];
 }
 
@@ -636,6 +642,7 @@ export function createOperatorConsoleSnapshotFromOperation(
     operationSnapshot.readiness ??
     createFallbackReadiness(operationSnapshot.generatedAt, operationSnapshot.health, input.certification ?? []);
   const automationCycles = operationSnapshot.automationCycles ?? [];
+  const predictionsById = new Map(operationSnapshot.predictions.map((prediction) => [prediction.id, prediction]));
 
   return {
     generatedAt: operationSnapshot.generatedAt,
@@ -722,6 +729,7 @@ export function createOperatorConsoleSnapshotFromOperation(
       aiRunId: prediction.aiRunId ?? null,
       market: prediction.market,
       outcome: prediction.outcome,
+      marketLabel: formatPredictionMarketLabel(prediction),
       confidence: prediction.confidence,
       status: prediction.status,
     })),
@@ -729,10 +737,20 @@ export function createOperatorConsoleSnapshotFromOperation(
       id: parlay.id,
       status: parlay.status,
       expectedPayout: parlay.expectedPayout,
-      legs: parlay.legs.map((leg) => ({
-        predictionId: leg.predictionId,
-        fixtureId: leg.fixtureId,
-      })),
+      legs: parlay.legs.map((leg) => {
+        const prediction = predictionsById.get(leg.predictionId);
+        return {
+          predictionId: leg.predictionId,
+          fixtureId: leg.fixtureId,
+          market: leg.market,
+          outcome: leg.outcome,
+          marketLabel: formatPredictionMarketLabel({
+            market: leg.market,
+            outcome: leg.outcome,
+            probabilities: prediction?.probabilities ?? null,
+          }),
+        };
+      }),
     })),
     tasks,
     taskRuns,
@@ -1257,8 +1275,14 @@ export function buildOperatorConsoleModel(
 
         return [
           `${aiRun.id} | predictions ${linkedPredictions.length} | parlays ${linkedParlays.length}${traceDetails ? ` | ${traceDetails}` : ""}`,
-          ...linkedPredictions.map((prediction) => `prediction ${prediction.id} | ${prediction.market}:${prediction.outcome}`),
-          ...linkedParlays.map((parlay) => `parlay ${parlay.id} | ${parlay.legs.length} leg(s)`),
+          ...linkedPredictions.map(
+            (prediction) =>
+              `prediction ${prediction.id} | ${prediction.marketLabel} (${prediction.market}:${prediction.outcome})`,
+          ),
+          ...linkedParlays.map((parlay) => {
+            const legLabels = parlay.legs.map((leg) => `${leg.marketLabel} (${leg.market}:${leg.outcome})`).join(" ; ");
+            return `parlay ${parlay.id} | ${parlay.legs.length} leg(s)${legLabels ? ` | ${legLabels}` : ""}`;
+          }),
         ];
       }),
     },
@@ -1337,14 +1361,16 @@ export function buildOperatorConsoleModel(
       title: "Predictions",
       lines: snapshot.predictions.map(
         (prediction) =>
-          `${prediction.id} | ${prediction.market}:${prediction.outcome} | confidence ${prediction.confidence.toFixed(2)} | ${prediction.status}`,
+          `${prediction.id} | ${prediction.marketLabel} (${prediction.market}:${prediction.outcome}) | confidence ${prediction.confidence.toFixed(2)} | ${prediction.status}`,
       ),
     },
     {
       title: "Parlays",
       lines: snapshot.parlays.map(
-        (parlay) =>
-          `${parlay.id} | ${parlay.legs.length} leg(s) | payout ${parlay.expectedPayout.toFixed(2)} | ${parlay.status}`,
+        (parlay) => {
+          const legLabels = parlay.legs.map((leg) => `${leg.marketLabel} (${leg.market}:${leg.outcome})`).join(" ; ");
+          return `${parlay.id} | ${parlay.legs.length} leg(s) | ${legLabels || "no legs"} | payout ${parlay.expectedPayout.toFixed(2)} | ${parlay.status}`;
+        },
       ),
     },
     {
@@ -2341,7 +2367,7 @@ const renderAiRunInspector = () => {
       (linkedPredictions.length === 0
         ? '<div class="empty-state">No linked predictions.</div>'
         : linkedPredictions.map((prediction) =>
-            '<div class="panel-line">' + escapeHtml(prediction.id) + ' | fixture ' + escapeHtml(prediction.fixtureId) + ' | ' + escapeHtml(prediction.market) + ' ' + escapeHtml(prediction.outcome) + ' | ' + escapeHtml(prediction.status) + ' | confidence ' + escapeHtml(prediction.confidence) + '</div>'
+            '<div class="panel-line">' + escapeHtml(prediction.id) + ' | fixture ' + escapeHtml(prediction.fixtureId) + ' | ' + escapeHtml(prediction.marketLabel || (prediction.market + ':' + prediction.outcome)) + ' (' + escapeHtml(prediction.market) + ':' + escapeHtml(prediction.outcome) + ') | ' + escapeHtml(prediction.status) + ' | confidence ' + escapeHtml(prediction.confidence) + '</div>'
           ).join('')) +
     '</article>' +
     '<article class="list-item">' +

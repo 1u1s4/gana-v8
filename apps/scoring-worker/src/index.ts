@@ -23,8 +23,13 @@ import {
 import { renderPrompt, type PromptRegistryKey } from "@gana-v8/model-registry";
 import {
   buildAtomicPrediction,
+  generateCandidatesForMarket,
+  selectBestEligibleCandidate,
   type AtomicPredictionArtifact,
   type CandidateEligibilityPolicy,
+  type MarketCandidate,
+  type PredictionMarket,
+  type PredictionOutcome,
   type ResearchDossierLike,
 } from "@gana-v8/prediction-engine";
 import {
@@ -58,6 +63,7 @@ export const workspaceInfo = {
 
 export interface OddsSelectionLike {
   readonly selectionKey: string;
+  readonly label?: string | null;
   readonly priceDecimal: number;
 }
 
@@ -68,6 +74,7 @@ export interface OddsSnapshotLike {
   readonly marketKey: string;
   readonly bookmakerKey: string;
   readonly capturedAt: Date;
+  readonly payload?: unknown;
   readonly selections: readonly OddsSelectionLike[];
 }
 
@@ -140,6 +147,7 @@ export interface FixtureScoreResult {
   readonly aiRunId?: string;
   readonly aiRunStatus?: AiRunEntity["status"];
   readonly prediction?: PredictionEntity;
+  readonly predictions?: readonly PredictionEntity[];
 }
 
 export interface RunScoringWorkerOptions extends ScoreFixturePredictionOptions {
@@ -226,6 +234,64 @@ const normalizeSelectionKey = (selectionKey: string): keyof ImpliedProbabilities
   return null;
 };
 
+type SupportedOddsMarketKey = "h2h" | "totals-goals" | "both-teams-score" | "double-chance";
+
+const MARKET_TO_PREDICTION_MARKET = {
+  h2h: "moneyline",
+  "totals-goals": "totals",
+  "both-teams-score": "both-teams-score",
+  "double-chance": "double-chance",
+} as const satisfies Record<SupportedOddsMarketKey, PredictionMarket>;
+
+const MULTI_MARKET_KEYS = [
+  "h2h",
+  "totals-goals",
+  "both-teams-score",
+  "double-chance",
+] as const satisfies readonly SupportedOddsMarketKey[];
+
+const normalizeMarketSelectionKey = (
+  marketKey: string,
+  selectionKey: string,
+): PredictionOutcome | null => {
+  if (marketKey === "h2h") {
+    return normalizeSelectionKey(selectionKey);
+  }
+
+  const normalized = selectionKey.trim().toLowerCase().replace(/[_\s/]+/g, "-");
+  if (marketKey === "totals-goals") {
+    if (normalized.startsWith("over")) {
+      return "over";
+    }
+    if (normalized.startsWith("under")) {
+      return "under";
+    }
+  }
+
+  if (marketKey === "both-teams-score") {
+    if (["yes", "y", "both-teams-score-yes"].includes(normalized)) {
+      return "yes";
+    }
+    if (["no", "n", "both-teams-score-no"].includes(normalized)) {
+      return "no";
+    }
+  }
+
+  if (marketKey === "double-chance") {
+    if (["home-draw", "1x", "home-or-draw"].includes(normalized)) {
+      return "home-draw";
+    }
+    if (["home-away", "12", "home-or-away"].includes(normalized)) {
+      return "home-away";
+    }
+    if (["draw-away", "x2", "draw-or-away"].includes(normalized)) {
+      return "draw-away";
+    }
+  }
+
+  return null;
+};
+
 const createManagedRuntime = (
   databaseUrl?: string,
   options: RuntimeInitOptions = {},
@@ -276,8 +342,12 @@ const ensureConnectedClient = async (
 const createScoringTaskId = (fixtureId: string): string =>
   createOpaqueTaskId(`scoring-worker:${fixtureId}`);
 const createAiRunId = (fixtureId: string, generatedAt: string): string => `airun:${fixtureId}:${generatedAt}`;
-const createPredictionId = (fixtureId: string, outcome: string, generatedAt: string): string =>
-  `prediction:${fixtureId}:moneyline:${outcome}:${generatedAt}`;
+const createPredictionId = (
+  fixtureId: string,
+  market: PredictionMarket,
+  outcome: PredictionOutcome,
+  generatedAt: string,
+): string => `prediction:${fixtureId}:${market}:${outcome}:${generatedAt}`;
 
 const defaultCoverageDailyPolicy = {
   minAllowedOdd: 1.2,
@@ -511,6 +581,57 @@ export const deriveImpliedProbabilities = (
     draw: round(probabilities.draw / overround),
     away: round(probabilities.away / overround),
   };
+};
+
+export const deriveMarketImpliedProbabilities = (
+  snapshot: OddsSnapshotLike,
+): Record<string, number> | null => {
+  const raw: Record<string, number> = {};
+
+  for (const selection of snapshot.selections) {
+    const outcome = normalizeMarketSelectionKey(snapshot.marketKey, selection.selectionKey);
+    if (!outcome || !Number.isFinite(selection.priceDecimal) || selection.priceDecimal <= 0) {
+      continue;
+    }
+
+    raw[outcome] = 1 / selection.priceDecimal;
+  }
+
+  const total = Object.values(raw).reduce((sum, value) => sum + value, 0);
+  if (total <= 0) {
+    return null;
+  }
+
+  return Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => [key, round(value / total)]),
+  );
+};
+
+const extractNumberFromText = (text: string | undefined | null): number | undefined => {
+  const match = text?.match(/\b(\d+(?:\.\d+)?)\b/);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : undefined;
+};
+
+const extractTotalsLineFromSnapshot = (snapshot: OddsSnapshotLike): number | undefined => {
+  for (const selection of snapshot.selections) {
+    const line = extractNumberFromText(selection.label ?? selection.selectionKey);
+    if (line !== undefined) {
+      return line;
+    }
+  }
+
+  const payload = snapshot.payload;
+  if (payload && typeof payload === "object") {
+    const serialized = JSON.stringify(payload);
+    return extractNumberFromText(serialized);
+  }
+
+  return undefined;
 };
 
 const buildOutcomeScores = (impliedProbabilities: ImpliedProbabilities): ImpliedProbabilities => {
@@ -792,14 +913,15 @@ export const runScoringSynthesisAi = async (input: {
   };
 };
 
-const findLatestH2hSnapshot = async (
+const findLatestMarketSnapshot = async (
   client: ScoringWorkerPrismaClientLike,
   fixture: FixtureEntity,
+  marketKey: SupportedOddsMarketKey,
 ): Promise<OddsSnapshotLike | null> => {
   const byFixtureId = await retryPrismaReadOperation(() =>
     client.oddsSnapshot.findFirst({
       where: {
-        marketKey: "h2h",
+        marketKey,
         OR: [{ fixtureId: fixture.id }],
       },
       include: { selections: true },
@@ -819,7 +941,7 @@ const findLatestH2hSnapshot = async (
   return retryPrismaReadOperation(() =>
     client.oddsSnapshot.findFirst({
       where: {
-        marketKey: "h2h",
+        marketKey,
         OR: [{ providerFixtureId }],
       },
       include: { selections: true },
@@ -827,6 +949,11 @@ const findLatestH2hSnapshot = async (
     }),
   );
 };
+
+const findLatestH2hSnapshot = async (
+  client: ScoringWorkerPrismaClientLike,
+  fixture: FixtureEntity,
+): Promise<OddsSnapshotLike | null> => findLatestMarketSnapshot(client, fixture, "h2h");
 
 export const loadEligibleFixturesForScoring = async (
   databaseUrl?: string,
@@ -1095,7 +1222,7 @@ export const scoreFixturePrediction = async (
       generatedAt,
       policy: { ...DEFAULT_SCORING_POLICY, ...options.policy },
       predictionIdFactory: (artifactFixture, candidate) =>
-        createPredictionId(artifactFixture.id, candidate.outcome, generatedAt),
+        createPredictionId(artifactFixture.id, candidate.market, candidate.outcome, generatedAt),
     });
 
     let aiRun: AiRunEntity;
@@ -1186,6 +1313,325 @@ export const scoreFixturePrediction = async (
       aiRunId: aiRun.id,
       aiRunStatus: aiRun.status,
       prediction,
+      predictions: [prediction],
+    };
+  } finally {
+    await runtime.disconnect();
+  }
+};
+
+const createPredictionFromMarketCandidate = (input: {
+  readonly fixtureId: string;
+  readonly aiRunId: string;
+  readonly candidate: MarketCandidate;
+  readonly generatedAt: string;
+  readonly rationale?: readonly string[];
+}): PredictionEntity =>
+  createPrediction({
+    aiRunId: input.aiRunId,
+    confidence: input.candidate.confidence,
+    createdAt: input.generatedAt,
+    fixtureId: input.fixtureId,
+    id: createPredictionId(
+      input.fixtureId,
+      input.candidate.market,
+      input.candidate.outcome,
+      input.generatedAt,
+    ),
+    market: input.candidate.market,
+    outcome: input.candidate.outcome,
+    probabilities: {
+      implied: input.candidate.impliedProbability,
+      model: input.candidate.modelProbability,
+      edge: input.candidate.edge,
+      ...(input.candidate.line !== undefined ? { line: input.candidate.line } : {}),
+    },
+    publishedAt: input.generatedAt,
+    rationale: [...(input.rationale ?? input.candidate.rationale)],
+    status: "published",
+    updatedAt: input.generatedAt,
+  });
+
+export const scoreFixtureMarkets = async (
+  databaseUrl: string | undefined,
+  fixtureId: string,
+  taskId?: string,
+  options: ScoreFixturePredictionOptions = {},
+): Promise<FixtureScoreResult> => {
+  const runtime = createManagedRuntime(databaseUrl, options);
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const runtimeEnv =
+    options.env ??
+    (options.client || options.unitOfWork
+      ? {
+          NODE_ENV: "test",
+          GANA_RUNTIME_PROFILE: "ci-smoke",
+        }
+      : undefined);
+  const runtimeConfig = runtimeEnv
+    ? loadRuntimeConfig({ appName: "scoring-worker", env: runtimeEnv })
+    : loadRuntimeConfig({ appName: "scoring-worker" });
+
+  try {
+    await ensureConnectedClient(runtime.client);
+
+    const fixture = (await runtime.unitOfWork.fixtures.getById(fixtureId)) ??
+      (await retryPrismaReadOperation(() =>
+        runtime.client.fixture.findUnique({ where: { id: fixtureId } }),
+      ));
+
+    if (!fixture) {
+      return {
+        fixtureId,
+        status: "skipped",
+        reason: "Fixture not found.",
+      };
+    }
+
+    if (fixture.status !== "scheduled") {
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: `Fixture status ${fixture.status} is not eligible for scoring.`,
+      };
+    }
+
+    const existingWorkflow = await runtime.unitOfWork.fixtureWorkflows.findByFixtureId(fixture.id);
+    if (
+      existingWorkflow?.selectionOverride === "force-exclude" ||
+      existingWorkflow?.manualSelectionStatus === "rejected"
+    ) {
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: "Fixture is force-excluded by workflow ops.",
+      };
+    }
+
+    const persistedResearch = await loadPersistedFixtureResearch({
+      fixtureId: fixture.id,
+      unitOfWork: runtime.unitOfWork,
+    });
+    if (!persistedResearch) {
+      await persistResearchBundleBlockedWorkflow(
+        runtime.unitOfWork,
+        null,
+        fixture.id,
+        generatedAt,
+      );
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: "No persisted research bundle found for fixture.",
+      };
+    }
+
+    if (!persistedResearch.publishable) {
+      await persistResearchBundleBlockedWorkflow(
+        runtime.unitOfWork,
+        persistedResearch,
+        fixture.id,
+        generatedAt,
+      );
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason:
+          `Research bundle status ${persistedResearch.status} is not publishable.` +
+          (formatPersistedResearchGateSummary(persistedResearch)
+            ? ` ${formatPersistedResearchGateSummary(persistedResearch)}`
+            : ""),
+      };
+    }
+
+    const latestH2hSnapshot = await findLatestH2hSnapshot(runtime.client, fixture);
+    if (!latestH2hSnapshot) {
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: "No latest h2h odds snapshot found for fixture.",
+      };
+    }
+
+    const minDetectedOdd = detectMinDetectedOdd(latestH2hSnapshot);
+    const coverageContext = await loadScoringCoveragePolicyContext(runtime.unitOfWork);
+    if (coverageContext.hasPersistedPolicy) {
+      const coverageDecision = evaluateFixtureCoverageScope({
+        fixture,
+        ...(existingWorkflow ? { workflow: existingWorkflow } : {}),
+        leaguePolicies: coverageContext.leaguePolicies,
+        teamPolicies: coverageContext.teamPolicies,
+        dailyPolicy: coverageContext.dailyPolicy,
+        ...(minDetectedOdd !== undefined ? { minDetectedOdd } : {}),
+        now: generatedAt,
+      });
+      if (!coverageDecision.eligibleForScoring) {
+        await persistCoverageBlockedWorkflow(
+          runtime.unitOfWork,
+          fixture.id,
+          "prediction",
+          generatedAt,
+          coverageDecision,
+          "scoring-worker",
+        );
+        return {
+          fixtureId: fixture.id,
+          status: "skipped",
+          reason: summarizeCoverageBlock(coverageDecision.excludedBy),
+        };
+      }
+    }
+
+    const impliedProbabilities = deriveImpliedProbabilities(latestH2hSnapshot);
+    if (!impliedProbabilities) {
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: "Latest h2h odds snapshot is missing home/draw/away selections.",
+      };
+    }
+
+    const enrichedFixture = {
+      ...fixture,
+      metadata: enrichFixtureMetadata(fixture, impliedProbabilities),
+    };
+    const dossier = buildResearchDossierFromFixture(enrichedFixture, latestH2hSnapshot, {
+      generatedAt,
+      persistedResearch,
+    });
+    const task = await ensureTask(
+      runtime.unitOfWork,
+      fixture.id,
+      taskId ?? createScoringTaskId(fixture.id),
+      generatedAt,
+      runtimeConfig,
+    );
+    const policy = { ...DEFAULT_SCORING_POLICY, ...options.policy };
+    const predictionsToPersist: PredictionEntity[] = [];
+
+    const moneylineArtifact = buildAtomicPrediction(enrichedFixture, dossier, {
+      generatedAt,
+      policy,
+      predictionIdFactory: (artifactFixture, candidate) =>
+        createPredictionId(artifactFixture.id, candidate.market, candidate.outcome, generatedAt),
+    });
+    if (moneylineArtifact) {
+      predictionsToPersist.push(
+        createPredictionFromMarketCandidate({
+          fixtureId: fixture.id,
+          aiRunId: "",
+          candidate: moneylineArtifact.candidate,
+          generatedAt,
+          rationale: moneylineArtifact.prediction.rationale,
+        }),
+      );
+    }
+
+    for (const marketKey of MULTI_MARKET_KEYS.filter((key) => key !== "h2h")) {
+      const snapshotForMarket = await findLatestMarketSnapshot(runtime.client, fixture, marketKey);
+      if (!snapshotForMarket) {
+        continue;
+      }
+
+      const probabilities = deriveMarketImpliedProbabilities(snapshotForMarket);
+      if (!probabilities) {
+        continue;
+      }
+
+      const predictionMarket = MARKET_TO_PREDICTION_MARKET[marketKey];
+      const extractedLine = marketKey === "totals-goals"
+        ? extractTotalsLineFromSnapshot(snapshotForMarket)
+        : undefined;
+      const line = marketKey === "totals-goals" ? extractedLine ?? 2.5 : undefined;
+      const candidates = generateCandidatesForMarket(
+        {
+          market: predictionMarket,
+          probabilities,
+          ...(line !== undefined ? { line } : {}),
+        },
+        dossier,
+      );
+      const selected = selectBestEligibleCandidate(enrichedFixture, dossier, candidates, policy, generatedAt);
+      if (!selected) {
+        continue;
+      }
+
+      const rationale = [...selected.candidate.rationale];
+      if (marketKey === "totals-goals" && extractedLine === undefined) {
+        rationale.push("Totals line unavailable in odds snapshot metadata; defaulted to 2.5 for settlement.");
+      }
+
+      predictionsToPersist.push(
+        createPredictionFromMarketCandidate({
+          fixtureId: fixture.id,
+          aiRunId: "",
+          candidate: selected.candidate,
+          generatedAt,
+          rationale,
+        }),
+      );
+    }
+
+    let aiRun = createDeterministicAiRun(
+      fixture.id,
+      task.id,
+      generatedAt,
+      predictionsToPersist.length > 0 ? "multi-market-baseline.json" : "no-candidate.json",
+    );
+    aiRun = await runtime.unitOfWork.aiRuns.save(aiRun);
+
+    if (predictionsToPersist.length === 0) {
+      await persistScoringWorkflow(
+        runtime.unitOfWork,
+        fixture.id,
+        generatedAt,
+        "failed",
+        "No supported market candidate satisfied scoring policy.",
+      );
+      return {
+        fixtureId: fixture.id,
+        status: "skipped",
+        reason: "No supported market candidate satisfied scoring policy.",
+        aiRunId: aiRun.id,
+        aiRunStatus: aiRun.status,
+      };
+    }
+
+    const predictions: PredictionEntity[] = [];
+    for (const prediction of predictionsToPersist) {
+      predictions.push(
+        await runtime.unitOfWork.predictions.save(
+          createPrediction({
+            aiRunId: aiRun.id,
+            confidence: prediction.confidence,
+            createdAt: prediction.createdAt,
+            fixtureId: prediction.fixtureId,
+            id: prediction.id,
+            market: prediction.market,
+            outcome: prediction.outcome,
+            probabilities: prediction.probabilities,
+            ...(prediction.publishedAt ? { publishedAt: prediction.publishedAt } : {}),
+            rationale: prediction.rationale,
+            status: prediction.status,
+            updatedAt: prediction.updatedAt,
+          }),
+        ),
+      );
+    }
+
+    await persistScoringWorkflow(runtime.unitOfWork, fixture.id, generatedAt, "succeeded");
+    const firstPrediction = predictions[0];
+    if (!firstPrediction) {
+      throw new Error("Scoring worker persisted no predictions after candidate selection.");
+    }
+
+    return {
+      fixtureId: fixture.id,
+      status: "scored",
+      aiRunId: aiRun.id,
+      aiRunStatus: aiRun.status,
+      prediction: firstPrediction,
+      predictions,
     };
   } finally {
     await runtime.disconnect();
@@ -1214,7 +1660,7 @@ export const runScoringWorker = async (
     }
 
     results.push(
-      await scoreFixturePrediction(databaseUrl, candidate.fixture.id, undefined, {
+      await scoreFixtureMarkets(databaseUrl, candidate.fixture.id, undefined, {
         generatedAt,
         ...(options.client ? { client: options.client } : {}),
         ...(options.policy ? { policy: options.policy } : {}),

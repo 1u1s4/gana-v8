@@ -8,7 +8,9 @@ import {
   buildAtomicPrediction,
   buildMatchForecast,
   evaluateCandidateEligibility,
+  generateCandidatesForMarket,
   generateMarketCandidates,
+  isScoreDerivedMarketOutcome,
 } from "../src/index.ts";
 
 const generatedAt = "2026-04-14T18:00:00.000Z";
@@ -56,6 +58,35 @@ test("prediction engine creates publishable atomic prediction from dossier", () 
   assert.equal(atomicPrediction?.candidate.outcome, "home");
   assert.equal(atomicPrediction?.prediction.id, "pred-atomic-1");
   assert.equal(atomicPrediction?.prediction.status, "published");
+});
+
+test("score-derived market outcome helper includes double chance outcomes", () => {
+  assert.equal(isScoreDerivedMarketOutcome("double-chance", "home-draw"), true);
+  assert.equal(isScoreDerivedMarketOutcome("double-chance", "home-away"), true);
+  assert.equal(isScoreDerivedMarketOutcome("double-chance", "draw-away"), true);
+  assert.equal(isScoreDerivedMarketOutcome("double-chance", "home"), false);
+});
+
+test("prediction engine generates candidates for score-derived markets", () => {
+  const dossier = buildResearchDossier(fixture, { now: () => generatedAt });
+  const totals = generateCandidatesForMarket(
+    { market: "totals", probabilities: { over: 0.52, under: 0.48 }, line: 2.5 },
+    dossier,
+  );
+  const btts = generateCandidatesForMarket(
+    { market: "both-teams-score", probabilities: { yes: 0.57, no: 0.43 } },
+    dossier,
+  );
+  const doubleChance = generateCandidatesForMarket(
+    { market: "double-chance", probabilities: { "home-draw": 0.66, "home-away": 0.7, "draw-away": 0.64 } },
+    dossier,
+  );
+
+  assert.deepEqual(totals.map((candidate) => candidate.outcome), ["over", "under"]);
+  assert.equal(totals[0]?.line, 2.5);
+  assert.deepEqual(btts.map((candidate) => candidate.outcome), ["yes", "no"]);
+  assert.deepEqual(doubleChance.map((candidate) => candidate.outcome), ["home-draw", "home-away", "draw-away"]);
+  assert.ok(doubleChance.every((candidate) => candidate.market === "double-chance"));
 });
 
 test("eligibility policy blocks publication when kickoff is too close", () => {

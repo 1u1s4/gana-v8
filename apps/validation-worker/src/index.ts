@@ -8,6 +8,7 @@ import {
   type ISODateString,
   type ParlayEntity,
   type PredictionEntity,
+  type PredictionMarket,
   type PredictionOutcome,
   type ValidationCheck,
   type ValidationEntity,
@@ -159,6 +160,79 @@ export const deriveMoneylineOutcomeFromFixture = (
   return "draw";
 };
 
+export const deriveTotalsOutcomeFromFixture = (
+  fixture: FixtureEntity,
+  line: number,
+): "over" | "under" | null => {
+  if (fixture.status !== "completed" || fixture.score === undefined || !Number.isFinite(line)) {
+    return null;
+  }
+
+  return fixture.score.home + fixture.score.away > line ? "over" : "under";
+};
+
+export const deriveBttsOutcomeFromFixture = (
+  fixture: FixtureEntity,
+): "yes" | "no" | null => {
+  if (fixture.status !== "completed" || fixture.score === undefined) {
+    return null;
+  }
+
+  return fixture.score.home > 0 && fixture.score.away > 0 ? "yes" : "no";
+};
+
+export const deriveDoubleChanceOutcomesFromFixture = (
+  fixture: FixtureEntity,
+): readonly PredictionOutcome[] | null => {
+  const moneyline = deriveMoneylineOutcomeFromFixture(fixture);
+  if (!moneyline) {
+    return null;
+  }
+
+  if (moneyline === "home") {
+    return ["home-draw", "home-away"];
+  }
+  if (moneyline === "draw") {
+    return ["home-draw", "draw-away"];
+  }
+
+  return ["home-away", "draw-away"];
+};
+
+const deriveWinningOutcomesForPrediction = (
+  prediction: PredictionEntity,
+  fixture: FixtureEntity,
+): readonly PredictionOutcome[] | null => {
+  if (prediction.market === "moneyline") {
+    const outcome = deriveMoneylineOutcomeFromFixture(fixture);
+    return outcome ? [outcome] : null;
+  }
+
+  if (prediction.market === "totals") {
+    const outcome = deriveTotalsOutcomeFromFixture(fixture, prediction.probabilities.line ?? Number.NaN);
+    return outcome ? [outcome] : null;
+  }
+
+  if (prediction.market === "both-teams-score") {
+    const outcome = deriveBttsOutcomeFromFixture(fixture);
+    return outcome ? [outcome] : null;
+  }
+
+  if (prediction.market === "double-chance") {
+    return deriveDoubleChanceOutcomesFromFixture(fixture);
+  }
+
+  return null;
+};
+
+const marketOutcomeCheckCode = (market: PredictionMarket): string => {
+  if (market === "both-teams-score") {
+    return "BTTS_OUTCOME";
+  }
+
+  return `${market.toUpperCase().replaceAll("-", "_")}_OUTCOME`;
+};
+
 const validationStatusFromVerdict = (
   verdict: "won" | "lost" | "voided",
 ): Exclude<ValidationEntity["status"], "pending"> => {
@@ -209,21 +283,17 @@ const derivePredictionVerdict = (
     return "voided";
   }
 
-  if (prediction.market !== "moneyline") {
-    return null;
-  }
-
   const fixture = fixtureById.get(prediction.fixtureId);
   if (!fixture) {
     return null;
   }
 
-  const winningOutcome = deriveMoneylineOutcomeFromFixture(fixture);
-  if (!winningOutcome) {
+  const winningOutcomes = deriveWinningOutcomesForPrediction(prediction, fixture);
+  if (!winningOutcomes) {
     return null;
   }
 
-  return prediction.outcome === winningOutcome ? "won" : "lost";
+  return winningOutcomes.includes(prediction.outcome) ? "won" : "lost";
 };
 
 const settlePredictionValidation = async (
@@ -232,15 +302,6 @@ const settlePredictionValidation = async (
   prediction: PredictionEntity,
   executedAt: ISODateString,
 ): Promise<PredictionValidationResult> => {
-  if (prediction.market !== "moneyline") {
-    return {
-      predictionId: prediction.id,
-      fixtureId: prediction.fixtureId,
-      status: "skipped",
-      reason: `Only moneyline predictions are supported, received ${prediction.market}.`,
-    };
-  }
-
   const fixture = fixtureById.get(prediction.fixtureId);
   if (!fixture) {
     return {
@@ -260,13 +321,13 @@ const settlePredictionValidation = async (
     };
   }
 
-  const winningOutcome = deriveMoneylineOutcomeFromFixture(fixture);
-  if (!winningOutcome) {
+  const winningOutcomes = deriveWinningOutcomesForPrediction(prediction, fixture);
+  if (!winningOutcomes) {
     return {
       predictionId: prediction.id,
       fixtureId: prediction.fixtureId,
       status: "skipped",
-      reason: "Fixture is completed but score coverage is missing.",
+      reason: `Prediction ${prediction.market}:${prediction.outcome} cannot be settled from completed fixture score and market metadata.`,
     };
   }
 
@@ -288,7 +349,7 @@ const settlePredictionValidation = async (
     {
       fixtureId: prediction.fixtureId,
       market: prediction.market,
-      winningOutcomes: [winningOutcome],
+      winningOutcomes,
     },
     executedAt,
   );
@@ -314,8 +375,8 @@ const settlePredictionValidation = async (
         passed: true,
       },
       {
-        code: "MONEYLINE_OUTCOME",
-        message: `Winning outcome resolved to ${winningOutcome}.`,
+        code: marketOutcomeCheckCode(prediction.market),
+        message: `Winning outcome resolved to ${winningOutcomes.join(", ")}.`,
         passed: true,
       },
       {

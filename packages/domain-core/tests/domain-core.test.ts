@@ -55,6 +55,33 @@ test("fixture transitions and prediction publishing keep domain invariants", () 
   assert.ok(prediction.publishedAt);
 });
 
+test("prediction domain accepts score-derived market outcomes and optional totals line", () => {
+  const totals = createPrediction({
+    id: "pred-totals-1",
+    fixtureId: "fx-1",
+    market: "totals",
+    outcome: "over",
+    status: "published",
+    confidence: 0.61,
+    probabilities: { implied: 0.49, model: 0.59, edge: 0.1, line: 2.5 },
+    rationale: ["Synthetic totals edge"],
+  });
+  const doubleChance = createPrediction({
+    id: "pred-double-chance-1",
+    fixtureId: "fx-1",
+    market: "double-chance",
+    outcome: "home-draw",
+    status: "published",
+    confidence: 0.68,
+    probabilities: { implied: 0.7, model: 0.76, edge: 0.06 },
+    rationale: ["Synthetic double chance edge"],
+  });
+
+  assert.equal(totals.probabilities.line, 2.5);
+  assert.equal(doubleChance.market, "double-chance");
+  assert.equal(doubleChance.outcome, "home-draw");
+});
+
 test("sandbox namespaces require sandbox id when environment is sandbox", () => {
   const namespace = createSandboxNamespace({
     id: "ns-1",

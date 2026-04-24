@@ -6,7 +6,8 @@ export type PredictionMarket =
   | "moneyline"
   | "totals"
   | "spread"
-  | "both-teams-score";
+  | "both-teams-score"
+  | "double-chance";
 export type PredictionOutcome =
   | "home"
   | "away"
@@ -14,12 +15,16 @@ export type PredictionOutcome =
   | "over"
   | "under"
   | "yes"
-  | "no";
+  | "no"
+  | "home-draw"
+  | "home-away"
+  | "draw-away";
 
 export interface ProbabilityBreakdown {
   readonly implied: number;
   readonly model: number;
   readonly edge: number;
+  readonly line?: number;
 }
 
 export interface PredictionEntity extends AuditableEntity {

@@ -185,7 +185,7 @@ export function createDemoPredictions(
       outcome: "over",
       status: "published",
       confidence: 0.58,
-      probabilities: { implied: 0.5, model: 0.58, edge: 0.08 },
+      probabilities: { implied: 0.5, model: 0.58, edge: 0.08, line: 2.5 },
       rationale: ["High tempo matchup"],
       publishedAt: "2026-04-15T00:20:00.000Z",
     }),

@@ -13,6 +13,7 @@ export const predictionMarketSchema = z.enum([
   "totals",
   "spread",
   "both-teams-score",
+  "double-chance",
 ]);
 export const predictionOutcomeSchema = z.enum([
   "home",
@@ -22,12 +23,16 @@ export const predictionOutcomeSchema = z.enum([
   "under",
   "yes",
   "no",
+  "home-draw",
+  "home-away",
+  "draw-away",
 ]);
 
 export const probabilityBreakdownSchema = z.object({
   implied: z.number().min(0).max(1),
   model: z.number().min(0).max(1),
   edge: z.number(),
+  line: z.number().optional(),
 });
 
 export const predictionSchema = z.object({

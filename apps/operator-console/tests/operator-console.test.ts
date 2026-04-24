@@ -516,6 +516,124 @@ test("operator console derives an ops-focused snapshot from public-api operation
   assert.match(fixtureOpsPanel?.lines.join("\n") ?? "", /predictions 1/);
 });
 
+test("operator console renders readable market labels while retaining raw market data", async () => {
+  const fixtureId = "fixture:api-football:123";
+  const predictions = [
+    {
+      id: "prediction:labels:totals",
+      fixtureId,
+      aiRunId: "airun-demo-scoring",
+      market: "totals",
+      outcome: "over",
+      confidence: 0.62,
+      status: "published",
+      rationale: ["tempo"],
+      probabilities: { implied: 0.51, model: 0.62, edge: 0.11, line: 2.5 },
+      createdAt: "2026-04-15T00:10:00.000Z",
+      updatedAt: "2026-04-15T00:10:00.000Z",
+    },
+    {
+      id: "prediction:labels:btts",
+      fixtureId,
+      aiRunId: "airun-demo-scoring",
+      market: "both-teams-score",
+      outcome: "yes",
+      confidence: 0.59,
+      status: "published",
+      rationale: ["chances both ways"],
+      probabilities: { implied: 0.5, model: 0.59, edge: 0.09 },
+      createdAt: "2026-04-15T00:11:00.000Z",
+      updatedAt: "2026-04-15T00:11:00.000Z",
+    },
+    {
+      id: "prediction:labels:double-chance",
+      fixtureId,
+      aiRunId: "airun-demo-scoring",
+      market: "double-chance",
+      outcome: "draw-away",
+      confidence: 0.66,
+      status: "published",
+      rationale: ["away avoids loss"],
+      probabilities: { implied: 0.57, model: 0.66, edge: 0.09 },
+      createdAt: "2026-04-15T00:12:00.000Z",
+      updatedAt: "2026-04-15T00:12:00.000Z",
+    },
+  ];
+  const operationSnapshot = createOperationLikeSnapshot({
+    predictions,
+    parlays: [
+      {
+        id: "parlay:labels",
+        status: "ready",
+        source: "automatic",
+        expectedPayout: 64.12,
+        rationale: "market label coverage",
+        legs: predictions.map((prediction) => ({
+          predictionId: prediction.id,
+          fixtureId: prediction.fixtureId,
+          market: prediction.market,
+          outcome: prediction.outcome,
+          price: 1.86,
+          status: "pending",
+        })),
+        stake: 10,
+        correlationScore: 0.08,
+        createdAt: "2026-04-15T00:15:00.000Z",
+        updatedAt: "2026-04-15T00:15:00.000Z",
+      },
+    ],
+  });
+  const snapshot = createOperatorConsoleSnapshotFromOperation(operationSnapshot as never);
+  const model = buildOperatorConsoleModel(snapshot);
+  const predictionsPanel = model.panels.find((panel) => panel.title === "Predictions");
+  const parlaysPanel = model.panels.find((panel) => panel.title === "Parlays");
+  const traceabilityPanel = model.panels.find((panel) => panel.title === "Traceability");
+
+  assert.deepEqual(
+    snapshot.predictions.map((prediction) => prediction.marketLabel),
+    ["Total Goals: Over 2.5", "BTTS: Yes", "Double Chance: Draw or Away"],
+  );
+  assert.deepEqual(
+    snapshot.parlays[0]?.legs.map((leg) => ({
+      market: leg.market,
+      outcome: leg.outcome,
+      marketLabel: leg.marketLabel,
+    })),
+    [
+      { market: "totals", outcome: "over", marketLabel: "Total Goals: Over 2.5" },
+      { market: "both-teams-score", outcome: "yes", marketLabel: "BTTS: Yes" },
+      { market: "double-chance", outcome: "draw-away", marketLabel: "Double Chance: Draw or Away" },
+    ],
+  );
+  assert.match(predictionsPanel?.lines.join("\n") ?? "", /Total Goals: Over 2\.5 \(totals:over\)/);
+  assert.match(predictionsPanel?.lines.join("\n") ?? "", /BTTS: Yes \(both-teams-score:yes\)/);
+  assert.match(parlaysPanel?.lines.join("\n") ?? "", /Double Chance: Draw or Away \(double-chance:draw-away\)/);
+  assert.match(traceabilityPanel?.lines.join("\n") ?? "", /Total Goals: Over 2\.5 \(totals:over\)/);
+
+  const publicApiServer = createPublicApiServer({ snapshot: operationSnapshot as never });
+  await new Promise<void>((resolve) => publicApiServer.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const address = publicApiServer.address();
+    assert.ok(address && typeof address !== "string");
+    const payload = await loadOperatorConsoleWebPayload({
+      publicApiBaseUrl: `http://127.0.0.1:${(address as AddressInfo).port}`,
+    });
+
+    assert.equal(payload.snapshot.predictions[0]?.marketLabel, "Total Goals: Over 2.5");
+    assert.equal(payload.snapshot.parlays[0]?.legs[1]?.marketLabel, "BTTS: Yes");
+    assert.ok(
+      payload.model.panels.some((panel) =>
+        panel.lines.some((line) => line.includes("Double Chance: Draw or Away (double-chance:draw-away)")),
+      ),
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      publicApiServer.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 test("operator console surfaces runtime-release approval runs in a dedicated panel", () => {
   const snapshot = createOperatorConsoleSnapshotFromOperation(createOperationLikeSnapshot() as never, {
     certificationRuns: [

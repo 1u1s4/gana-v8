@@ -83,6 +83,7 @@ enum PredictionMarket {
   totals
   spread
   both_teams_score @map("both-teams-score")
+  double_chance    @map("double-chance")
 }
 
 enum PredictionOutcome {
@@ -93,6 +94,9 @@ enum PredictionOutcome {
   under
   yes
   no
+  home_draw @map("home-draw")
+  home_away @map("home-away")
+  draw_away @map("draw-away")
 }
 
 enum ParlayStatus {

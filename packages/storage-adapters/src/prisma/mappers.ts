@@ -81,6 +81,7 @@ import {
   type ParlayLeg as PrismaParlayLeg,
   type Prediction,
   type PredictionMarket as PrismaPredictionMarket,
+  type PredictionOutcome as PrismaPredictionOutcome,
   type ResearchAssignment,
   type ResearchBundle,
   type ResearchClaim,
@@ -166,6 +167,14 @@ const predictionMarketToDomain = (
 const predictionMarketToPrisma = (
   value: PredictionEntity["market"],
 ): PrismaPredictionMarket => value.replaceAll("-", "_") as PrismaPredictionMarket;
+
+const predictionOutcomeToDomain = (
+  value: PrismaPredictionOutcome,
+): PredictionEntity["outcome"] => value.replaceAll("_", "-") as PredictionEntity["outcome"];
+
+const predictionOutcomeToPrisma = (
+  value: PredictionEntity["outcome"],
+): PrismaPredictionOutcome => value.replaceAll("-", "_") as PrismaPredictionOutcome;
 
 const validationKindToDomain = (value: PrismaValidationKind): ValidationKind =>
   value.replaceAll("_", "-") as ValidationKind;
@@ -722,7 +731,7 @@ export const predictionRecordToDomain = (
   fixtureId: record.fixtureId,
   ...(record.aiRunId ? { aiRunId: record.aiRunId } : {}),
   market: predictionMarketToDomain(record.market),
-  outcome: record.outcome,
+  outcome: predictionOutcomeToDomain(record.outcome),
   status: record.status,
   confidence: record.confidence,
   probabilities: asRecord(record.probabilities) as unknown as PredictionEntity["probabilities"],
@@ -740,7 +749,7 @@ export const predictionDomainToCreateInput = (
   fixtureId: entity.fixtureId,
   aiRunId: entity.aiRunId ?? null,
   market: predictionMarketToPrisma(entity.market),
-  outcome: entity.outcome,
+  outcome: predictionOutcomeToPrisma(entity.outcome),
   status: entity.status,
   confidence: entity.confidence,
   probabilities: entity.probabilities as unknown as Prisma.InputJsonValue,

@@ -260,8 +260,20 @@ export interface ProviderStateReadModel {
   };
 }
 
+export interface PredictionReadModel extends PredictionEntity {
+  readonly marketLabel: string;
+}
+
+export type ParlayLegReadModel = ParlayEntity["legs"][number] & {
+  readonly marketLabel: string;
+};
+
+export interface ParlayReadModel extends Omit<ParlayEntity, "legs"> {
+  readonly legs: readonly ParlayLegReadModel[];
+}
+
 export interface AiRunLinkedPredictionReadModel
-  extends Pick<PredictionEntity, "id" | "fixtureId" | "market" | "outcome" | "status" | "confidence"> {}
+  extends Pick<PredictionReadModel, "id" | "fixtureId" | "market" | "outcome" | "marketLabel" | "status" | "confidence"> {}
 
 export interface AiRunLinkedParlayReadModel
   extends Pick<ParlayEntity, "id" | "status" | "expectedPayout"> {
@@ -276,7 +288,7 @@ export interface AiRunDetailReadModel extends AiRunReadModel {
   readonly linkedParlays: readonly AiRunLinkedParlayReadModel[];
 }
 
-export interface PredictionDetailReadModel extends PredictionEntity {
+export interface PredictionDetailReadModel extends PredictionReadModel {
   readonly fixture?: FixtureEntity;
   readonly aiRun?: AiRunReadModel;
   readonly linkedParlayIds: readonly string[];
@@ -284,12 +296,12 @@ export interface PredictionDetailReadModel extends PredictionEntity {
   readonly validation?: ValidationEntity;
 }
 
-export type ParlayLegDetailReadModel = ParlayEntity["legs"][number] & {
-  readonly prediction?: PredictionEntity;
+export type ParlayLegDetailReadModel = ParlayLegReadModel & {
+  readonly prediction?: PredictionReadModel;
   readonly fixture?: FixtureEntity;
 };
 
-export interface ParlayDetailReadModel extends Omit<ParlayEntity, "legs"> {
+export interface ParlayDetailReadModel extends Omit<ParlayReadModel, "legs"> {
   readonly aiRun?: AiRunReadModel;
   readonly linkedAiRunIds: readonly string[];
   readonly legs: readonly ParlayLegDetailReadModel[];
@@ -461,9 +473,9 @@ export interface PublicApiHandlers {
   readonly telemetryMetrics: () => readonly TelemetryMetricReadModel[];
   readonly operationalSummary: () => OperationalSummary;
   readonly operationalLogs: () => readonly OperationalLogEntry[];
-  readonly predictions: () => readonly PredictionEntity[];
+  readonly predictions: () => readonly PredictionReadModel[];
   readonly predictionById: (predictionId: string) => PredictionDetailReadModel | null;
-  readonly parlays: () => readonly ParlayEntity[];
+  readonly parlays: () => readonly ParlayReadModel[];
   readonly parlayById: (parlayId: string) => ParlayDetailReadModel | null;
   readonly validations: () => readonly ValidationEntity[];
   readonly validationById: (validationId: string) => ValidationEntity | null;
@@ -4776,6 +4788,7 @@ const toAiRunLinkedPrediction = (
   fixtureId: prediction.fixtureId,
   market: prediction.market,
   outcome: prediction.outcome,
+  marketLabel: formatPredictionMarketLabel(prediction),
   status: prediction.status,
   confidence: prediction.confidence,
 });
@@ -5176,10 +5189,78 @@ export function listOperationalLogs(snapshot: OperationSnapshot): readonly Opera
   return createTaskLogEntries(snapshot);
 }
 
+const formatFallbackLabelPart = (value: string): string =>
+  value
+    .split("-")
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+
+const formatPredictionLine = (line: number | undefined): string =>
+  typeof line === "number" && Number.isFinite(line) ? ` ${line}` : "";
+
+export function formatPredictionMarketLabel(
+  prediction: {
+    readonly market: string;
+    readonly outcome: string;
+    readonly probabilities?: { readonly line?: number } | null;
+  },
+): string {
+  const line = formatPredictionLine(prediction.probabilities?.line);
+
+  if (prediction.market === "moneyline") {
+    return `Moneyline: ${formatFallbackLabelPart(prediction.outcome)}`;
+  }
+
+  if (prediction.market === "totals") {
+    return `Total Goals: ${formatFallbackLabelPart(prediction.outcome)}${line}`;
+  }
+
+  if (prediction.market === "both-teams-score") {
+    return `BTTS: ${formatFallbackLabelPart(prediction.outcome)}`;
+  }
+
+  if (prediction.market === "double-chance") {
+    const outcomes: Readonly<Record<string, string>> = {
+      "home-draw": "Home or Draw",
+      "home-away": "Home or Away",
+      "draw-away": "Draw or Away",
+    };
+    return `Double Chance: ${outcomes[prediction.outcome] ?? formatFallbackLabelPart(prediction.outcome)}`;
+  }
+
+  return `${formatFallbackLabelPart(prediction.market)}: ${formatFallbackLabelPart(prediction.outcome)}`;
+}
+
+const toPredictionReadModel = (prediction: PredictionEntity): PredictionReadModel => ({
+  ...prediction,
+  marketLabel: formatPredictionMarketLabel(prediction),
+});
+
+const toParlayLegReadModel = (
+  leg: ParlayEntity["legs"][number],
+  prediction?: PredictionEntity,
+): ParlayLegReadModel => ({
+  ...leg,
+  marketLabel: formatPredictionMarketLabel({
+    market: leg.market,
+    outcome: leg.outcome,
+    probabilities: prediction?.probabilities ?? null,
+  }),
+});
+
+const toParlayReadModel = (
+  parlay: ParlayEntity,
+  predictionsById: ReadonlyMap<string, PredictionEntity> = new Map(),
+): ParlayReadModel => ({
+  ...parlay,
+  legs: parlay.legs.map((leg) => toParlayLegReadModel(leg, predictionsById.get(leg.predictionId))),
+});
+
 export function listPredictions(
   snapshot: OperationSnapshot,
-): readonly PredictionEntity[] {
-  return snapshot.predictions;
+): readonly PredictionReadModel[] {
+  return snapshot.predictions.map(toPredictionReadModel);
 }
 
 export function findPredictionById(
@@ -5206,7 +5287,7 @@ export function findPredictionById(
   );
 
   return {
-    ...prediction,
+    ...toPredictionReadModel(prediction),
     ...(fixture ? { fixture } : {}),
     ...(aiRun ? { aiRun } : {}),
     linkedParlayIds,
@@ -5215,8 +5296,9 @@ export function findPredictionById(
   };
 }
 
-export function listParlays(snapshot: OperationSnapshot): readonly ParlayEntity[] {
-  return snapshot.parlays;
+export function listParlays(snapshot: OperationSnapshot): readonly ParlayReadModel[] {
+  const predictionsById = new Map(snapshot.predictions.map((prediction) => [prediction.id, prediction]));
+  return snapshot.parlays.map((parlay) => toParlayReadModel(parlay, predictionsById));
 }
 
 export function findParlayById(
@@ -5245,15 +5327,15 @@ export function findParlayById(
   );
 
   return {
-    ...parlay,
+    ...toParlayReadModel(parlay, predictionsById),
     ...(aiRun ? { aiRun } : {}),
     linkedAiRunIds,
     legs: parlay.legs.map((leg) => {
       const prediction = predictionsById.get(leg.predictionId);
       const fixture = fixturesById.get(leg.fixtureId);
       return {
-        ...leg,
-        ...(prediction ? { prediction } : {}),
+        ...toParlayLegReadModel(leg, prediction),
+        ...(prediction ? { prediction: toPredictionReadModel(prediction) } : {}),
         ...(fixture ? { fixture } : {}),
       };
     }),

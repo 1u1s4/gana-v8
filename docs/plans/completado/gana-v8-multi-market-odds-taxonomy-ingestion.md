@@ -357,4 +357,4 @@ Expected: imprime disponibilidad sin connection strings ni secrets.
 
 - Estado real observado: DB actual de fixtures top leagues solo tenia `OddsSnapshot.marketKey = 'h2h'`.
 - Codigo actual: `packages/source-connectors/src/clients/api-football.ts`, `apps/ingestion-worker/src/index.ts`, `scripts/run-live-ingestion.mjs`, `scripts/run-live-ingestion-top-leagues.mjs`, `scripts/seed-top-league-coverage.mjs`.
-- Plan dependiente: `docs/plans/falta/gana-v8-multi-market-scoring-publishing-validation.md`.
+- Plan dependiente: `docs/plans/completado/gana-v8-multi-market-scoring-publishing-validation.md`.

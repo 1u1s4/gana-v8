@@ -12,7 +12,10 @@ import { buildParlayFromCandidates } from "@gana-v8/parlay-engine";
 import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
+  deriveBttsOutcomeFromFixture,
+  deriveDoubleChanceOutcomesFromFixture,
   deriveMoneylineOutcomeFromFixture,
+  deriveTotalsOutcomeFromFixture,
   describeWorkspace,
   runValidationWorker,
 } from "../src/index.js";
@@ -66,6 +69,25 @@ test("deriveMoneylineOutcomeFromFixture returns match result for completed fixtu
   assert.equal(deriveMoneylineOutcomeFromFixture(fixture({ score: { home: 0, away: 2 } })), "away");
   assert.equal(deriveMoneylineOutcomeFromFixture(fixture({ status: "live" })), null);
   assert.equal(deriveMoneylineOutcomeFromFixture(fixtureWithoutScore()), null);
+});
+
+test("score-derived outcome helpers resolve completed fixture scores", () => {
+  assert.equal(deriveTotalsOutcomeFromFixture(fixture({ score: { home: 2, away: 1 } }), 2.5), "over");
+  assert.equal(deriveTotalsOutcomeFromFixture(fixture({ score: { home: 1, away: 1 } }), 2.5), "under");
+  assert.equal(deriveBttsOutcomeFromFixture(fixture({ score: { home: 2, away: 1 } })), "yes");
+  assert.equal(deriveBttsOutcomeFromFixture(fixture({ score: { home: 2, away: 0 } })), "no");
+  assert.deepEqual(
+    deriveDoubleChanceOutcomesFromFixture(fixture({ score: { home: 2, away: 1 } })),
+    ["home-draw", "home-away"],
+  );
+  assert.deepEqual(
+    deriveDoubleChanceOutcomesFromFixture(fixture({ score: { home: 1, away: 1 } })),
+    ["home-draw", "draw-away"],
+  );
+  assert.deepEqual(
+    deriveDoubleChanceOutcomesFromFixture(fixture({ score: { home: 0, away: 2 } })),
+    ["home-away", "draw-away"],
+  );
 });
 
 test("runValidationWorker settles published moneyline predictions and persists prediction validations", async () => {
@@ -159,7 +181,115 @@ test("runValidationWorker settles submitted parlays whose legs are all settled a
   assert.equal(parlayValidations[0]?.status, "passed");
 });
 
-test("runValidationWorker skips unsupported markets and completed fixtures without score", async () => {
+test("runValidationWorker settles score-derived predictions from final score", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const totalsFixture = fixture({ id: "fx-totals", score: { home: 2, away: 1 } });
+  const bttsFixture = fixture({ id: "fx-btts", score: { home: 2, away: 0 } });
+  const doubleChanceFixture = fixture({ id: "fx-double-chance", score: { home: 1, away: 1 } });
+  const totalsPrediction = prediction({
+    id: "pred-totals",
+    fixtureId: totalsFixture.id,
+    market: "totals",
+    outcome: "over",
+    probabilities: { implied: 0.5, model: 0.6, edge: 0.1, line: 2.5 },
+  });
+  const bttsPrediction = prediction({
+    id: "pred-btts",
+    fixtureId: bttsFixture.id,
+    market: "both-teams-score",
+    outcome: "no",
+  });
+  const doubleChancePrediction = prediction({
+    id: "pred-double-chance",
+    fixtureId: doubleChanceFixture.id,
+    market: "double-chance",
+    outcome: "home-draw",
+  });
+
+  await unitOfWork.fixtures.save(totalsFixture);
+  await unitOfWork.fixtures.save(bttsFixture);
+  await unitOfWork.fixtures.save(doubleChanceFixture);
+  await unitOfWork.predictions.save(totalsPrediction);
+  await unitOfWork.predictions.save(bttsPrediction);
+  await unitOfWork.predictions.save(doubleChancePrediction);
+
+  const result = await runValidationWorker(undefined, {
+    executedAt: "2026-04-16T22:30:00.000Z",
+    unitOfWork,
+  });
+
+  assert.equal(result.settledPredictionCount, 3);
+  assert.equal(result.skippedPredictionCount, 0);
+  assert.equal(result.predictionResults.every((item) => item.verdict === "won"), true);
+  assert.equal((await unitOfWork.validations.list()).length, 3);
+});
+
+test("runValidationWorker settles mixed-market parlays when every leg is gradeable", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const fixtureOne = fixture({ id: "fx-1", score: { home: 2, away: 1 } });
+  const fixtureTwo = fixture({ id: "fx-2", score: { home: 1, away: 1 } });
+  const predictionOne = prediction({
+    id: "pred-totals",
+    fixtureId: fixtureOne.id,
+    market: "totals",
+    outcome: "over",
+    probabilities: { implied: 0.5, model: 0.6, edge: 0.1, line: 2.5 },
+  });
+  const predictionTwo = prediction({
+    id: "pred-double-chance",
+    fixtureId: fixtureTwo.id,
+    market: "double-chance",
+    outcome: "draw-away",
+  });
+  const parlay = {
+    ...buildParlayFromCandidates({
+      id: "parlay-mixed",
+      stake: 10,
+      source: "automatic",
+      candidates: [
+        {
+          predictionId: predictionOne.id,
+          fixtureId: fixtureOne.id,
+          market: predictionOne.market,
+          outcome: predictionOne.outcome,
+          price: 2,
+          confidence: predictionOne.confidence,
+          modelProbability: predictionOne.probabilities.model,
+        },
+        {
+          predictionId: predictionTwo.id,
+          fixtureId: fixtureTwo.id,
+          market: predictionTwo.market,
+          outcome: predictionTwo.outcome,
+          price: 1.6,
+          confidence: predictionTwo.confidence,
+          modelProbability: predictionTwo.probabilities.model,
+        },
+      ],
+    }).parlay,
+    status: "submitted" as const,
+  };
+
+  await unitOfWork.fixtures.save(fixtureOne);
+  await unitOfWork.fixtures.save(fixtureTwo);
+  await unitOfWork.predictions.save(predictionOne);
+  await unitOfWork.predictions.save(predictionTwo);
+  await unitOfWork.parlays.save(parlay);
+
+  const result = await runValidationWorker(undefined, {
+    executedAt: "2026-04-16T22:45:00.000Z",
+    unitOfWork,
+  });
+
+  const settledParlay = await unitOfWork.parlays.getById(parlay.id);
+
+  assert.equal(result.settledPredictionCount, 2);
+  assert.equal(result.settledParlayCount, 1);
+  assert.equal(result.parlayResults[0]?.verdict, "won");
+  assert.equal(settledParlay?.legs.every((leg) => leg.status === "won"), true);
+});
+
+test("runValidationWorker skips ungradeable score-derived predictions and completed fixtures without score", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   const missingScoreFixture = fixtureWithoutScore();
   const totalsFixture = fixture({ id: "fx-2", score: { home: 1, away: 0 } });
@@ -181,6 +311,6 @@ test("runValidationWorker skips unsupported markets and completed fixtures witho
   assert.equal(result.settledPredictionCount, 0);
   assert.equal(result.skippedPredictionCount, 2);
   assert.match(result.predictionResults.find((item) => item.predictionId === "pred-1")?.reason ?? "", /score/i);
-  assert.match(result.predictionResults.find((item) => item.predictionId === "pred-2")?.reason ?? "", /moneyline/i);
+  assert.match(result.predictionResults.find((item) => item.predictionId === "pred-2")?.reason ?? "", /metadata/i);
   assert.equal(validations.length, 0);
 });

@@ -8,6 +8,10 @@
 
 **Tech Stack:** TypeScript, pnpm, Prisma/MySQL, prediction-engine, scoring-worker, publisher-worker, validation-worker, node:test.
 
+## Resultado de cierre
+
+Cerrado el 24 de abril de 2026. El alcance principal quedo materializado en contratos, Prisma, `prediction-engine`, `scoring-worker`, `publisher-worker`, `validation-worker`, `public-api` y `operator-console`: scoring persiste predicciones multi-mercado, publisher acepta mercados soportados con dedupe por fixture, validation liquida mercados derivados de score final y las superficies operativas muestran labels legibles.
+
 ---
 
 ## Estado actual confirmado

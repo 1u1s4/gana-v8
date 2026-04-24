@@ -207,7 +207,28 @@ test("toAtomicCandidateFromPrediction derives decimal price from implied probabi
   assert.deepEqual(candidate.teamKeys, ["home-fx-1", "away-fx-1"]);
 });
 
-test("publishParlayMvp persists a two-leg parlay from published moneyline predictions", async () => {
+test("toAtomicCandidateFromPrediction accepts supported score-derived prediction markets", () => {
+  const supported = [
+    { market: "moneyline", outcome: "home" },
+    { market: "totals", outcome: "over" },
+    { market: "both-teams-score", outcome: "yes" },
+    { market: "double-chance", outcome: "home-draw" },
+  ] as const;
+
+  for (const entry of supported) {
+    const candidate = toAtomicCandidateFromPrediction(
+      predictionRecord(`pred-${entry.market}`, `fx-${entry.market}`, {
+        market: entry.market,
+        outcome: entry.outcome,
+      }),
+    );
+
+    assert.equal(candidate.market, entry.market);
+    assert.equal(candidate.outcome, entry.outcome);
+  }
+});
+
+test("publishParlayMvp persists a two-leg parlay from published predictions", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2", "fx-4"]);
   const result = await publishParlayMvp(undefined, {
@@ -255,6 +276,105 @@ test("publishParlayMvp persists a two-leg parlay from published moneyline predic
   );
   assert.equal(
     result.skipReasons.some((skip) => skip.reason === "unsupported-market"),
+    false,
+  );
+});
+
+test("publishParlayMvp persists a mixed-market parlay across different fixtures", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2", "fx-3", "fx-4"]);
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord("pred-moneyline", "fx-1", {
+        market: "moneyline",
+        outcome: "home",
+        confidence: 0.78,
+        probabilities: { implied: 0.45, model: 0.67, edge: 0.22 },
+      }),
+      predictionRecord("pred-totals", "fx-2", {
+        market: "totals",
+        outcome: "over",
+        confidence: 0.75,
+        probabilities: { implied: 0.48, model: 0.63, edge: 0.15 },
+      }),
+      predictionRecord("pred-btts", "fx-3", {
+        market: "both-teams-score",
+        outcome: "yes",
+        confidence: 0.73,
+        probabilities: { implied: 0.52, model: 0.61, edge: 0.09 },
+      }),
+      predictionRecord("pred-double-chance", "fx-4", {
+        market: "double-chance",
+        outcome: "home-draw",
+        confidence: 0.7,
+        probabilities: { implied: 0.58, model: 0.66, edge: 0.08 },
+      }),
+    ]),
+    generatedAt: "2026-04-16T12:30:00.000Z",
+    stake: 10,
+    unitOfWork,
+    minLegs: 4,
+    maxLegs: 4,
+    env: previewEnv,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.deepEqual(
+    new Set(result.selectedCandidates.map((candidate) => candidate.market)),
+    new Set(["moneyline", "totals", "both-teams-score", "double-chance"]),
+  );
+  assert.deepEqual(
+    new Set(result.selectedCandidates.map((candidate) => candidate.fixtureId)),
+    new Set(["fx-1", "fx-2", "fx-3", "fx-4"]),
+  );
+  assert.equal(
+    result.skipReasons.some((skip) => skip.reason === "unsupported-market"),
+    false,
+  );
+});
+
+test("publishParlayMvp keeps max one leg per fixture across mixed markets", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2"]);
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord("pred-fx1-moneyline", "fx-1", {
+        market: "moneyline",
+        outcome: "home",
+        confidence: 0.61,
+        probabilities: { implied: 0.5, model: 0.56, edge: 0.06 },
+      }),
+      predictionRecord("pred-fx1-totals", "fx-1", {
+        market: "totals",
+        outcome: "over",
+        confidence: 0.79,
+        probabilities: { implied: 0.47, model: 0.68, edge: 0.21 },
+      }),
+      predictionRecord("pred-fx2-btts", "fx-2", {
+        market: "both-teams-score",
+        outcome: "yes",
+        confidence: 0.74,
+        probabilities: { implied: 0.49, model: 0.64, edge: 0.15 },
+      }),
+    ]),
+    generatedAt: "2026-04-16T12:30:00.000Z",
+    stake: 10,
+    unitOfWork,
+    maxLegs: 2,
+    env: previewEnv,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.deepEqual(
+    result.selectedCandidates.map((candidate) => candidate.predictionId),
+    ["pred-fx1-totals", "pred-fx2-btts"],
+  );
+  assert.equal(
+    result.skipReasons.some(
+      (skip) => skip.predictionId === "pred-fx1-moneyline" && skip.reason === "duplicate-fixture",
+    ),
     true,
   );
 });

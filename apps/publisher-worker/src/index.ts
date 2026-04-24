@@ -167,8 +167,21 @@ const DEFAULT_MIN_LEGS = 2;
 const DEFAULT_MAX_LEGS = 2;
 const LIVE_FIXTURE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
 const LIVE_FIXTURE_LOOKAHEAD_MS = 36 * 60 * 60 * 1000;
+const SUPPORTED_SCORE_DERIVED_MARKETS = [
+  "moneyline",
+  "totals",
+  "both-teams-score",
+  "double-chance",
+] as const satisfies readonly PredictionEntity["market"][];
 
 const round = (value: number): number => Number(value.toFixed(4));
+
+const isSupportedScoreDerivedMarket = (
+  market: PredictionEntity["market"],
+): boolean =>
+  SUPPORTED_SCORE_DERIVED_MARKETS.includes(
+    market as (typeof SUPPORTED_SCORE_DERIVED_MARKETS)[number],
+  );
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -548,12 +561,12 @@ const collectCandidateValidation = (
     };
   }
 
-  if (prediction.market !== "moneyline") {
+  if (!isSupportedScoreDerivedMarket(prediction.market)) {
     return {
       predictionId: prediction.id,
       fixtureId: prediction.fixtureId,
       reason: "unsupported-market",
-      detail: `Prediction ${prediction.id} market ${prediction.market} is outside MVP moneyline scope`,
+      detail: `Prediction ${prediction.id} market ${prediction.market} is outside supported score-derived markets`,
     };
   }
 
@@ -595,7 +608,7 @@ export const toAtomicCandidateFromPrediction = (
     throw new Error(`Prediction ${prediction.id} is not published`);
   }
 
-  if (prediction.market !== "moneyline") {
+  if (!isSupportedScoreDerivedMarket(prediction.market)) {
     throw new Error(`Prediction ${prediction.id} market ${prediction.market} is not supported`);
   }
 
@@ -908,7 +921,7 @@ export const publishParlayMvp = async (
           ...mergedSkips,
           {
             reason: "not-enough-candidates",
-            detail: `Publisher worker requires at least ${minLegs} valid moneyline predictions`,
+            detail: `Publisher worker requires at least ${minLegs} supported predictions`,
           },
         ],
       };

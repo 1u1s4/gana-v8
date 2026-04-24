@@ -41,6 +41,7 @@ import {
   findParlayById,
   findPredictionById,
   findValidationById,
+  formatPredictionMarketLabel,
   getHealth,
   getValidationSummary,
   listFixtures,
@@ -1148,6 +1149,100 @@ test("public api snapshot exposes fixtures, predictions, parlays, validations, v
   assert.equal(publicApiEndpointPaths.validations, "/validations");
 });
 
+test("public api exposes readable labels for totals, BTTS, and double-chance markets", () => {
+  const fixture = createFixture({
+    id: "fx-market-labels",
+    sport: "football",
+    competition: "Liga Nacional",
+    homeTeam: "Comunicaciones",
+    awayTeam: "Municipal",
+    scheduledAt: "2026-04-15T03:00:00.000Z",
+    status: "scheduled",
+    metadata: {},
+  });
+  const aiRun = createAiRun({
+    id: "airun-market-labels",
+    taskId: "task-market-labels",
+    provider: "internal",
+    model: "deterministic-market-labels-v1",
+    promptVersion: "market-labels-v1",
+    status: "completed",
+  });
+  const totals = createPrediction({
+    id: "pred-label-totals-over",
+    fixtureId: fixture.id,
+    aiRunId: aiRun.id,
+    market: "totals",
+    outcome: "over",
+    status: "published",
+    confidence: 0.61,
+    probabilities: { implied: 0.5, model: 0.61, edge: 0.11, line: 2.5 },
+    rationale: ["High event volume"],
+  });
+  const btts = createPrediction({
+    id: "pred-label-btts-yes",
+    fixtureId: fixture.id,
+    aiRunId: aiRun.id,
+    market: "both-teams-score",
+    outcome: "yes",
+    status: "published",
+    confidence: 0.57,
+    probabilities: { implied: 0.49, model: 0.57, edge: 0.08 },
+    rationale: ["Both attacks project chances"],
+  });
+  const doubleChance = createPrediction({
+    id: "pred-label-double-chance",
+    fixtureId: fixture.id,
+    aiRunId: aiRun.id,
+    market: "double-chance",
+    outcome: "home-draw",
+    status: "published",
+    confidence: 0.68,
+    probabilities: { implied: 0.59, model: 0.68, edge: 0.09 },
+    rationale: ["Home avoids loss in most sims"],
+  });
+  const parlay = createParlay({
+    id: "parlay-market-labels",
+    status: "ready",
+    stake: 10,
+    source: "automatic",
+    legs: [totals, btts, doubleChance].map((prediction) => ({
+      predictionId: prediction.id,
+      fixtureId: prediction.fixtureId,
+      market: prediction.market,
+      outcome: prediction.outcome,
+      price: 1.9,
+      status: "pending",
+    })),
+    correlationScore: 0.1,
+    expectedPayout: 68.59,
+  });
+  const snapshot = createOperationSnapshot({
+    fixtures: [fixture],
+    aiRuns: [aiRun],
+    predictions: [totals, btts, doubleChance],
+    parlays: [parlay],
+  });
+
+  assert.equal(formatPredictionMarketLabel(totals), "Total Goals: Over 2.5");
+  assert.equal(listPredictions(snapshot)[1]?.marketLabel, "BTTS: Yes");
+  assert.equal(findPredictionById(snapshot, doubleChance.id)?.marketLabel, "Double Chance: Home or Draw");
+  assert.deepEqual(
+    listParlays(snapshot)[0]?.legs.map((leg) => ({
+      market: leg.market,
+      outcome: leg.outcome,
+      marketLabel: leg.marketLabel,
+    })),
+    [
+      { market: "totals", outcome: "over", marketLabel: "Total Goals: Over 2.5" },
+      { market: "both-teams-score", outcome: "yes", marketLabel: "BTTS: Yes" },
+      { market: "double-chance", outcome: "home-draw", marketLabel: "Double Chance: Home or Draw" },
+    ],
+  );
+  assert.equal(findParlayById(snapshot, parlay.id)?.legs[0]?.prediction?.marketLabel, "Total Goals: Over 2.5");
+  assert.equal(findAiRunById(snapshot, aiRun.id)?.linkedPredictions[2]?.marketLabel, "Double Chance: Home or Draw");
+});
+
 test("public api derives an operational summary from tasks, task runs, etl batches, and validations", () => {
   const snapshot = createDemoOperationSnapshot({
     rawBatches: [
@@ -1243,8 +1338,10 @@ test("public api handlers return consistent derived read models", () => {
   assert.equal(api.taskRunById(snapshot.taskRuns[0]!.id)?.id, snapshot.taskRuns[0]!.id);
   assert.equal(api.taskRunsByTaskId(snapshot.tasks[0]!.id).length, 1);
   assert.equal(api.predictions()[1]?.outcome, "over");
+  assert.equal(api.predictions()[1]?.marketLabel, "Total Goals: Over 2.5");
   assert.equal(api.predictionById(snapshot.predictions[0]!.id)?.id, snapshot.predictions[0]!.id);
   assert.equal(api.parlays()[0]?.legs.length, 2);
+  assert.equal(api.parlays()[0]?.legs[1]?.marketLabel, "Total Goals: Over 2.5");
   assert.equal(api.parlayById(snapshot.parlays[0]!.id)?.id, snapshot.parlays[0]!.id);
   assert.equal(api.validations()[0]?.targetType, "parlay");
   assert.equal(api.validationById(snapshot.validations[0]!.id)?.id, snapshot.validations[0]!.id);
@@ -1265,6 +1362,7 @@ test("public api exposes detail lookups for tasks, task runs, predictions, parla
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.id, snapshot.predictions[0]!.id);
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.aiRun?.id, snapshot.aiRuns[0]!.id);
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.fixture?.id, snapshot.fixtures[0]!.id);
+  assert.equal(findPredictionById(snapshot, snapshot.predictions[1]!.id)?.marketLabel, "Total Goals: Over 2.5");
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.linkedParlayIds[0], snapshot.parlays[0]!.id);
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.linkedParlays[0]?.id, snapshot.parlays[0]!.id);
   assert.equal(findPredictionById(snapshot, snapshot.predictions[0]!.id)?.validation?.id, snapshot.validations[1]!.id);
@@ -1272,6 +1370,7 @@ test("public api exposes detail lookups for tasks, task runs, predictions, parla
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.aiRun?.id, snapshot.aiRuns[0]!.id);
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.linkedAiRunIds[0], snapshot.aiRuns[0]!.id);
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.legs[0]?.prediction?.id, snapshot.predictions[0]!.id);
+  assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.legs[1]?.marketLabel, "Total Goals: Over 2.5");
   assert.equal(findParlayById(snapshot, snapshot.parlays[0]!.id)?.validation?.id, snapshot.validations[0]!.id);
   assert.equal(findValidationById(snapshot, snapshot.validations[0]!.id)?.id, snapshot.validations[0]!.id);
 });
@@ -1617,7 +1716,11 @@ test("public api server exposes http endpoints for fixtures, predictions, parlay
 
     const predictionsResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.predictions}`);
     assert.equal(predictionsResponse.status, 200);
-    assert.deepEqual(await predictionsResponse.json(), snapshot.predictions);
+    const predictionsJson = (await predictionsResponse.json()) as Array<{ id: string; market: string; outcome: string; marketLabel: string }>;
+    assert.equal(predictionsJson[0]?.id, snapshot.predictions[0]!.id);
+    assert.equal(predictionsJson[0]?.market, snapshot.predictions[0]!.market);
+    assert.equal(predictionsJson[0]?.outcome, snapshot.predictions[0]!.outcome);
+    assert.equal(predictionsJson[1]?.marketLabel, "Total Goals: Over 2.5");
 
     const predictionDetailResponse = await fetch(
       `${baseUrl}${publicApiEndpointPaths.predictions}/${snapshot.predictions[0]!.id}`,
@@ -1625,18 +1728,24 @@ test("public api server exposes http endpoints for fixtures, predictions, parlay
     assert.equal(predictionDetailResponse.status, 200);
     const predictionDetailJson = (await predictionDetailResponse.json()) as {
       id: string;
+      marketLabel: string;
       aiRun?: { id: string };
       fixture?: { id: string };
       linkedParlayIds: string[];
     };
     assert.equal(predictionDetailJson.id, snapshot.predictions[0]!.id);
+    assert.equal(predictionDetailJson.marketLabel, "Moneyline: Home");
     assert.equal(predictionDetailJson.aiRun?.id, snapshot.aiRuns[0]!.id);
     assert.equal(predictionDetailJson.fixture?.id, snapshot.fixtures[0]!.id);
     assert.deepEqual(predictionDetailJson.linkedParlayIds, [snapshot.parlays[0]!.id]);
 
     const parlaysResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.parlays}`);
     assert.equal(parlaysResponse.status, 200);
-    assert.deepEqual(await parlaysResponse.json(), snapshot.parlays);
+    const parlaysJson = (await parlaysResponse.json()) as Array<{ id: string; legs: Array<{ market: string; outcome: string; marketLabel: string }> }>;
+    assert.equal(parlaysJson[0]?.id, snapshot.parlays[0]!.id);
+    assert.equal(parlaysJson[0]?.legs[0]?.market, snapshot.parlays[0]!.legs[0]!.market);
+    assert.equal(parlaysJson[0]?.legs[0]?.outcome, snapshot.parlays[0]!.legs[0]!.outcome);
+    assert.equal(parlaysJson[0]?.legs[1]?.marketLabel, "Total Goals: Over 2.5");
 
     const parlayDetailResponse = await fetch(
       `${baseUrl}${publicApiEndpointPaths.parlays}/${snapshot.parlays[0]!.id}`,
@@ -1645,12 +1754,14 @@ test("public api server exposes http endpoints for fixtures, predictions, parlay
     const parlayDetailJson = (await parlayDetailResponse.json()) as {
       id: string;
       aiRun?: { id: string };
-      legs: Array<{ prediction?: { id: string } }>;
+      legs: Array<{ marketLabel: string; prediction?: { id: string; marketLabel: string } }>;
       validation?: { id: string };
     };
     assert.equal(parlayDetailJson.id, snapshot.parlays[0]!.id);
     assert.equal(parlayDetailJson.aiRun?.id, snapshot.aiRuns[0]!.id);
     assert.equal(parlayDetailJson.legs[0]?.prediction?.id, snapshot.predictions[0]!.id);
+    assert.equal(parlayDetailJson.legs[1]?.marketLabel, "Total Goals: Over 2.5");
+    assert.equal(parlayDetailJson.legs[1]?.prediction?.marketLabel, "Total Goals: Over 2.5");
     assert.equal(parlayDetailJson.validation?.id, snapshot.validations[0]!.id);
 
     const validationsResponse = await fetch(`${baseUrl}${publicApiEndpointPaths.validations}`);

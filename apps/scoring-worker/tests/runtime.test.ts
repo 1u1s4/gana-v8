@@ -17,15 +17,18 @@ import { createInMemoryUnitOfWork } from "@gana-v8/storage-adapters";
 
 import {
   buildResearchDossierFromFixture,
+  deriveMarketImpliedProbabilities,
   describeWorkspace,
   loadEligibleFixturesForScoring,
   resolveScoringAiConfig,
   runScoringWorker,
+  scoreFixtureMarkets,
   scoreFixturePrediction,
 } from "../src/index.js";
 
 interface FakeSelection {
   readonly selectionKey: string;
+  readonly label?: string;
   readonly priceDecimal: number;
 }
 
@@ -36,6 +39,7 @@ interface FakeOddsSnapshot {
   readonly marketKey: string;
   readonly bookmakerKey: string;
   readonly capturedAt: Date;
+  readonly payload?: unknown;
   readonly selections: readonly FakeSelection[];
 }
 
@@ -69,6 +73,18 @@ const snapshot = (overrides: Partial<FakeOddsSnapshot> = {}): FakeOddsSnapshot =
   ],
   ...overrides,
 });
+
+const marketSnapshot = (
+  marketKey: "totals-goals" | "both-teams-score" | "double-chance",
+  selections: readonly FakeSelection[],
+  overrides: Partial<FakeOddsSnapshot> = {},
+): FakeOddsSnapshot =>
+  snapshot({
+    id: `odds-${marketKey}`,
+    marketKey,
+    selections,
+    ...overrides,
+  });
 
 const createFakeClient = (fixtures: readonly FixtureEntity[], snapshots: readonly FakeOddsSnapshot[]) => ({
   fixture: {
@@ -272,6 +288,37 @@ test("buildResearchDossierFromFixture derives deterministic implied probabilitie
   assert.equal(dossier.directionalScore.home > dossier.directionalScore.away, true);
 });
 
+test("deriveMarketImpliedProbabilities normalizes score-derived odds snapshots", () => {
+  assert.deepEqual(
+    deriveMarketImpliedProbabilities(
+      marketSnapshot("totals-goals", [
+        { selectionKey: "over", label: "Over 2.5", priceDecimal: 1.91 },
+        { selectionKey: "under", label: "Under 2.5", priceDecimal: 2.05 },
+      ]),
+    ),
+    { over: 0.5177, under: 0.4823 },
+  );
+  assert.deepEqual(
+    deriveMarketImpliedProbabilities(
+      marketSnapshot("both-teams-score", [
+        { selectionKey: "yes", priceDecimal: 1.8 },
+        { selectionKey: "no", priceDecimal: 2.2 },
+      ]),
+    ),
+    { yes: 0.55, no: 0.45 },
+  );
+  assert.deepEqual(
+    deriveMarketImpliedProbabilities(
+      marketSnapshot("double-chance", [
+        { selectionKey: "home-draw", priceDecimal: 1.25 },
+        { selectionKey: "home-away", priceDecimal: 1.3 },
+        { selectionKey: "draw-away", priceDecimal: 1.65 },
+      ]),
+    ),
+    { "home-draw": 0.3678, "home-away": 0.3536, "draw-away": 0.2786 },
+  );
+});
+
 test("buildResearchDossierFromFixture incorporates ready research metadata into the dossier", () => {
   const dossier = buildResearchDossierFromFixture(fixture(), snapshot(), {
     generatedAt: "2026-04-15T12:05:00.000Z",
@@ -392,6 +439,48 @@ test("scoreFixturePrediction persists completed AiRun and published prediction f
     cohort: "live:ci-smoke",
     source: "scoring-worker",
   });
+});
+
+test("scoreFixtureMarkets persists one prediction per eligible market snapshot", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const baseFixture = fixture();
+
+  await unitOfWork.fixtures.save(baseFixture);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
+
+  const result = await scoreFixtureMarkets(undefined, baseFixture.id, undefined, {
+    client: createFakeClient(
+      [baseFixture],
+      [
+        snapshot(),
+        marketSnapshot("totals-goals", [
+          { selectionKey: "over", label: "Over 2.5", priceDecimal: 1.91 },
+          { selectionKey: "under", label: "Under 2.5", priceDecimal: 2.05 },
+        ]),
+        marketSnapshot("both-teams-score", [
+          { selectionKey: "yes", priceDecimal: 1.8 },
+          { selectionKey: "no", priceDecimal: 2.2 },
+        ]),
+        marketSnapshot("double-chance", [
+          { selectionKey: "home-draw", priceDecimal: 1.25 },
+          { selectionKey: "home-away", priceDecimal: 1.3 },
+          { selectionKey: "draw-away", priceDecimal: 1.65 },
+        ]),
+      ],
+    ) as never,
+    generatedAt: "2026-04-15T12:10:00.000Z",
+    unitOfWork,
+  });
+
+  const predictions = await unitOfWork.predictions.list();
+  const markets = predictions.map((prediction) => prediction.market).sort();
+
+  assert.equal(result.status, "scored");
+  assert.equal(result.predictions?.length, 4);
+  assert.deepEqual(markets, ["both-teams-score", "double-chance", "moneyline", "totals"]);
+  assert.equal(predictions.every((prediction) => prediction.id.includes(`:${prediction.market}:${prediction.outcome}:`)), true);
+  assert.equal(predictions.find((prediction) => prediction.market === "totals")?.probabilities.line, 2.5);
+  assert.equal(new Set(predictions.map((prediction) => prediction.aiRunId)).size, 1);
 });
 
 test("scoreFixturePrediction skips fixtures that are force-excluded by workflow ops", async () => {

@@ -15,7 +15,6 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 - `gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `gana-v8-harness-registro-goldens-y-cobertura.md`
 - `gana-v8-harness-remediacion-legible-por-agentes.md`
-- `gana-v8-multi-market-scoring-publishing-validation.md`
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 
@@ -29,6 +28,7 @@ La lista anterior debe coincidir exactamente con los archivos reales dentro de `
 - El frente de contratos/evaluacion agentic ya quedo materializado con `docs/agentic-sprint-contract.md`, `docs/agentic-evaluation-rubric.md` e invariantes de lint.
 - El frente de fidelidad de `runtime-release` ya quedo cerrado con snapshots baseline/candidate persistidos en DB, smoke Hermes con procesos vivos y surfaces `public-api`/`operator-console` mostrando fingerprint, diff y cobertura.
 - El frente de taxonomia e ingestion multi-mercado ya quedo cerrado con market keys canonicos, ingestion live multi-mercado, coverage seed base y reporte de disponibilidad por fixture.
+- El frente de scoring, publisher y validation multi-mercado ya quedo cerrado con predicciones multi-market persistidas, publicacion allowlisted, validacion score-derived y labels operativos.
 
 ## Planes relevantes en `completado/`
 
@@ -39,6 +39,7 @@ La lista anterior debe coincidir exactamente con los archivos reales dentro de `
 - `gana-v8-harness-contratos-agentic-y-evaluacion.md`
 - `gana-v8-runtime-release-adopcion-operativa.md`
 - `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
+- `gana-v8-multi-market-scoring-publishing-validation.md`
 - `gana-v8-multi-market-odds-taxonomy-ingestion.md`
 - `gana-v8-harness-core-y-claridad-agente.md`
 - `gana-v8-plan-cierre-sandbox-qa.md`
