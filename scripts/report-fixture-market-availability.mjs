@@ -2,7 +2,11 @@ import process from "node:process";
 import { readFile } from "node:fs/promises";
 
 import { createPrismaClient, assertSchemaReadiness } from "../packages/storage-adapters/dist/src/index.js";
-import { TOP_FOOTBALL_BASE_MARKETS } from "./top-football-leagues.mjs";
+import {
+  TOP_FOOTBALL_BASE_MARKETS,
+  TOP_FOOTBALL_EXPERIMENTAL_MARKETS,
+  isExperimentalCornersMarketsEnabled,
+} from "./top-football-leagues.mjs";
 
 const readDotenv = async (path) => {
   try {
@@ -77,7 +81,20 @@ const CANONICAL_MARKET_KEYS = new Set([
   "corners-h2h",
 ]);
 
+const EXPERIMENTAL_CORNERS_MARKET_KEYS = new Set([
+  ...TOP_FOOTBALL_EXPERIMENTAL_MARKETS,
+  "corners-h2h",
+]);
+
 const MARKET_LINE_REQUIRED_KEYS = new Set(["totals-goals", "corners-total"]);
+
+const isExperimentalCornersMarket = (marketKey) =>
+  EXPERIMENTAL_CORNERS_MARKET_KEYS.has(marketKey) || marketKey.startsWith("corners-");
+
+const partitionExpectedMarkets = (marketKeys) => ({
+  baseMarkets: marketKeys.filter((marketKey) => !isExperimentalCornersMarket(marketKey)),
+  experimentalMarkets: marketKeys.filter((marketKey) => isExperimentalCornersMarket(marketKey)),
+});
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -192,7 +209,77 @@ const scoreabilityForMarket = (marketKey, snapshots) => {
   };
 };
 
-const summarizeFixture = (input, fixture, expectedMarkets, snapshots) => {
+const readStatisticNumber = (snapshot) =>
+  typeof snapshot?.valueNumeric === "number" && Number.isFinite(snapshot.valueNumeric)
+    ? snapshot.valueNumeric
+    : null;
+
+const latestStatisticByScope = (statistics, scope) => {
+  const sorted = statistics
+    .filter((snapshot) => snapshot.scope === scope)
+    .sort((left, right) => toIso(right.capturedAt).localeCompare(toIso(left.capturedAt)));
+  return sorted[0] ?? null;
+};
+
+const summarizeCornerStatistics = (statistics) => {
+  const cornersStatistics = statistics.filter((snapshot) => snapshot.statKey === "corners");
+  const home = latestStatisticByScope(cornersStatistics, "home");
+  const away = latestStatisticByScope(cornersStatistics, "away");
+  const match = latestStatisticByScope(cornersStatistics, "match");
+  const homeCorners = readStatisticNumber(home);
+  const awayCorners = readStatisticNumber(away);
+  const matchCorners = readStatisticNumber(match);
+  const statsAvailable = homeCorners !== null && awayCorners !== null;
+
+  return {
+    status: statsAvailable ? "available" : "missing",
+    homeCorners,
+    awayCorners,
+    totalCorners: statsAvailable ? matchCorners ?? homeCorners + awayCorners : matchCorners,
+    scopes: [...new Set(cornersStatistics.map((snapshot) => snapshot.scope))].sort(),
+    snapshotCount: cornersStatistics.length,
+    capturedAtLatest: maxIso(cornersStatistics.map((snapshot) => snapshot.capturedAt)),
+  };
+};
+
+const summarizeExperimentalMarket = ({
+  cornersEnabled,
+  group,
+  marketKey,
+  statisticsSummary,
+}) => {
+  const snapshots = group?.snapshots ?? [];
+  const scoreability = scoreabilityForMarket(marketKey, snapshots);
+  const guardrailStatuses = [cornersEnabled ? "experimental-enabled" : "experimental-disabled"];
+
+  if (marketKey === "corners-total") {
+    if (!scoreability.scoreable) {
+      guardrailStatuses.push("line-missing");
+    }
+    if (statisticsSummary.status !== "available") {
+      guardrailStatuses.push("stats-missing");
+    }
+    if (cornersEnabled && scoreability.scoreable && statisticsSummary.status === "available") {
+      guardrailStatuses.push("settlement-ready");
+    }
+  }
+
+  return {
+    marketKey,
+    available: Boolean(group),
+    snapshotCount: group?.snapshotCount ?? 0,
+    bookmakers: group ? [...group.bookmakers].sort() : [],
+    selectionCount: group?.selectionCount ?? 0,
+    capturedAtLatest: group ? maxIso(group.capturedAt) : null,
+    scoreability,
+    guardrailStatus: cornersEnabled
+      ? guardrailStatuses.find((status) => status !== "experimental-enabled") ?? "experimental-enabled"
+      : "experimental-disabled",
+    guardrailStatuses,
+  };
+};
+
+const summarizeFixture = (input, fixture, expectedMarkets, snapshots, statisticSnapshots, { cornersEnabled }) => {
   const marketGroups = new Map();
   const bookmakers = new Set();
 
@@ -219,8 +306,16 @@ const summarizeFixture = (input, fixture, expectedMarkets, snapshots) => {
     marketGroups.set(snapshot.marketKey, group);
   }
 
-  const availableMarkets = [...marketGroups.keys()].sort();
-  const marketSummaries = [...marketGroups.values()]
+  const { baseMarkets: expectedBaseMarkets, experimentalMarkets: expectedExperimentalMarkets } =
+    partitionExpectedMarkets(expectedMarkets);
+  const availableBaseMarkets = [...marketGroups.keys()]
+    .filter((marketKey) => !isExperimentalCornersMarket(marketKey))
+    .sort();
+  const availableExperimentalMarkets = [...marketGroups.keys()]
+    .filter((marketKey) => isExperimentalCornersMarket(marketKey))
+    .sort();
+  const baseMarketSummaries = [...marketGroups.values()]
+    .filter((group) => !isExperimentalCornersMarket(group.marketKey))
     .map((group) => ({
       marketKey: group.marketKey,
       snapshotCount: group.snapshotCount,
@@ -230,6 +325,19 @@ const summarizeFixture = (input, fixture, expectedMarkets, snapshots) => {
       scoreability: scoreabilityForMarket(group.marketKey, group.snapshots),
     }))
     .sort((left, right) => left.marketKey.localeCompare(right.marketKey));
+  const statisticsSummary = summarizeCornerStatistics(statisticSnapshots);
+  const experimentalMarketKeys = [...new Set([
+    ...expectedExperimentalMarkets,
+    ...availableExperimentalMarkets,
+  ])].sort();
+  const experimentalMarketSummaries = experimentalMarketKeys.map((marketKey) =>
+    summarizeExperimentalMarket({
+      cornersEnabled,
+      group: marketGroups.get(marketKey),
+      marketKey,
+      statisticsSummary,
+    }),
+  );
   const providerSpecificMarkets = [...marketGroups.values()]
     .filter((group) => !CANONICAL_MARKET_KEYS.has(group.marketKey))
     .map((group) => ({
@@ -256,13 +364,22 @@ const summarizeFixture = (input, fixture, expectedMarkets, snapshots) => {
           status: fixture.status,
         }
       : null,
-    expectedMarkets,
-    availableMarkets,
-    missingMarkets: expectedMarkets.filter((marketKey) => !marketGroups.has(marketKey)),
+    requestedExpectedMarkets: expectedMarkets,
+    expectedMarkets: expectedBaseMarkets,
+    availableMarkets: availableBaseMarkets,
+    missingMarkets: expectedBaseMarkets.filter((marketKey) => !marketGroups.has(marketKey)),
     snapshotCount: snapshots.length,
     bookmakers: [...bookmakers].sort(),
     capturedAtLatest: maxIso(snapshots.map((snapshot) => snapshot.capturedAt)),
-    markets: marketSummaries,
+    markets: baseMarketSummaries,
+    experimentalMarkets: {
+      enabled: cornersEnabled,
+      expectedMarkets: expectedExperimentalMarkets,
+      availableMarkets: availableExperimentalMarkets,
+      missingMarkets: expectedExperimentalMarkets.filter((marketKey) => !marketGroups.has(marketKey)),
+      statistics: statisticsSummary,
+      markets: experimentalMarketSummaries,
+    },
     providerSpecificMarkets,
   };
 };
@@ -285,9 +402,12 @@ const main = async () => {
   const fixtureRefs = parseCsv(
     readArgValue(args, "--fixture-ids") ?? env.GANA_LIVE_ODDS_FIXTURE_IDS,
   );
-  const expectedMarkets = parseCsv(
+  const requestedExpectedMarkets = parseCsv(
     readArgValue(args, "--expected-markets") ?? env.GANA_FOOTBALL_MARKET_KEYS,
   ) ?? TOP_FOOTBALL_BASE_MARKETS;
+  const { baseMarkets: expectedBaseMarkets, experimentalMarkets: expectedExperimentalMarkets } =
+    partitionExpectedMarkets(requestedExpectedMarkets);
+  const cornersEnabled = isExperimentalCornersMarketsEnabled(env.GANA_ENABLE_CORNERS_MARKETS);
 
   if (!fixtureRefs || fixtureRefs.length === 0) {
     throw new Error("Provide fixture ids with --fixture-ids 1388584,1378200 or GANA_LIVE_ODDS_FIXTURE_IDS");
@@ -300,7 +420,7 @@ const main = async () => {
   try {
     const providerFixtureIds = [...new Set(inputs.map((input) => input.providerFixtureId))];
     const fixtureIds = [...new Set(inputs.map((input) => input.fixtureId))];
-    const [fixtures, snapshots] = await Promise.all([
+    const [fixtures, snapshots, statisticSnapshots] = await Promise.all([
       prisma.fixture.findMany({
         where: {
           id: { in: fixtureIds },
@@ -351,6 +471,23 @@ const main = async () => {
           },
         },
       }),
+      prisma.fixtureStatisticSnapshot.findMany({
+        where: {
+          statKey: "corners",
+          OR: [
+            { providerFixtureId: { in: providerFixtureIds } },
+            { fixtureId: { in: fixtureIds } },
+          ],
+        },
+        select: {
+          capturedAt: true,
+          fixtureId: true,
+          providerFixtureId: true,
+          scope: true,
+          statKey: true,
+          valueNumeric: true,
+        },
+      }),
     ]);
 
     snapshots.sort((left, right) => {
@@ -371,6 +508,7 @@ const main = async () => {
     const requestedByProviderId = new Map(inputs.map((input) => [input.providerFixtureId, input]));
     const requestedByFixtureId = new Map(inputs.map((input) => [input.fixtureId, input]));
     const snapshotsByInput = new Map(inputs.map((input) => [input.input, []]));
+    const statisticSnapshotsByInput = new Map(inputs.map((input) => [input.input, []]));
     const fixtureByInput = new Map(inputs.map((input) => [input.input, fixtureById.get(input.fixtureId) ?? null]));
 
     for (const snapshot of snapshots) {
@@ -385,16 +523,30 @@ const main = async () => {
       }
     }
 
+    for (const snapshot of statisticSnapshots) {
+      const input = requestedByProviderId.get(snapshot.providerFixtureId) ??
+        (snapshot.fixtureId ? requestedByFixtureId.get(snapshot.fixtureId) : undefined);
+      if (!input) {
+        continue;
+      }
+      statisticSnapshotsByInput.get(input.input)?.push(snapshot);
+    }
+
     console.log(JSON.stringify({
       generatedAt: new Date().toISOString(),
       provider,
-      expectedMarkets,
+      requestedExpectedMarkets,
+      expectedMarkets: expectedBaseMarkets,
+      experimentalExpectedMarkets: expectedExperimentalMarkets,
+      experimentalCornersEnabled: cornersEnabled,
       fixtures: inputs.map((input) =>
         summarizeFixture(
           input,
           fixtureByInput.get(input.input),
-          expectedMarkets,
+          requestedExpectedMarkets,
           snapshotsByInput.get(input.input) ?? [],
+          statisticSnapshotsByInput.get(input.input) ?? [],
+          { cornersEnabled },
         ),
       ),
     }, null, 2));

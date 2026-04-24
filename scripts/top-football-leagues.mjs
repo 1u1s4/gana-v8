@@ -47,6 +47,8 @@ export const TOP_FOOTBALL_BASE_MARKETS = [
 
 export const TOP_FOOTBALL_EXPERIMENTAL_MARKETS = ["corners-total"];
 
+export const isExperimentalCornersMarketsEnabled = (value) => value === "1";
+
 export const resolveTopFootballMarketKeys = ({ enableCorners = false } = {}) => [
   ...TOP_FOOTBALL_BASE_MARKETS,
   ...(enableCorners ? TOP_FOOTBALL_EXPERIMENTAL_MARKETS : []),
