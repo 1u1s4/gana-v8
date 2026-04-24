@@ -2,7 +2,11 @@ import process from "node:process";
 import { readFile } from "node:fs/promises";
 
 import { createPrismaClient, assertSchemaReadiness } from "../packages/storage-adapters/dist/src/index.js";
-import { TOP_FOOTBALL_LEAGUES, resolveTopFootballMarketKeys } from "./top-football-leagues.mjs";
+import {
+  TOP_FOOTBALL_LEAGUES,
+  isExperimentalCornersMarketsEnabled,
+  resolveTopFootballMarketKeys,
+} from "./top-football-leagues.mjs";
 
 const readDotenv = async (path) => {
   try {
@@ -42,9 +46,7 @@ const main = async () => {
   assertSchemaReadiness({ env });
   const prisma = createPrismaClient(databaseUrl);
   const now = new Date();
-  const enableCorners = ["1", "true", "yes"].includes(
-    String(env.GANA_ENABLE_CORNERS_MARKETS ?? "").trim().toLowerCase(),
-  );
+  const enableCorners = isExperimentalCornersMarketsEnabled(env.GANA_ENABLE_CORNERS_MARKETS);
   const marketsAllowed = resolveTopFootballMarketKeys({ enableCorners });
 
   try {
