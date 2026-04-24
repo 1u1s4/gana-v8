@@ -7,6 +7,7 @@ Este archivo es el indice canonico para descubrir procedimientos operativos. Los
 - `expensive-verification-triage.md`: escalera para verificaciones largas, DB-backed o costosas.
 - `harness-garbage-collection.md`: patrullaje recurrente de entropia, fronteras runtime y limpieza pequena del harness.
 - `observability-traceability-incident.md`: investigacion cuando health/readiness/summary/logs no explican un incidente.
+- `provider-market-alias-maintenance.md`: mantenimiento de aliases provider/canonical para mercados de odds API-Football.
 - `public-api-operator-console-read-model-staleness.md`: divergencias entre `public-api`, `operator-console` y estado durable.
 - `quarantine-manual-review.md`: revision manual de tareas en cuarentena o con decision humana pendiente.
 - `recovery-redrive.md`: recovery/redrive de tareas fallidas, leases vencidas o retries agotados.
@@ -32,6 +33,7 @@ Este archivo es el indice canonico para descubrir procedimientos operativos. Los
 | Revisar cuarentena manual | Tarea requiere decision humana o no debe redrivearse a ciegas | Tarea identificada y capability operativa disponible | [`quarantine-manual-review.md`](./quarantine-manual-review.md) |
 | Investigar staleness de lectura | `public-api` y `operator-console` divergen o muestran datos viejos | Acceso al entorno afectado o replica de consulta | [`public-api-operator-console-read-model-staleness.md`](./public-api-operator-console-read-model-staleness.md) |
 | Investigar incidente de observabilidad | Health/readiness/logs no explican el estado real | Ventana temporal y entorno afectados identificados | [`observability-traceability-incident.md`](./observability-traceability-incident.md) |
+| Mantener aliases de mercados API-Football | Cambio de nombre/ID de bet, filtro legacy que deja de matchear o nuevo alias sanitizado | Mercado canonico identificado y corpus sintetico actualizado | [`provider-market-alias-maintenance.md`](./provider-market-alias-maintenance.md) |
 | Ejecutar rollback de release | Candidato aprobado pierde confiabilidad o falla evidencia critica | SHA/branch bueno identificado y owner humano de rollback | [`rollback.md`](./rollback.md) |
 | Persistir resultados de scraping HTML aislado | Se necesita probar o supervisar scraping web sin mezclarlo con la DB operativa principal | Credenciales MySQL disponibles y URLs objetivo definidas | [`webscraping-gambeta.md`](./webscraping-gambeta.md) |
 | Levantar y validar un harness por worktree | Trabajo agentic paralelo, bug repro local o evidencia viva de consola/API | Worktree dedicado y puertos elegidos | [`worktree-bootstrap-validation.md`](./worktree-bootstrap-validation.md) |

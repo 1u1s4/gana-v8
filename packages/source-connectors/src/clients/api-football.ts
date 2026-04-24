@@ -14,7 +14,11 @@ import type {
   RawOddsSelection,
   RawPlayer,
 } from "../models/raw.js";
-import { normalizeProviderMarketKey, toProviderMarketSlug } from "../markets.js";
+import {
+  normalizeProviderMarketKey,
+  toProviderMarketNameSlug,
+  toProviderMarketSlug,
+} from "../markets.js";
 
 export interface ApiFootballFetchRequest {
   readonly url: string;
@@ -321,6 +325,7 @@ const matchesMarketFilter = (
   const candidates = [
     marketKey,
     toProviderMarketSlug({ id: bet.id, name: bet.name }),
+    toProviderMarketNameSlug({ id: bet.id, name: bet.name }),
     bet.name?.trim().toLowerCase(),
     bet.id === undefined ? undefined : String(bet.id),
   ];

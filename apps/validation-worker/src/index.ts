@@ -122,6 +122,7 @@ interface PredictionSettlementOutcome {
 
 const CORNERS_TOTAL_MARKET: CornerPredictionMarket = "corners-total";
 const CORNERS_H2H_MARKET: CornerPredictionMarket = "corners-h2h";
+const MARKET_LINE_MISSING_OR_AMBIGUOUS_REASON = "Market line is missing or ambiguous";
 
 const createManagedRuntime = (
   databaseUrl?: string,
@@ -692,11 +693,14 @@ const derivePredictionVerdict = (
 };
 
 const skippedReasonForUngradeablePrediction = (prediction: PredictionEntity): string => {
-  if (prediction.market === CORNERS_TOTAL_MARKET) {
-    if (!Number.isFinite(prediction.probabilities.line)) {
-      return "Corners-total prediction cannot be settled because the market line is missing.";
-    }
+  if (
+    (prediction.market === "totals" || prediction.market === CORNERS_TOTAL_MARKET) &&
+    !Number.isFinite(prediction.probabilities.line)
+  ) {
+    return MARKET_LINE_MISSING_OR_AMBIGUOUS_REASON;
+  }
 
+  if (prediction.market === CORNERS_TOTAL_MARKET) {
     return "Corners-total prediction cannot be settled because fixture corners statistic coverage is missing.";
   }
 

@@ -30,16 +30,55 @@ const slugify = (value: string): string =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "market";
 
-const includesAll = (value: string, tokens: readonly string[]): boolean =>
-  tokens.every((token) => value.includes(token));
+interface ProviderMarketAliasGroup {
+  readonly ids: readonly string[];
+  readonly nameAliases: readonly string[];
+}
 
-const knownMarketIdAliases: Readonly<Record<string, CanonicalOddsMarketKey>> = {
-  "1": "h2h",
-  "5": "totals-goals",
-  "8": "both-teams-score",
-  "12": "double-chance",
-  "45": "corners-total",
+const canonicalMarketAliases: Readonly<Record<CanonicalOddsMarketKey, ProviderMarketAliasGroup>> = {
+  "both-teams-score": {
+    ids: ["8"],
+    nameAliases: ["both teams score", "both teams to score", "btts"],
+  },
+  "corners-h2h": {
+    ids: [],
+    nameAliases: ["corners match winner", "corners winner", "corners h2h"],
+  },
+  "corners-total": {
+    ids: ["45"],
+    nameAliases: [
+      "corners over under",
+      "corners over/under",
+      "corner kicks over under",
+      "corner kicks over/under",
+      "total corners",
+    ],
+  },
+  "double-chance": {
+    ids: ["12"],
+    nameAliases: ["double chance"],
+  },
+  h2h: {
+    ids: ["1"],
+    nameAliases: ["match winner", "full time result", "fulltime result", "1x2"],
+  },
+  "totals-goals": {
+    ids: ["5"],
+    nameAliases: ["goals over under", "goals over/under", "over under", "over/under", "total goals"],
+  },
 };
+
+const knownMarketNameAliases: ReadonlyMap<string, CanonicalOddsMarketKey> = new Map(
+  CANONICAL_ODDS_MARKET_KEYS.flatMap((canonicalKey) =>
+    canonicalMarketAliases[canonicalKey].nameAliases.map((name) => [name, canonicalKey] as const),
+  ),
+);
+
+const knownMarketIdAliases: ReadonlyMap<string, CanonicalOddsMarketKey> = new Map(
+  CANONICAL_ODDS_MARKET_KEYS.flatMap((canonicalKey) =>
+    canonicalMarketAliases[canonicalKey].ids.map((id) => [id, canonicalKey] as const),
+  ),
+);
 
 export const toProviderMarketSlug = (market: ProviderMarketDescriptor): string => {
   const id = normalize(market.id);
@@ -48,37 +87,24 @@ export const toProviderMarketSlug = (market: ProviderMarketDescriptor): string =
   return slugify(id ? `${id}-${name || "market"}` : name || "market");
 };
 
+export const toProviderMarketNameSlug = (market: ProviderMarketDescriptor): string | undefined => {
+  const name = normalize(market.name);
+
+  return name ? slugify(name) : undefined;
+};
+
 export const normalizeProviderMarketKey = (market: ProviderMarketDescriptor): string => {
   const id = normalize(market.id);
   const name = normalize(market.name);
-  const idAlias = knownMarketIdAliases[id];
+  const nameAlias = knownMarketNameAliases.get(name);
 
+  if (nameAlias) {
+    return nameAlias;
+  }
+
+  const idAlias = knownMarketIdAliases.get(id);
   if (idAlias) {
     return idAlias;
-  }
-
-  if (name === "match winner") {
-    return "h2h";
-  }
-
-  if (includesAll(name, ["both", "teams", "score"])) {
-    return "both-teams-score";
-  }
-
-  if (includesAll(name, ["double", "chance"])) {
-    return "double-chance";
-  }
-
-  if (name.includes("corner") && (name.includes("over") || name.includes("under"))) {
-    return "corners-total";
-  }
-
-  if (name.includes("corner") && (name.includes("winner") || name.includes("match"))) {
-    return "corners-h2h";
-  }
-
-  if (name.includes("goal") && (name.includes("over") || name.includes("under"))) {
-    return "totals-goals";
   }
 
   return toProviderMarketSlug(market);

@@ -66,7 +66,7 @@
 ## Dependencias
 
 - Depende de `gana-v8-live-multimarket-provider-validation.md` para evidencia real de odds/stats.
-- Depende de `gana-v8-market-line-extraction-hardening.md` para corners-total confiable.
+- Depende del cierre `docs/plans/completado/gana-v8-market-line-extraction-hardening.md` para corners-total confiable.
 - Debe preservar la operacion base aunque corners no exista en provider.
 - No debe convertir corners en default hasta tener evidencia real suficiente.
 
@@ -85,4 +85,4 @@
 - Observacion de review: corners esta correctamente flaggeado, pero necesita criterios explicitos de promocion y reporting operativo.
 - Planes relacionados:
   - `docs/plans/falta/gana-v8-live-multimarket-provider-validation.md`
-  - `docs/plans/falta/gana-v8-market-line-extraction-hardening.md`
+  - `docs/plans/completado/gana-v8-market-line-extraction-hardening.md`

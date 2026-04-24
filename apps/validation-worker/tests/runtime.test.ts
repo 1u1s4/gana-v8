@@ -376,6 +376,55 @@ test("runValidationWorker voids pushed corners-total and skips corners predictio
   );
 });
 
+test("runValidationWorker skips totals and corners-total predictions without a market line", async () => {
+  const unitOfWork = withFixtureStatisticSnapshots(createInMemoryUnitOfWork(), [
+    {
+      id: "stats-1",
+      fixtureId: "fx-corners-missing-line",
+      capturedAt: "2026-04-16T21:10:00.000Z",
+      statistics: {
+        home: { corners: 5 },
+        away: { corners: 6 },
+      },
+    },
+  ]);
+  const totalsFixture = fixture({ id: "fx-totals-missing-line", score: { home: 2, away: 1 } });
+  const cornersFixture = fixtureWithoutScore({ id: "fx-corners-missing-line" });
+  const totalsPrediction = prediction({
+    id: "pred-totals-missing-line",
+    fixtureId: totalsFixture.id,
+    market: "totals",
+    outcome: "over",
+  });
+  const cornersPrediction = prediction({
+    id: "pred-corners-missing-line",
+    fixtureId: cornersFixture.id,
+    market: "corners-total" as unknown as PredictionEntity["market"],
+    outcome: "over",
+  });
+
+  await unitOfWork.fixtures.save(totalsFixture);
+  await unitOfWork.fixtures.save(cornersFixture);
+  await unitOfWork.predictions.save(totalsPrediction);
+  await unitOfWork.predictions.save(cornersPrediction);
+
+  const result = await runValidationWorker(undefined, {
+    executedAt: "2026-04-16T22:30:00.000Z",
+    unitOfWork,
+  });
+
+  assert.equal(result.settledPredictionCount, 0);
+  assert.equal(result.skippedPredictionCount, 2);
+  assert.equal(
+    result.predictionResults.find((item) => item.predictionId === totalsPrediction.id)?.reason,
+    "Market line is missing or ambiguous",
+  );
+  assert.equal(
+    result.predictionResults.find((item) => item.predictionId === cornersPrediction.id)?.reason,
+    "Market line is missing or ambiguous",
+  );
+});
+
 test("runValidationWorker settles mixed-market parlays when every leg is gradeable", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   const fixtureOne = fixture({ id: "fx-1", score: { home: 2, away: 1 } });
@@ -463,6 +512,9 @@ test("runValidationWorker skips ungradeable score-derived predictions and comple
   assert.equal(result.settledPredictionCount, 0);
   assert.equal(result.skippedPredictionCount, 2);
   assert.match(result.predictionResults.find((item) => item.predictionId === "pred-1")?.reason ?? "", /score/i);
-  assert.match(result.predictionResults.find((item) => item.predictionId === "pred-2")?.reason ?? "", /metadata/i);
+  assert.equal(
+    result.predictionResults.find((item) => item.predictionId === "pred-2")?.reason,
+    "Market line is missing or ambiguous",
+  );
   assert.equal(validations.length, 0);
 });

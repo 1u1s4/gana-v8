@@ -1,0 +1,51 @@
+{
+  "description": "Synthetic, sanitized API-Football market alias corpus for connector normalization tests.",
+  "markets": [
+    {
+      "canonicalKey": "h2h",
+      "aliases": [
+        { "id": "1", "name": "Match Winner" },
+        { "id": "301", "name": "Full Time Result" },
+        { "id": "302", "name": "1X2" }
+      ]
+    },
+    {
+      "canonicalKey": "totals-goals",
+      "aliases": [
+        { "id": "5", "name": "Goals Over/Under" },
+        { "id": "305", "name": "Goals Over Under" },
+        { "id": "306", "name": "Total Goals" }
+      ]
+    },
+    {
+      "canonicalKey": "both-teams-score",
+      "aliases": [
+        { "id": "8", "name": "Both Teams Score" },
+        { "id": "308", "name": "Both Teams To Score" },
+        { "id": "309", "name": "BTTS" }
+      ]
+    },
+    {
+      "canonicalKey": "double-chance",
+      "aliases": [
+        { "id": "12", "name": "Double Chance" }
+      ]
+    },
+    {
+      "canonicalKey": "corners-total",
+      "aliases": [
+        { "id": "45", "name": "Corners Over Under" },
+        { "id": "345", "name": "Corners Over/Under" },
+        { "id": "346", "name": "Corner Kicks Over/Under" },
+        { "id": "347", "name": "Total Corners" }
+      ]
+    },
+    {
+      "canonicalKey": "corners-h2h",
+      "aliases": [
+        { "id": "448", "name": "Corners Match Winner" },
+        { "id": "449", "name": "Corners Winner" }
+      ]
+    }
+  ]
+}

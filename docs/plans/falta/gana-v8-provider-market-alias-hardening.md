@@ -13,43 +13,34 @@
 ## Estado actual confirmado
 
 - `packages/source-connectors/src/markets.ts` define claves canonicas: `h2h`, `totals-goals`, `both-teams-score`, `double-chance`, `corners-total`, `corners-h2h`.
-- Los aliases por id actuales cubren `1`, `5`, `8`, `12`, `45`.
-- Tambien hay heuristicas por nombre para match winner, BTTS, double chance, corners y goals over/under.
-- `matchesMarketFilter()` acepta canonical key, nombre normalizado o id.
-- Falta validar esos aliases contra payloads reales variados por liga/bookmaker.
+- `packages/source-connectors/src/markets.ts` usa una tabla explicita de aliases por mercado canonico.
+- El nombre reconocido gana sobre IDs fragiles; el ID queda como fallback compatible para payloads legacy o incompletos.
+- `matchesMarketFilter()` acepta canonical key, provider slug con ID, slug de nombre, nombre normalizado o ID.
+- `scripts/report-fixture-market-availability.mjs` expone markets provider-specific en seccion separada cuando ya fueron persistidos.
+- Existe runbook de mantenimiento en `runbooks/provider-market-alias-maintenance.md`.
+- Sigue faltando validar los aliases contra payloads live reales variados por liga/bookmaker.
 
 ## Ya cubierto
 
 - Taxonomia canonica inicial.
-- Tests basicos de `normalizeProviderMarketKey()`.
+- Tests de `normalizeProviderMarketKey()` con matriz de aliases por mercado, IDs cambiados, name-only, id-only y conflicto nombre/ID.
 - Fallback slugificado para mercados desconocidos.
-- Filtro por `marketKeys` en API-Football client.
+- Filtro por `marketKeys` en API-Football client con compatibilidad canonical, provider slug, name slug, nombre normalizado e ID.
+- Corpus sintetico/sanitizado en `packages/source-connectors/tests/fixtures/api-football-market-aliases.json`.
+- Reporte de provider-specific markets y guia corta para agregar aliases nuevos con test.
 
 ## Faltantes exclusivos
 
-### 1. Corpus de aliases reales sanitizado
+### 1. Evidencia live real sanitizada
 
 - Capturar ejemplos reales de `bet.id` y `bet.name` sin incluir secrets ni payload sensible.
-- Guardar fixtures test sintéticas derivadas de esos ejemplos.
+- Reemplazar o complementar el corpus sintetico con fixtures test derivadas de esos ejemplos reales sanitizados.
 - Cubrir variantes por bookmaker/liga si el provider cambia labels.
 
-### 2. Aliases por mercado base
+### 2. Confirmacion operativa de unknown markets
 
-- h2h: Match Winner, Full Time Result y variantes.
-- totals-goals: Goals Over/Under, Over/Under, Total Goals y variantes.
-- BTTS: Both Teams Score, Both Teams To Score, BTTS.
-- double-chance: Double Chance, 1X/12/X2 naming.
-- corners: Corners Over Under, Total Corners, Corners Match Winner si existe.
-
-### 3. Reporte de unknown markets
-
-- `report-fixture-market-availability` debe mostrar markets desconocidos/provider-specific en una seccion separada.
-- No fallar ingestion por mercado desconocido; hacerlo visible para ampliar aliases.
-
-### 4. Proceso de mantenimiento
-
-- Documentar como agregar un alias nuevo con test.
-- Evitar depender solo de IDs del provider cuando nombre permite confirmar intencion.
+- Ejecutar discovery live sin filtro canonico estricto o con fixture controlado para confirmar que unknown/provider-specific markets quedan persistidos y visibles.
+- Registrar la evidencia live sanitizada o mantener este plan activo con el riesgo aceptado.
 
 ## Interfaces/contratos afectados
 
@@ -69,15 +60,14 @@
 
 ## Criterio de done
 
-- Tests cubren multiples aliases por mercado, no solo un happy path por id.
-- `normalizeProviderMarketKey()` no depende exclusivamente de ids fragiles.
-- `matchesMarketFilter()` acepta canonical key, provider slug, id y nombre normalizado.
-- Los unknown/provider-specific markets quedan visibles en reportes.
-- Existe una guia corta para agregar aliases nuevos con test.
+- Existe evidencia live real sanitizada de `bet.id`/`bet.name` por mercado base o por variante observada.
+- El corpus de tests incluye ejemplos derivados de esa evidencia live.
+- La corrida de discovery confirma que unknown/provider-specific markets quedan visibles en reportes.
 - `pnpm --filter @gana-v8/source-connectors test` pasa.
 
 ## Fuentes consolidadas
 
-- Codigo actual: `packages/source-connectors/src/markets.ts`, `packages/source-connectors/src/clients/api-football.ts`.
+- Codigo actual: `packages/source-connectors/src/markets.ts`, `packages/source-connectors/src/clients/api-football.ts`, `scripts/report-fixture-market-availability.mjs`.
+- Runbook: `runbooks/provider-market-alias-maintenance.md`.
 - Plan relacionado: `docs/plans/falta/gana-v8-live-multimarket-provider-validation.md`.
-- Observacion de review: aliases actuales son correctos como inicio, pero necesitan validacion con payloads reales.
+- Observacion de review: el hardening sintetico ya esta materializado, pero el cierre del plan requiere validacion con payloads reales.

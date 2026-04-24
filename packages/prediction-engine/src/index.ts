@@ -104,6 +104,25 @@ export interface MarketProbabilityInput {
   readonly line?: number;
 }
 
+export type OverUnderMarketLineMarket = "totals" | "corners-total";
+export type OverUnderMarketLineSide = "over" | "under";
+
+export interface OverUnderMarketLineSelection {
+  readonly selectionKey?: string | null;
+  readonly label?: string | null;
+}
+
+export type OverUnderMarketLineParseResult =
+  | {
+      readonly status: "valid";
+      readonly line: number;
+      readonly rationale: string;
+    }
+  | {
+      readonly status: "missing-or-ambiguous";
+      readonly reason: "Market line is missing or ambiguous";
+    };
+
 export interface CandidateEligibilityPolicy {
   readonly minConfidence: number;
   readonly minEdge: number;
@@ -148,6 +167,135 @@ const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 const round = (value: number): number => Number(value.toFixed(4));
 
+const MARKET_LINE_MISSING_OR_AMBIGUOUS_REASON = "Market line is missing or ambiguous" as const;
+
+const normalizeMarketLine = (rawValue: string): number | null => {
+  const value = Number(rawValue.replace(",", "."));
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return round(value);
+};
+
+const isValidLineIncrement = (line: number): boolean => {
+  const quarterUnits = line * 4;
+  return Math.abs(quarterUnits - Math.round(quarterUnits)) < 0.0001;
+};
+
+const isReasonableOverUnderLine = (market: OverUnderMarketLineMarket, line: number): boolean => {
+  if (line <= 0 || !isValidLineIncrement(line)) {
+    return false;
+  }
+
+  if (market === "totals") {
+    return line <= 12.5;
+  }
+
+  return line <= 30.5;
+};
+
+const normalizeOverUnderSide = (text: string | undefined | null): OverUnderMarketLineSide | null => {
+  const normalized = text?.trim().toLowerCase().replace(/[_\s/]+/g, "-") ?? "";
+  if (normalized.startsWith("over")) {
+    return "over";
+  }
+  if (normalized.startsWith("under")) {
+    return "under";
+  }
+
+  return null;
+};
+
+const parseLineFromOverUnderText = (
+  text: string | undefined | null,
+  side: OverUnderMarketLineSide,
+  market: OverUnderMarketLineMarket,
+): number | null => {
+  if (!text) {
+    return null;
+  }
+
+  const escapedSide = side === "over" ? "over" : "under";
+  const patterns = [
+    new RegExp(`\\b${escapedSide}\\b[\\s:,-]*(?:\\(?\\s*)?(\\d+(?:[.,]\\d+)?)\\b`, "i"),
+    /\bover\s*[/\\-]\s*under\b[\s:,-]*(?:\(?\s*)?(\d+(?:[.,]\d+)?)\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const line = normalizeMarketLine(match[1]);
+    if (line !== null && isReasonableOverUnderLine(market, line)) {
+      return line;
+    }
+  }
+
+  return null;
+};
+
+export const parseOverUnderMarketLineFromSelections = (input: {
+  readonly market: OverUnderMarketLineMarket;
+  readonly selections: readonly OverUnderMarketLineSelection[];
+}): OverUnderMarketLineParseResult => {
+  const linesBySide: Record<OverUnderMarketLineSide, number[]> = {
+    over: [],
+    under: [],
+  };
+  const sourcesBySide: Record<OverUnderMarketLineSide, string[]> = {
+    over: [],
+    under: [],
+  };
+
+  for (const selection of input.selections) {
+    const side =
+      normalizeOverUnderSide(selection.selectionKey) ??
+      normalizeOverUnderSide(selection.label);
+    if (!side) {
+      continue;
+    }
+
+    const fields = [
+      { name: "label", value: selection.label },
+      { name: "selectionKey", value: selection.selectionKey },
+    ] as const;
+
+    for (const field of fields) {
+      const line = parseLineFromOverUnderText(field.value, side, input.market);
+      if (line === null) {
+        continue;
+      }
+
+      linesBySide[side].push(line);
+      sourcesBySide[side].push(`${side} selection ${field.name}`);
+      break;
+    }
+  }
+
+  const uniqueOverLines = [...new Set(linesBySide.over)];
+  const uniqueUnderLines = [...new Set(linesBySide.under)];
+  if (
+    uniqueOverLines.length !== 1 ||
+    uniqueUnderLines.length !== 1 ||
+    uniqueOverLines[0] !== uniqueUnderLines[0]
+  ) {
+    return {
+      status: "missing-or-ambiguous",
+      reason: MARKET_LINE_MISSING_OR_AMBIGUOUS_REASON,
+    };
+  }
+
+  const line = uniqueOverLines[0]!;
+  return {
+    status: "valid",
+    line,
+    rationale: `Market line ${line} extracted from ${[...sourcesBySide.over, ...sourcesBySide.under].join(" and ")}.`,
+  };
+};
+
 const metadataNumber = (
   metadata: Record<string, string>,
   key: string,
@@ -184,6 +332,9 @@ export const isScoreDerivedMarketOutcome = (
   market: PredictionMarket,
   outcome: PredictionOutcome,
 ): boolean => scoreDerivedMarketOutcomes[market]?.includes(outcome) ?? false;
+
+const marketRequiresOverUnderLine = (market: PredictionMarket): boolean =>
+  market === "totals" || market === "corners-total";
 
 export const buildMatchForecast = (
   fixture: FixtureLike,
@@ -291,6 +442,13 @@ export const generateCandidatesForMarket = (
   marketInput: MarketProbabilityInput,
   dossier: ResearchDossierLike,
 ): MarketCandidate[] => {
+  if (
+    marketRequiresOverUnderLine(marketInput.market) &&
+    (marketInput.line === undefined || !Number.isFinite(marketInput.line))
+  ) {
+    return [];
+  }
+
   const outcomes = scoreDerivedMarketOutcomes[marketInput.market] ?? [];
   const candidates: MarketCandidate[] = [];
 
@@ -315,7 +473,7 @@ export const generateCandidatesForMarket = (
       impliedProbability,
       edge,
       confidence,
-      ...(marketInput.market === "totals" && marketInput.line !== undefined ? { line: marketInput.line } : {}),
+      ...(marketRequiresOverUnderLine(marketInput.market) && marketInput.line !== undefined ? { line: marketInput.line } : {}),
       rationale: [
         dossier.summary,
         `${marketDisplayName(marketInput.market)} ${outcome} candidate generated from canonical odds snapshot.`,

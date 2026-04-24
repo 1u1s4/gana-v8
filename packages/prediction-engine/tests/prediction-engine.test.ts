@@ -11,6 +11,7 @@ import {
   generateCandidatesForMarket,
   generateMarketCandidates,
   isScoreDerivedMarketOutcome,
+  parseOverUnderMarketLineFromSelections,
 } from "../src/index.ts";
 
 const generatedAt = "2026-04-14T18:00:00.000Z";
@@ -87,6 +88,92 @@ test("prediction engine generates candidates for score-derived markets", () => {
   assert.deepEqual(btts.map((candidate) => candidate.outcome), ["yes", "no"]);
   assert.deepEqual(doubleChance.map((candidate) => candidate.outcome), ["home-draw", "home-away", "draw-away"]);
   assert.ok(doubleChance.every((candidate) => candidate.market === "double-chance"));
+});
+
+test("prediction engine requires an explicit line before generating totals candidates", () => {
+  const dossier = buildResearchDossier(fixture, { now: () => generatedAt });
+
+  assert.deepEqual(
+    generateCandidatesForMarket(
+      { market: "totals", probabilities: { over: 0.52, under: 0.48 } },
+      dossier,
+    ),
+    [],
+  );
+});
+
+test("over/under market line parser accepts shared explicit lines", () => {
+  const parsed = parseOverUnderMarketLineFromSelections({
+    market: "totals",
+    selections: [
+      { selectionKey: "over", label: "Over: 2.5" },
+      { selectionKey: "under", label: "Under - 2.5" },
+    ],
+  });
+
+  assert.equal(parsed.status, "valid");
+  assert.equal(parsed.status === "valid" ? parsed.line : null, 2.5);
+  assert.match(parsed.status === "valid" ? parsed.rationale : "", /selection label/);
+});
+
+test("over/under market line parser accepts combined over-under labels", () => {
+  const parsed = parseOverUnderMarketLineFromSelections({
+    market: "totals",
+    selections: [
+      { selectionKey: "over", label: "Over/Under 2.5" },
+      { selectionKey: "under", label: "Over/Under 2.5" },
+    ],
+  });
+
+  assert.equal(parsed.status, "valid");
+  assert.equal(parsed.status === "valid" ? parsed.line : null, 2.5);
+});
+
+test("over/under market line parser rejects odds, ids, timestamps, and context-free numbers", () => {
+  const invalidSelections = [
+    [
+      { selectionKey: "over", label: "Over 1.85" },
+      { selectionKey: "under", label: "Under 1.95" },
+    ],
+    [
+      { selectionKey: "over", label: "fixture:api-football:1388584" },
+      { selectionKey: "under", label: "bookmaker id 8" },
+    ],
+    [
+      { selectionKey: "over", label: "bet id 5" },
+      { selectionKey: "under", label: "2026-04-15T12:00:00.000Z" },
+    ],
+    [
+      { selectionKey: "over", label: "2.5" },
+      { selectionKey: "under", label: "2.5" },
+    ],
+  ] as const;
+
+  for (const selections of invalidSelections) {
+    assert.deepEqual(
+      parseOverUnderMarketLineFromSelections({ market: "totals", selections }),
+      {
+        status: "missing-or-ambiguous",
+        reason: "Market line is missing or ambiguous",
+      },
+    );
+  }
+});
+
+test("over/under market line parser rejects mismatched snapshot sides", () => {
+  assert.deepEqual(
+    parseOverUnderMarketLineFromSelections({
+      market: "totals",
+      selections: [
+        { selectionKey: "over", label: "Over 2.5" },
+        { selectionKey: "under", label: "Under 3.5" },
+      ],
+    }),
+    {
+      status: "missing-or-ambiguous",
+      reason: "Market line is missing or ambiguous",
+    },
+  );
 });
 
 test("eligibility policy blocks publication when kickoff is too close", () => {

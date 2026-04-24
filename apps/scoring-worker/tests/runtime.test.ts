@@ -500,7 +500,79 @@ test("scoreFixtureMarkets persists one prediction per eligible market snapshot",
   assert.deepEqual(markets, ["both-teams-score", "double-chance", "moneyline", "totals"]);
   assert.equal(predictions.every((prediction) => prediction.id.includes(`:${prediction.market}:${prediction.outcome}:`)), true);
   assert.equal(predictions.find((prediction) => prediction.market === "totals")?.probabilities.line, 2.5);
+  assert.match(
+    predictions.find((prediction) => prediction.market === "totals")?.rationale.join("\n") ?? "",
+    /Market line 2\.5 extracted/,
+  );
   assert.equal(new Set(predictions.map((prediction) => prediction.aiRunId)).size, 1);
+});
+
+test("scoreFixtureMarkets skips totals when the snapshot line is missing or unsafe", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const baseFixture = fixture();
+
+  await unitOfWork.fixtures.save(baseFixture);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
+
+  const result = await scoreFixtureMarkets(undefined, baseFixture.id, undefined, {
+    client: createFakeClient(
+      [baseFixture],
+      [
+        snapshot(),
+        marketSnapshot(
+          "totals-goals",
+          [
+            { selectionKey: "over", label: "Over 1.85", priceDecimal: 1.85 },
+            { selectionKey: "under", label: "Under 1.95", priceDecimal: 1.95 },
+          ],
+          {
+            payload: {
+              fixture: "fixture:api-football:1388584",
+              bookmakerId: 8,
+              capturedAt: "2026-04-15T12:00:00.000Z",
+              defaultLine: 2.5,
+            },
+          },
+        ),
+      ],
+    ) as never,
+    generatedAt: "2026-04-15T12:10:00.000Z",
+    unitOfWork,
+  });
+
+  const predictions = await unitOfWork.predictions.list();
+
+  assert.equal(result.status, "scored");
+  assert.deepEqual(predictions.map((prediction) => prediction.market), ["moneyline"]);
+});
+
+test("scoreFixtureMarkets skips corners-total when over and under lines disagree", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  const baseFixture = fixture();
+
+  await unitOfWork.fixtures.save(baseFixture);
+  await seedPublishableResearch(unitOfWork, baseFixture.id);
+
+  const result = await scoreFixtureMarkets(undefined, baseFixture.id, undefined, {
+    client: createFakeClient(
+      [baseFixture],
+      [
+        snapshot(),
+        marketSnapshot("corners-total", [
+          { selectionKey: "over", label: "Over 10.5", priceDecimal: 1.91 },
+          { selectionKey: "under", label: "Under 9.5", priceDecimal: 2.05 },
+        ]),
+      ],
+    ) as never,
+    generatedAt: "2026-04-15T12:10:00.000Z",
+    unitOfWork,
+    env: { GANA_ENABLE_CORNERS_MARKETS: "1" },
+  });
+
+  const predictions = await unitOfWork.predictions.list();
+
+  assert.equal(result.status, "scored");
+  assert.deepEqual(predictions.map((prediction) => prediction.market), ["moneyline"]);
 });
 
 test("scoreFixtureMarkets persists experimental corners predictions only when the flag is enabled", async () => {

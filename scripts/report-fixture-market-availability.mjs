@@ -68,27 +68,180 @@ const maxIso = (values) =>
     return latest === null || iso > latest ? iso : latest;
   }, null);
 
+const CANONICAL_MARKET_KEYS = new Set([
+  "h2h",
+  "totals-goals",
+  "both-teams-score",
+  "double-chance",
+  "corners-total",
+  "corners-h2h",
+]);
+
+const MARKET_LINE_REQUIRED_KEYS = new Set(["totals-goals", "corners-total"]);
+
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+const asProviderValue = (value) => {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+};
+
+const readProviderBetDescriptor = (payload) => {
+  if (!isRecord(payload) || !isRecord(payload.bet)) {
+    return { id: null, name: null };
+  }
+
+  return {
+    id: asProviderValue(payload.bet.id),
+    name: asProviderValue(payload.bet.name),
+  };
+};
+
+const extractContextualLine = (value) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const patterns = [
+    /\bover\b[\s:,-]*(?:\(?\s*)?(\d+(?:[.,]\d+)?)\b/i,
+    /\bunder\b[\s:,-]*(?:\(?\s*)?(\d+(?:[.,]\d+)?)\b/i,
+    /\bover\s*[/\\-]\s*under\b[\s:,-]*(?:\(?\s*)?(\d+(?:[.,]\d+)?)\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const line = Number(match[1].replace(",", "."));
+    if (Number.isFinite(line)) {
+      return Number(line.toFixed(4));
+    }
+  }
+
+  return null;
+};
+
+const lineRangeForMarket = (marketKey) => {
+  if (marketKey === "totals-goals") {
+    return { min: 0.25, max: 12.5 };
+  }
+
+  if (marketKey === "corners-total") {
+    return { min: 0.25, max: 30.5 };
+  }
+
+  return null;
+};
+
+const isValidLineIncrement = (line) => {
+  const quarterUnits = line * 4;
+  return Math.abs(quarterUnits - Math.round(quarterUnits)) < 0.0001;
+};
+
+const scoreabilityForMarket = (marketKey, snapshots) => {
+  if (!MARKET_LINE_REQUIRED_KEYS.has(marketKey)) {
+    return {
+      reason: "Market does not require a market line.",
+      scoreable: snapshots.length > 0,
+    };
+  }
+
+  const range = lineRangeForMarket(marketKey);
+  const linesByOutcome = new Map();
+
+  for (const snapshot of snapshots) {
+    for (const selection of snapshot.selections ?? []) {
+      const outcome = selection.selectionKey;
+      if (outcome !== "over" && outcome !== "under") {
+        continue;
+      }
+
+      const line = extractContextualLine(selection.label) ?? extractContextualLine(selection.selectionKey);
+      if (
+        line === null ||
+        !isValidLineIncrement(line) ||
+        (range && (line < range.min || line > range.max))
+      ) {
+        continue;
+      }
+
+      const existing = linesByOutcome.get(outcome) ?? new Set();
+      existing.add(line);
+      linesByOutcome.set(outcome, existing);
+    }
+  }
+
+  const overLines = linesByOutcome.get("over") ?? new Set();
+  const underLines = linesByOutcome.get("under") ?? new Set();
+  const sharedLines = [...overLines].filter((line) => underLines.has(line));
+
+  if (sharedLines.length !== 1 || overLines.size !== 1 || underLines.size !== 1) {
+    return {
+      reason: "Market line is missing or ambiguous.",
+      scoreable: false,
+    };
+  }
+
+  return {
+    line: sharedLines[0],
+    reason: `Market line ${sharedLines[0]} is available for over and under selections.`,
+    scoreable: true,
+  };
+};
+
 const summarizeFixture = (input, fixture, expectedMarkets, snapshots) => {
   const marketGroups = new Map();
   const bookmakers = new Set();
 
   for (const snapshot of snapshots) {
     bookmakers.add(snapshot.bookmakerKey);
+    const providerBet = readProviderBetDescriptor(snapshot.payload);
     const group = marketGroups.get(snapshot.marketKey) ?? {
       bookmakers: new Set(),
       capturedAt: [],
       marketKey: snapshot.marketKey,
+      providerMarketIds: new Set(),
+      providerMarketNames: new Set(),
+      snapshots: [],
       selectionCount: 0,
       snapshotCount: 0,
     };
     group.bookmakers.add(snapshot.bookmakerKey);
     group.capturedAt.push(snapshot.capturedAt);
-    group.selectionCount += snapshot._count.selections;
+    if (providerBet.id) group.providerMarketIds.add(providerBet.id);
+    if (providerBet.name) group.providerMarketNames.add(providerBet.name);
+    group.snapshots.push(snapshot);
+    group.selectionCount += snapshot.selections?.length ?? snapshot._count.selections;
     group.snapshotCount += 1;
     marketGroups.set(snapshot.marketKey, group);
   }
 
   const availableMarkets = [...marketGroups.keys()].sort();
+  const marketSummaries = [...marketGroups.values()]
+    .map((group) => ({
+      marketKey: group.marketKey,
+      snapshotCount: group.snapshotCount,
+      bookmakers: [...group.bookmakers].sort(),
+      selectionCount: group.selectionCount,
+      capturedAtLatest: maxIso(group.capturedAt),
+      scoreability: scoreabilityForMarket(group.marketKey, group.snapshots),
+    }))
+    .sort((left, right) => left.marketKey.localeCompare(right.marketKey));
+  const providerSpecificMarkets = [...marketGroups.values()]
+    .filter((group) => !CANONICAL_MARKET_KEYS.has(group.marketKey))
+    .map((group) => ({
+      marketKey: group.marketKey,
+      providerMarketIds: [...group.providerMarketIds].sort(),
+      providerMarketNames: [...group.providerMarketNames].sort(),
+      snapshotCount: group.snapshotCount,
+      bookmakers: [...group.bookmakers].sort(),
+      selectionCount: group.selectionCount,
+      capturedAtLatest: maxIso(group.capturedAt),
+    }))
+    .sort((left, right) => left.marketKey.localeCompare(right.marketKey));
 
   return {
     fixtureId: input.providerFixtureId,
@@ -109,15 +262,8 @@ const summarizeFixture = (input, fixture, expectedMarkets, snapshots) => {
     snapshotCount: snapshots.length,
     bookmakers: [...bookmakers].sort(),
     capturedAtLatest: maxIso(snapshots.map((snapshot) => snapshot.capturedAt)),
-    markets: [...marketGroups.values()]
-      .map((group) => ({
-        marketKey: group.marketKey,
-        snapshotCount: group.snapshotCount,
-        bookmakers: [...group.bookmakers].sort(),
-        selectionCount: group.selectionCount,
-        capturedAtLatest: maxIso(group.capturedAt),
-      }))
-      .sort((left, right) => left.marketKey.localeCompare(right.marketKey)),
+    markets: marketSummaries,
+    providerSpecificMarkets,
   };
 };
 
@@ -200,7 +346,14 @@ const main = async () => {
           },
           fixtureId: true,
           marketKey: true,
+          payload: true,
           providerFixtureId: true,
+          selections: {
+            select: {
+              label: true,
+              selectionKey: true,
+            },
+          },
         },
       }),
     ]);

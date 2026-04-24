@@ -24,6 +24,7 @@ import { renderPrompt, type PromptRegistryKey } from "@gana-v8/model-registry";
 import {
   buildAtomicPrediction,
   generateCandidatesForMarket,
+  parseOverUnderMarketLineFromSelections,
   selectBestEligibleCandidate,
   type AtomicPredictionArtifact,
   type CandidateEligibilityPolicy,
@@ -620,33 +621,6 @@ export const deriveMarketImpliedProbabilities = (
   );
 };
 
-const extractNumberFromText = (text: string | undefined | null): number | undefined => {
-  const match = text?.match(/\b(\d+(?:\.\d+)?)\b/);
-  if (!match?.[1]) {
-    return undefined;
-  }
-
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : undefined;
-};
-
-const extractTotalsLineFromSnapshot = (snapshot: OddsSnapshotLike): number | undefined => {
-  for (const selection of snapshot.selections) {
-    const line = extractNumberFromText(selection.label ?? selection.selectionKey);
-    if (line !== undefined) {
-      return line;
-    }
-  }
-
-  const payload = snapshot.payload;
-  if (payload && typeof payload === "object") {
-    const serialized = JSON.stringify(payload);
-    return extractNumberFromText(serialized);
-  }
-
-  return undefined;
-};
-
 export const isCornersMarketScoringEnabled = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean => env.GANA_ENABLE_CORNERS_MARKETS?.trim() === "1";
@@ -659,6 +633,13 @@ const generateExperimentalCornerCandidates = (
   },
   dossier: ResearchDossierLike,
 ): MarketCandidate[] => {
+  if (
+    marketInput.market === "corners-total" &&
+    (marketInput.line === undefined || !Number.isFinite(marketInput.line))
+  ) {
+    return [];
+  }
+
   const outcomes: readonly PredictionOutcome[] = marketInput.market === "corners-total"
     ? ["over", "under"]
     : ["home", "draw", "away"];
@@ -1608,17 +1589,16 @@ export const scoreFixtureMarkets = async (
         continue;
       }
 
-      const extractedLine = marketKey === "totals-goals" || marketKey === "corners-total"
-        ? extractTotalsLineFromSnapshot(snapshotForMarket)
+      const lineParse = marketKey === "totals-goals" || marketKey === "corners-total"
+        ? parseOverUnderMarketLineFromSelections({
+            market: marketKey === "totals-goals" ? "totals" : "corners-total",
+            selections: snapshotForMarket.selections,
+          })
         : undefined;
-      const line = marketKey === "totals-goals"
-        ? extractedLine ?? 2.5
-        : marketKey === "corners-total"
-          ? extractedLine
-          : undefined;
-      if (marketKey === "corners-total" && line === undefined) {
+      if (lineParse?.status === "missing-or-ambiguous") {
         continue;
       }
+      const line = lineParse?.status === "valid" ? lineParse.line : undefined;
 
       const candidates =
         marketKey === "corners-total" || marketKey === "corners-h2h"
@@ -1644,8 +1624,8 @@ export const scoreFixtureMarkets = async (
       }
 
       const rationale = [...selected.candidate.rationale];
-      if (marketKey === "totals-goals" && extractedLine === undefined) {
-        rationale.push("Totals line unavailable in odds snapshot metadata; defaulted to 2.5 for settlement.");
+      if (lineParse?.status === "valid") {
+        rationale.push(lineParse.rationale);
       }
 
       predictionsToPersist.push(
