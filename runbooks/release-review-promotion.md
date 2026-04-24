@@ -81,6 +81,7 @@ curl -s -X POST \
 - `packages/control-plane-runtime/tests/runtime.db.test.ts` pasa cubriendo scheduler cursors, manifest scoping y recovery/redrive sobre MySQL real.
 - `tests/e2e/hermes-smoke.mjs` pasa compilando y validando `hermes-scheduler`, `hermes-dispatcher` y `hermes-recovery`.
 - El smoke Hermes se ejecuta como smoke de procesos vivos para scheduler, dispatcher y recovery. Si se degrada a imports/compile-only, la corrida no debe promocionarse sin anotarlo en el handoff.
+- `pnpm test:runtime:release` escribe `.artifacts/sandbox-certification/runtime-release/summary.json` con `schemaVersion=harness-artifact-summary-v1`, comando, artifact de evidencia, fallos `runtime-drift` o `db-migration` cuando apliquen y runbook sugerido.
 - `public-api` expone `/sandbox-certification/runs?verificationKind=runtime-release` y el detalle `/sandbox-certification/runs/:runId` con `baselineSnapshot`, `candidateSnapshot`, `coverageSummary` y `snapshotDiffFingerprint`.
 - `operator-console` muestra un inspector dedicado de `runtime-release` con snapshots baseline/candidate, estado de cobertura/truncación y el historial reciente de decisiones.
 - Cada decisión humana queda como `AuditEvent` append-only sobre `sandbox-certification-run`.

@@ -46,6 +46,31 @@ const requiredRunbooksIndexSections = [
   "Matriz canonica de bootstrap y preparacion",
   "Doc-gardening recurrente",
 ];
+const goldenRegistryPath = "fixtures/replays/goldens/registry.json";
+const goldensRootPath = "fixtures/replays/goldens";
+const goldenRegistrySchemaVersion = "sandbox-golden-registry-v1";
+const requiredGoldenRegistryFields = [
+  "goldenPath",
+  "profileName",
+  "fixturePackId",
+  "purpose",
+  "riskClass",
+  "logicalOwner",
+  "coveredCapabilities",
+  "coveredFixtureIds",
+  "regenerationCriteria",
+  "expectedArtifacts",
+  "suggestedRunbooks",
+];
+const requiredGoldenCoverageMatrixKeys = [
+  "syntheticReplay",
+  "dbBackedRuntimeRelease",
+  "publicApi",
+  "operatorConsole",
+  "providerModes",
+  "promotionGates",
+  "safetyFailureModes",
+];
 const hermesControlPlanePackageName = "@gana-v8/hermes-control-plane";
 const hermesControlPlaneWorkspace = "apps/hermes-control-plane";
 const codeFileExtensions = new Set([".cjs", ".js", ".mjs", ".ts", ".tsx"]);
@@ -129,6 +154,7 @@ async function lintRepo(repoPath) {
     const content = await readFile(planPath, "utf8");
     assertMarkdownHeadings(content, planName, requiredPlanSections);
   }
+  await lintGoldenRegistry(repoPath);
 
   const readmeContent = await readFile(resolve(repoPath, "README.md"), "utf8");
   const readmePlans = extractCodeListItems(readSection(readmeContent, "Planes clave"))
@@ -158,6 +184,172 @@ async function lintRepo(repoPath) {
   await lintRuntimeBoundary(repoPath);
 
   console.log(`repo lint ok: ${activePlans.length} active plans, ${markdownFiles.length} markdown files checked`);
+}
+
+async function lintGoldenRegistry(repoPath) {
+  const registryAbsolutePath = resolve(repoPath, goldenRegistryPath);
+  await assertExists(registryAbsolutePath, goldenRegistryPath);
+  const registry = JSON.parse(await readFile(registryAbsolutePath, "utf8"));
+  if (registry.schemaVersion !== goldenRegistrySchemaVersion) {
+    throwGoldenRegistryError({
+      file: goldenRegistryPath,
+      condition: "schema-version",
+      expected: goldenRegistrySchemaVersion,
+      received: registry.schemaVersion,
+    });
+  }
+
+  const missingCoverageKeys = requiredGoldenCoverageMatrixKeys.filter(
+    (key) => !registry.coverageMatrix || typeof registry.coverageMatrix[key] !== "object",
+  );
+  if (missingCoverageKeys.length > 0) {
+    throwGoldenRegistryError({
+      file: goldenRegistryPath,
+      condition: "coverage-matrix",
+      expected: `coverageMatrix keys: ${requiredGoldenCoverageMatrixKeys.join(", ")}`,
+      received: `missing ${missingCoverageKeys.join(", ")}`,
+    });
+  }
+
+  if (!Array.isArray(registry.goldens)) {
+    throwGoldenRegistryError({
+      file: goldenRegistryPath,
+      condition: "goldens-list",
+      expected: "goldens array with one entry per sandbox golden",
+      received: typeof registry.goldens,
+    });
+  }
+
+  const goldenPaths = await readGoldenSnapshotPaths(repoPath);
+  const registryByPath = new Map();
+  const seenProfilePacks = new Set();
+
+  for (const entry of registry.goldens) {
+    if (!entry || typeof entry !== "object") {
+      throwGoldenRegistryError({
+        file: goldenRegistryPath,
+        condition: "golden-entry",
+        expected: "object",
+        received: JSON.stringify(entry),
+      });
+    }
+
+    for (const field of requiredGoldenRegistryFields) {
+      const value = entry[field];
+      const valid = arrayGoldenRegistryField(field)
+        ? Array.isArray(value) && value.length > 0
+        : typeof value === "string" && value.trim().length > 0;
+      if (!valid) {
+        throwGoldenRegistryError({
+          file: goldenRegistryPath,
+          condition: `missing-field:${entry.goldenPath ?? "unknown"}:${field}`,
+          expected: `${field} to be a non-empty ${arrayGoldenRegistryField(field) ? "array" : "string"}`,
+          received: JSON.stringify(value),
+        });
+      }
+    }
+
+    const goldenPath = entry.goldenPath;
+    if (registryByPath.has(goldenPath)) {
+      throwGoldenRegistryError({
+        file: goldenRegistryPath,
+        condition: "duplicate-golden-path",
+        expected: "unique goldenPath values",
+        received: goldenPath,
+      });
+    }
+    registryByPath.set(goldenPath, entry);
+
+    const profilePackKey = `${entry.profileName}:${entry.fixturePackId}`;
+    if (seenProfilePacks.has(profilePackKey)) {
+      throwGoldenRegistryError({
+        file: goldenRegistryPath,
+        condition: "duplicate-profile-pack",
+        expected: "unique profileName + fixturePackId pairs",
+        received: profilePackKey,
+      });
+    }
+    seenProfilePacks.add(profilePackKey);
+
+    if (!(await pathExists(resolve(repoPath, goldenPath)))) {
+      throwGoldenRegistryError({
+        file: goldenRegistryPath,
+        condition: "golden-path-exists",
+        expected: `existing golden file ${goldenPath}`,
+        received: "missing",
+      });
+    }
+
+    for (const runbookPath of entry.suggestedRunbooks) {
+      if (!(await pathExists(resolve(repoPath, runbookPath)))) {
+        throwGoldenRegistryError({
+          file: goldenRegistryPath,
+          condition: `suggested-runbook:${goldenPath}`,
+          expected: `existing runbook ${runbookPath}`,
+          received: "missing",
+        });
+      }
+    }
+  }
+
+  const missingMetadata = goldenPaths.filter((goldenPath) => !registryByPath.has(goldenPath));
+  if (missingMetadata.length > 0) {
+    throwGoldenRegistryError({
+      file: goldenRegistryPath,
+      condition: "golden-metadata-coverage",
+      expected: "one registry entry per sandbox golden",
+      received: `missing ${missingMetadata.join(", ")}`,
+    });
+  }
+
+  const unknownMetadata = [...registryByPath.keys()].filter((goldenPath) => !goldenPaths.includes(goldenPath));
+  if (unknownMetadata.length > 0) {
+    throwGoldenRegistryError({
+      file: goldenRegistryPath,
+      condition: "unknown-golden-metadata",
+      expected: `registered paths to match files under ${goldensRootPath}`,
+      received: `unknown ${unknownMetadata.join(", ")}`,
+    });
+  }
+
+  for (const goldenPath of goldenPaths) {
+    const golden = JSON.parse(await readFile(resolve(repoPath, goldenPath), "utf8"));
+    const metadata = registryByPath.get(goldenPath);
+    if (golden.profileName !== metadata.profileName || golden.fixturePackId !== metadata.fixturePackId) {
+      throwGoldenRegistryError({
+        file: goldenRegistryPath,
+        condition: `profile-pack-match:${goldenPath}`,
+        expected: `${golden.profileName}:${golden.fixturePackId}`,
+        received: `${metadata.profileName}:${metadata.fixturePackId}`,
+      });
+    }
+  }
+}
+
+function arrayGoldenRegistryField(field) {
+  return ["coveredCapabilities", "coveredFixtureIds", "expectedArtifacts", "suggestedRunbooks"].includes(field);
+}
+
+async function readGoldenSnapshotPaths(repoPath) {
+  const files = await collectFiles(
+    resolve(repoPath, goldensRootPath),
+    (entryPath, entry) => entry.isFile() && entry.name.endsWith(".json") && toRepoPath(repoPath, entryPath) !== goldenRegistryPath,
+  );
+  return files.map((filePath) => toRepoPath(repoPath, filePath)).sort();
+}
+
+function throwGoldenRegistryError({ condition, expected, file, received }) {
+  throw new Error(
+    [
+      "Harness lint failed",
+      "category=golden-registry",
+      `file=${file}`,
+      `condition=${condition}`,
+      `expected=${expected}`,
+      `received=${received}`,
+      "runbook=runbooks/sandbox-certification.md",
+    ].join("; "),
+  );
 }
 
 async function lintCanonicalPrinciplesDoc(repoPath) {

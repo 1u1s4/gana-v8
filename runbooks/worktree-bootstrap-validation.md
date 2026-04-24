@@ -67,7 +67,7 @@ La evidencia queda en `.artifacts/workspace-dev/<worktree-id>/validation/<timest
 
 - respuestas JSON/HTML/texto
 - logs stdout/stderr por proceso
-- `summary.json` con resultado por check
+- `summary.json` con `schemaVersion=harness-artifact-summary-v1`, comando ejecutado, evidence root, artifacts, checks, fallos categorizados, runbooks sugeridos y un flujo multi-step `public-api-operator-console-smoke`
 
 Esta ruta es la evidencia UI canonica de v1: prueba HTML/API de la consola viva sin Playwright ni capturas de navegador versionadas.
 

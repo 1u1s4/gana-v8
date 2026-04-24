@@ -4,6 +4,12 @@ import { createWriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createHarnessArtifactSummary,
+  createHarnessFailure,
+  repoRelativePath,
+  writeHarnessArtifactSummary,
+} from "./harness-artifact-summary.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRepoRoot = resolve(dirname(scriptPath), "..");
@@ -50,10 +56,12 @@ export const runWorkspaceDevValidation = async (input = {}) => {
   if (!["smoke", "live", "release"].includes(level)) {
     throw new Error(`Unsupported validation level: ${level}`);
   }
+  const startedAt = new Date().toISOString();
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const validationRoot = resolve(artifactRoot, "validation", runId);
   const logsRoot = resolve(validationRoot, "logs");
   const responsesRoot = resolve(validationRoot, "responses");
+  const summaryPath = resolve(validationRoot, "summary.json");
   await mkdir(logsRoot, { recursive: true });
   await mkdir(responsesRoot, { recursive: true });
 
@@ -68,6 +76,95 @@ export const runWorkspaceDevValidation = async (input = {}) => {
 
   const children = [];
   const checks = [];
+  let validationSummaryWritten = false;
+  const writeValidationSummary = async ({ error, status }) => {
+    const normalizedChecks = checks.map((check) => ({
+      ...check,
+      ...(check.artifactPath ? { artifactPath: repoRelativePath(repoRoot, check.artifactPath) } : {}),
+    }));
+    const failedChecks = normalizedChecks.filter((check) => check.status !== "passed");
+    const failures = [
+      ...failedChecks.map((check) =>
+        createHarnessFailure({
+          artifactPath: check.artifactPath,
+          category: categoryForHttpCheck(check),
+          cause: check.detail ?? `${check.id} failed`,
+          checkId: check.id,
+          expected: "HTTP 2xx response with expected body contract",
+          actual: check.detail ?? `HTTP ${check.statusCode}`,
+          reproCommand: `pnpm harness:validate -- --worktree-id ${worktreeId} --base-port ${basePort} --level ${level}`,
+          runbook: "runbooks/worktree-bootstrap-validation.md",
+        }),
+      ),
+      ...(error
+        ? [
+            createHarnessFailure({
+              category: "service-unavailable",
+              cause: error instanceof Error ? error.message : String(error),
+              checkId: "workspace-dev-startup",
+              expected: "public-api and operator-console start and answer validation checks",
+              actual: error instanceof Error ? error.message : String(error),
+              reproCommand: `pnpm harness:validate -- --worktree-id ${worktreeId} --base-port ${basePort} --level ${level}`,
+              runbook: "runbooks/worktree-bootstrap-validation.md",
+            }),
+          ]
+        : []),
+    ];
+    const summary = {
+      ...createHarnessArtifactSummary({
+        agentActionable: status !== "passed",
+        artifacts: [
+          {
+            kind: "workspace-dev-logs",
+            path: repoRelativePath(repoRoot, logsRoot),
+          },
+          {
+            kind: "workspace-dev-responses",
+            path: repoRelativePath(repoRoot, responsesRoot),
+          },
+          ...normalizedChecks
+            .filter((check) => check.artifactPath)
+            .map((check) => ({
+              kind: "workspace-dev-response",
+              path: check.artifactPath,
+              checkId: check.id,
+            })),
+        ],
+        checks: normalizedChecks,
+        command: `pnpm harness:validate -- --worktree-id ${worktreeId} --base-port ${basePort} --level ${level}`,
+        evidenceRoot: repoRelativePath(repoRoot, validationRoot),
+        failures,
+        finishedAt: new Date().toISOString(),
+        flows: [
+          {
+            id: "public-api-operator-console-smoke",
+            status,
+            steps: normalizedChecks.map((check) => ({
+              id: check.id,
+              status: check.status,
+              artifactPath: check.artifactPath,
+              url: check.url,
+            })),
+          },
+        ],
+        runbooks: ["runbooks/worktree-bootstrap-validation.md", "runbooks/expensive-verification-triage.md"],
+        startedAt,
+        status,
+        summaryKind: "workspace-dev-validation",
+      }),
+      artifactRoot,
+      failed: failures.length,
+      level,
+      operatorConsoleUrl: `http://127.0.0.1:${operatorConsolePort}`,
+      publicApiUrl: `http://127.0.0.1:${publicApiPort}`,
+      runId,
+      validationRoot,
+      worktreeId,
+    };
+    await writeHarnessArtifactSummary(summaryPath, summary);
+    validationSummaryWritten = true;
+    return summary;
+  };
   try {
     children.push(
       startProcess("public-api", ["--filter", "@gana-v8/public-api", "serve"], {
@@ -106,24 +203,19 @@ export const runWorkspaceDevValidation = async (input = {}) => {
     }
 
     const failed = checks.filter((check) => check.status !== "passed");
-    const summary = {
-      artifactRoot,
-      checks,
-      failed: failed.length,
-      finishedAt: new Date().toISOString(),
-      level,
-      operatorConsoleUrl: `http://127.0.0.1:${operatorConsolePort}`,
-      publicApiUrl: `http://127.0.0.1:${publicApiPort}`,
-      runId,
-      validationRoot,
-      worktreeId,
-    };
-    await writeFile(resolve(validationRoot, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+    const summary = await writeValidationSummary({
+      status: failed.length > 0 ? "failed" : "passed",
+    });
     if (failed.length > 0) {
       throw new Error(`workspace-dev validation failed: ${failed.map((check) => check.id).join(", ")}`);
     }
     console.log(`workspace-dev validation passed: ${validationRoot}`);
     return summary;
+  } catch (error) {
+    if (!validationSummaryWritten) {
+      await writeValidationSummary({ error, status: "failed" });
+    }
+    throw error;
   } finally {
     await stopChildren(children);
   }
@@ -196,8 +288,10 @@ const runHttpCheck = async ({ baseUrl, id, includes, path, responsesRoot, type }
   const response = await fetch(url, { headers: { connection: "close" } });
   const bodyText = await response.text();
   const extension = type === "json" ? "json" : type === "html" ? "html" : "txt";
-  await writeFile(resolve(responsesRoot, `${id}.${extension}`), bodyText, "utf8");
+  const artifactPath = resolve(responsesRoot, `${id}.${extension}`);
+  await writeFile(artifactPath, bodyText, "utf8");
   const result = {
+    artifactPath,
     id,
     path,
     status: response.ok ? "passed" : "failed",
@@ -225,6 +319,19 @@ const runHttpCheck = async ({ baseUrl, id, includes, path, responsesRoot, type }
     return { ...result, detail: `Response did not include ${includes}`, status: "failed" };
   }
   return result;
+};
+
+const categoryForHttpCheck = (check) => {
+  if (check.statusCode === 401 || check.statusCode === 403) {
+    return "authz";
+  }
+  if (check.id?.includes("readiness")) {
+    return "readiness";
+  }
+  if (check.detail?.includes("Invalid JSON") || check.detail?.includes("Response did not include")) {
+    return "runtime-drift";
+  }
+  return "service-unavailable";
 };
 
 const stopChildren = async (children) => {

@@ -2,11 +2,18 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  createHarnessArtifactSummary,
+  createHarnessFailure,
+  repoRelativePath,
+  writeHarnessArtifactSummary,
+} from "../../scripts/harness-artifact-summary.mjs";
 
 const rootDir = process.cwd();
 const artifactsRoot = resolve(rootDir, ".artifacts/sandbox-certification");
 const historyRoot = resolve(artifactsRoot, "_history");
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const startedAt = new Date().toISOString();
 
 const loadDotEnv = async () => {
   try {
@@ -54,11 +61,57 @@ process.env.GANA_RUNTIME_PROFILE ??= "ci-smoke";
 process.env.SANDBOX_CERT_EVIDENCE_PROFILE ??= "ci-ephemeral";
 
 const databaseUrl = process.env.DATABASE_URL;
+await mkdir(artifactsRoot, { recursive: true });
+
+const writeRuntimeReleaseSummary = async ({
+  artifactPath,
+  checks = [],
+  failures = [],
+  runbooks = ["runbooks/release-review-promotion.md", "runbooks/expensive-verification-triage.md"],
+  status,
+}) =>
+  writeHarnessArtifactSummary(
+    resolve(artifactsRoot, "runtime-release", "summary.json"),
+    createHarnessArtifactSummary({
+      agentActionable: status !== "passed",
+      artifacts: artifactPath
+        ? [
+            {
+              kind: "runtime-release-evidence",
+              path: repoRelativePath(rootDir, artifactPath),
+            },
+          ]
+        : [],
+      checks,
+      command: "pnpm test:runtime:release",
+      evidenceRoot: repoRelativePath(rootDir, resolve(artifactsRoot, "runtime-release")),
+      failures,
+      finishedAt: new Date().toISOString(),
+      runbooks,
+      startedAt,
+      status,
+      summaryKind: "runtime-release",
+    }),
+  );
+
 if (!databaseUrl) {
+  await writeRuntimeReleaseSummary({
+    failures: [
+      createHarnessFailure({
+        category: "db-migration",
+        cause: "Runtime release certification requires DATABASE_URL.",
+        checkId: "runtime-release-prerequisites",
+        expected: "DATABASE_URL configured for a prepared MySQL database",
+        actual: "DATABASE_URL missing",
+        ownerType: "human",
+        reproCommand: "pnpm test:runtime:release",
+        runbook: "runbooks/expensive-verification-triage.md",
+      }),
+    ],
+    status: "failed",
+  });
   throw new Error("Runtime release certification requires DATABASE_URL.");
 }
-
-await mkdir(artifactsRoot, { recursive: true });
 
 execFileSync(pnpmBin, ["--filter", "@gana-v8/sandbox-runner", "build"], {
   cwd: rootDir,
@@ -223,10 +276,48 @@ try {
   }
 
   if (runtimeRelease.status === "failed") {
+    await writeRuntimeReleaseSummary({
+      artifactPath,
+      checks: [
+        {
+          id: "runtime-release",
+          status: "failed",
+          promotionStatus: runtimeRelease.evidence.promotion.status,
+          diffEntryCount: runtimeRelease.evidence.diffEntries.length,
+        },
+      ],
+      failures: [
+        createHarnessFailure({
+          artifactPath: repoRelativePath(rootDir, artifactPath),
+          category: "runtime-drift",
+          cause: `Runtime release certification failed: promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}.`,
+          checkId: "runtime-release",
+          expected: "promotion not blocked and no blocking runtime diff",
+          actual: `promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}`,
+          ownerType: "human",
+          reproCommand: "pnpm test:runtime:release",
+          runbook: "runbooks/release-review-promotion.md",
+        }),
+      ],
+      status: "failed",
+    });
     throw new Error(
       `Runtime release certification failed: promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}`,
     );
   }
+
+  await writeRuntimeReleaseSummary({
+    artifactPath,
+    checks: [
+      {
+        id: "runtime-release",
+        status: "passed",
+        promotionStatus: runtimeRelease.evidence.promotion.status,
+        diffEntryCount: runtimeRelease.evidence.diffEntries.length,
+      },
+    ],
+    status: "passed",
+  });
 } finally {
   await cleanupRuntimeReleaseEvidence();
   await persistenceSession.close();

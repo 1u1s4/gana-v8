@@ -118,3 +118,4 @@ pnpm --filter @gana-v8/control-plane-runtime test
 - Verificación escalonada con la menor superficie costosa posible.
 - Sweep global ejecutado solo cuando ya existe señal focalizada suficiente.
 - DB compartida limpia o riesgo residual documentado antes de cualquier rerun amplio.
+- Summaries agent-readable revisados cuando existan: `.artifacts/sandbox-certification/summary.json`, `.artifacts/sandbox-certification/runtime-release/summary.json` y `.artifacts/workspace-dev/<worktree-id>/validation/<timestamp>/summary.json`.

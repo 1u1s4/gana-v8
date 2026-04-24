@@ -2,6 +2,12 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  createHarnessArtifactSummary,
+  createHarnessFailure,
+  repoRelativePath,
+  writeHarnessArtifactSummary,
+} from "../../scripts/harness-artifact-summary.mjs";
 
 const rootDir = process.cwd();
 const goldensRoot = resolve(rootDir, "fixtures/replays/goldens");
@@ -11,6 +17,7 @@ const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const includeRuntimeRelease = /^(1|true|yes)$/i.test(
   process.env.SANDBOX_CERT_INCLUDE_RUNTIME_RELEASE ?? "",
 );
+const startedAt = new Date().toISOString();
 
 const isRuntimeReleasePrereqError = (error) => {
   const message = error instanceof Error ? error.message : String(error);
@@ -34,7 +41,7 @@ const listJsonFiles = async (directory) => {
       continue;
     }
 
-    if (entry.isFile() && entry.name.endsWith(".json")) {
+    if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "registry.json") {
       files.push(absolutePath);
     }
   }
@@ -74,7 +81,32 @@ const persistenceSession = databaseUrl
     )
   : null;
 
-const failures = [];
+const failureLabels = [];
+const summaryChecks = [];
+const summaryArtifacts = [];
+const summaryFailures = [];
+
+const writeSummary = async (status) =>
+  writeHarnessArtifactSummary(
+    resolve(artifactsRoot, "summary.json"),
+    createHarnessArtifactSummary({
+      agentActionable: status !== "passed",
+      artifacts: summaryArtifacts,
+      checks: summaryChecks,
+      command: "pnpm test:sandbox:certification",
+      evidenceRoot: repoRelativePath(rootDir, artifactsRoot),
+      failures: summaryFailures,
+      finishedAt: new Date().toISOString(),
+      runbooks: [
+        "runbooks/sandbox-certification.md",
+        "runbooks/sandbox-certification-drift.md",
+        ...(includeRuntimeRelease ? ["runbooks/release-review-promotion.md"] : []),
+      ],
+      startedAt,
+      status,
+      summaryKind: "sandbox-certification",
+    }),
+  );
 
 try {
   for (const goldenPath of goldenPaths) {
@@ -89,6 +121,7 @@ try {
       `${golden.fixturePackId}.evidence.json`,
     );
     await mkdir(dirname(artifactPath), { recursive: true });
+    const artifactRef = repoRelativePath(rootDir, artifactPath);
 
     const result = await sandboxRunnerModule.certifySandboxRun({
       mode: golden.mode,
@@ -114,10 +147,30 @@ try {
     console.log(
       `[sandbox-certification] ${result.status.toUpperCase()} ${goldenLabel} (${result.diff.entryCount} diff entr${result.diff.entryCount === 1 ? "y" : "ies"})`,
     );
+    summaryChecks.push({
+      id: `${golden.profileName}/${golden.fixturePackId}`,
+      status: result.status === "failed" ? "failed" : "passed",
+      artifactPath: artifactRef,
+      diffEntryCount: result.diff.entryCount,
+      profileName: golden.profileName,
+      fixturePackId: golden.fixturePackId,
+    });
+    summaryArtifacts.push({
+      path: artifactRef,
+      kind: "sandbox-certification-evidence",
+      profileName: golden.profileName,
+      fixturePackId: golden.fixturePackId,
+    });
     if (result.historyArtifactPath) {
       console.log(
         `  history: ${relative(rootDir, result.historyArtifactPath)}`,
       );
+      summaryArtifacts.push({
+        path: repoRelativePath(rootDir, result.historyArtifactPath),
+        kind: "sandbox-certification-history",
+        profileName: golden.profileName,
+        fixturePackId: golden.fixturePackId,
+      });
     }
     if (result.persistedRun?.id) {
       console.log(`  persisted-run: ${result.persistedRun.id}`);
@@ -129,7 +182,19 @@ try {
           `  - ${entry.kind.toUpperCase()} ${entry.path}: expected=${JSON.stringify(entry.expected)} actual=${JSON.stringify(entry.actual)}`,
         );
       }
-      failures.push(goldenLabel);
+      summaryFailures.push(
+        createHarnessFailure({
+          artifactPath: artifactRef,
+          category: "golden-drift",
+          cause: `Golden drift detected for ${goldenLabel}: ${result.diff.entryCount} diff entr${result.diff.entryCount === 1 ? "y" : "ies"}.`,
+          checkId: `${golden.profileName}/${golden.fixturePackId}`,
+          expected: "0 diff entries",
+          actual: `${result.diff.entryCount} diff entries`,
+          reproCommand: `pnpm --filter @gana-v8/sandbox-runner certify -- --mode ${golden.mode} --profile ${golden.profileName} --pack ${golden.fixturePackId} --golden ${goldenLabel} --artifact ${artifactRef}`,
+          runbook: "runbooks/sandbox-certification-drift.md",
+        }),
+      );
+      failureLabels.push(goldenLabel);
     }
   }
 
@@ -172,17 +237,48 @@ try {
       console.log(
         `[sandbox-runtime-release] ${runtimeRelease.status.toUpperCase()} profile=${runtimeReleaseDefaults.evidenceProfile} promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}`,
       );
+      summaryChecks.push({
+        id: "runtime-release",
+        status: runtimeRelease.status === "failed" ? "failed" : "passed",
+        artifactPath: repoRelativePath(rootDir, runtimeReleaseArtifactPath),
+        diffEntryCount: runtimeRelease.evidence.diffEntries.length,
+        profileName: runtimeReleaseDefaults.evidenceProfile,
+        promotionStatus: runtimeRelease.evidence.promotion.status,
+      });
+      summaryArtifacts.push({
+        path: repoRelativePath(rootDir, runtimeReleaseArtifactPath),
+        kind: "runtime-release-evidence",
+        profileName: runtimeReleaseDefaults.evidenceProfile,
+      });
       if (runtimeRelease.historyArtifactPath) {
         console.log(
           `  history: ${relative(rootDir, runtimeRelease.historyArtifactPath)}`,
         );
+        summaryArtifacts.push({
+          path: repoRelativePath(rootDir, runtimeRelease.historyArtifactPath),
+          kind: "runtime-release-history",
+          profileName: runtimeReleaseDefaults.evidenceProfile,
+        });
       }
       if (runtimeRelease.persistedRun?.id) {
         console.log(`  persisted-run: ${runtimeRelease.persistedRun.id}`);
       }
 
       if (runtimeRelease.status === "failed") {
-        failures.push("runtime-release");
+        summaryFailures.push(
+          createHarnessFailure({
+            artifactPath: repoRelativePath(rootDir, runtimeReleaseArtifactPath),
+            category: "runtime-drift",
+            cause: `Runtime release certification failed: promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}.`,
+            checkId: "runtime-release",
+            expected: "promotion not blocked and no blocking runtime diff",
+            actual: `promotion=${runtimeRelease.evidence.promotion.status} diff=${runtimeRelease.evidence.diffEntries.length}`,
+            ownerType: "human",
+            reproCommand: "pnpm test:runtime:release",
+            runbook: "runbooks/release-review-promotion.md",
+          }),
+        );
+        failureLabels.push("runtime-release");
       }
     } catch (error) {
       if (!isRuntimeReleasePrereqError(error)) {
@@ -190,18 +286,26 @@ try {
       }
 
       runtimeReleaseSkipped = true;
+      summaryChecks.push({
+        id: "runtime-release",
+        status: "skipped",
+        detail: error instanceof Error ? error.message : String(error),
+        runbook: "runbooks/expensive-verification-triage.md",
+      });
       console.warn(
         `[sandbox-runtime-release] SKIPPED ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
-  if (failures.length > 0) {
+  if (failureLabels.length > 0) {
+    await writeSummary("failed");
     throw new Error(
-      `Sandbox certification failed for ${failures.length} golden pack(s): ${failures.join(", ")}`,
+      `Sandbox certification failed for ${failureLabels.length} golden pack(s): ${failureLabels.join(", ")}`,
     );
   }
 
+  await writeSummary("passed");
   console.log(
     `[sandbox-certification] Passed ${goldenPaths.length} golden certification run(s).` +
       (includeRuntimeRelease

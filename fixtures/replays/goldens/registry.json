@@ -1,0 +1,254 @@
+{
+  "schemaVersion": "sandbox-golden-registry-v1",
+  "coverageMatrix": {
+    "syntheticReplay": {
+      "status": "covered",
+      "goldens": [
+        "fixtures/replays/goldens/ci-smoke/football-dual-smoke.json",
+        "fixtures/replays/goldens/ci-regression/football-replay-late-swing.json",
+        "fixtures/replays/goldens/staging-like/football-staging-parity.json",
+        "fixtures/replays/goldens/hybrid/football-hybrid-routing.json",
+        "fixtures/replays/goldens/chaos-provider/football-chaos-provider.json",
+        "fixtures/replays/goldens/human-qa-demo/football-human-qa-demo.json"
+      ]
+    },
+    "dbBackedRuntimeRelease": {
+      "status": "covered",
+      "artifacts": [
+        ".artifacts/sandbox-certification/runtime-release/latest.json",
+        ".artifacts/sandbox-certification/runtime-release/summary.json"
+      ],
+      "runbooks": [
+        "runbooks/release-review-promotion.md",
+        "runbooks/expensive-verification-triage.md"
+      ]
+    },
+    "publicApi": {
+      "status": "covered",
+      "checks": [
+        "/health",
+        "/readiness",
+        "/snapshot",
+        "/sandbox-certification",
+        "/sandbox-certification/runs?verificationKind=runtime-release"
+      ],
+      "runbooks": [
+        "runbooks/public-api-operator-console-read-model-staleness.md"
+      ]
+    },
+    "operatorConsole": {
+      "status": "covered",
+      "checks": [
+        "/",
+        "/app.js",
+        "/styles.css",
+        "/api/console"
+      ],
+      "artifacts": [
+        ".artifacts/workspace-dev/<worktree-id>/validation/<run-id>/summary.json"
+      ],
+      "runbooks": [
+        "runbooks/worktree-bootstrap-validation.md"
+      ]
+    },
+    "providerModes": {
+      "status": "covered",
+      "capabilities": [
+        "replay",
+        "mock",
+        "live-readonly",
+        "disabled"
+      ]
+    },
+    "promotionGates": {
+      "status": "covered",
+      "capabilities": [
+        "promotable",
+        "review-required",
+        "blocked"
+      ]
+    },
+    "safetyFailureModes": {
+      "status": "covered",
+      "capabilities": [
+        "publication-safety",
+        "policy-default-deny",
+        "chaos-provider-degradation",
+        "manual-qa-checklist",
+        "readiness",
+        "service-unavailable"
+      ]
+    }
+  },
+  "goldens": [
+    {
+      "goldenPath": "fixtures/replays/goldens/ci-smoke/football-dual-smoke.json",
+      "profileName": "ci-smoke",
+      "fixturePackId": "football-dual-smoke",
+      "purpose": "Fast CI smoke proof that the sandbox can materialize a small deterministic football pack with health, routing and contract coverage assertions.",
+      "riskClass": "smoke",
+      "logicalOwner": "harness-steward",
+      "coveredCapabilities": [
+        "synthetic-replay",
+        "public-api-smoke",
+        "operator-console-smoke",
+        "promotion-gates",
+        "contract-coverage"
+      ],
+      "coveredFixtureIds": [
+        "football-dual-smoke-fx-1",
+        "football-dual-smoke-fx-2"
+      ],
+      "regenerationCriteria": "Regenerate only when fixture pack shape, profile policy, replay timeline, provider modes or promotion gates intentionally change.",
+      "expectedArtifacts": [
+        ".artifacts/sandbox-certification/ci-smoke/football-dual-smoke.evidence.json",
+        ".artifacts/sandbox-certification/summary.json"
+      ],
+      "suggestedRunbooks": [
+        "runbooks/sandbox-certification.md",
+        "runbooks/sandbox-certification-drift.md"
+      ]
+    },
+    {
+      "goldenPath": "fixtures/replays/goldens/ci-regression/football-replay-late-swing.json",
+      "profileName": "ci-regression",
+      "fixturePackId": "football-replay-late-swing",
+      "purpose": "Regression replay proof for late odds movement, replay integrity and deterministic promotion gates.",
+      "riskClass": "regression",
+      "logicalOwner": "harness-steward",
+      "coveredCapabilities": [
+        "synthetic-replay",
+        "replay-integrity",
+        "promotion-gates",
+        "contract-coverage"
+      ],
+      "coveredFixtureIds": [
+        "football-replay-late-swing-fx-1",
+        "football-replay-late-swing-fx-2",
+        "football-replay-late-swing-fx-3"
+      ],
+      "regenerationCriteria": "Regenerate only when replay event ordering, fixture pack contents, policy snapshots or promotion gate expectations intentionally change.",
+      "expectedArtifacts": [
+        ".artifacts/sandbox-certification/ci-regression/football-replay-late-swing.evidence.json",
+        ".artifacts/sandbox-certification/summary.json"
+      ],
+      "suggestedRunbooks": [
+        "runbooks/sandbox-certification.md",
+        "runbooks/sandbox-certification-drift.md"
+      ]
+    },
+    {
+      "goldenPath": "fixtures/replays/goldens/staging-like/football-staging-parity.json",
+      "profileName": "staging-like",
+      "fixturePackId": "football-staging-parity",
+      "purpose": "Staging-like parity proof for publication safety, live-readonly provider boundaries and reviewable release evidence.",
+      "riskClass": "release",
+      "logicalOwner": "release-ops-owner",
+      "coveredCapabilities": [
+        "synthetic-replay",
+        "provider-modes",
+        "publication-safety",
+        "promotion-gates",
+        "contract-coverage"
+      ],
+      "coveredFixtureIds": [
+        "football-staging-parity-fx-1",
+        "football-staging-parity-fx-2"
+      ],
+      "regenerationCriteria": "Regenerate only when staging-like provider modes, publication safety gates, fixture pack contents or policy snapshots intentionally change.",
+      "expectedArtifacts": [
+        ".artifacts/sandbox-certification/staging-like/football-staging-parity.evidence.json",
+        ".artifacts/sandbox-certification/summary.json"
+      ],
+      "suggestedRunbooks": [
+        "runbooks/sandbox-certification.md",
+        "runbooks/release-review-promotion.md"
+      ]
+    },
+    {
+      "goldenPath": "fixtures/replays/goldens/hybrid/football-hybrid-routing.json",
+      "profileName": "hybrid",
+      "fixturePackId": "football-hybrid-routing",
+      "purpose": "Hybrid provider-routing proof that replay and live-readonly modes stay isolated and auditable.",
+      "riskClass": "provider-routing",
+      "logicalOwner": "harness-steward",
+      "coveredCapabilities": [
+        "synthetic-replay",
+        "provider-modes",
+        "mixed-provider-routing",
+        "promotion-gates",
+        "contract-coverage"
+      ],
+      "coveredFixtureIds": [
+        "football-hybrid-routing-fx-1",
+        "football-hybrid-routing-fx-2"
+      ],
+      "regenerationCriteria": "Regenerate only when provider routing modes, capability allowlists, replay fixtures or promotion gates intentionally change.",
+      "expectedArtifacts": [
+        ".artifacts/sandbox-certification/hybrid/football-hybrid-routing.evidence.json",
+        ".artifacts/sandbox-certification/summary.json"
+      ],
+      "suggestedRunbooks": [
+        "runbooks/sandbox-certification.md",
+        "runbooks/provider-market-alias-maintenance.md"
+      ]
+    },
+    {
+      "goldenPath": "fixtures/replays/goldens/chaos-provider/football-chaos-provider.json",
+      "profileName": "chaos-provider",
+      "fixturePackId": "football-chaos-provider",
+      "purpose": "Chaos provider proof for deterministic degraded-provider behavior, human review gates and non-publishable safety rails.",
+      "riskClass": "failure-mode",
+      "logicalOwner": "harness-steward",
+      "coveredCapabilities": [
+        "synthetic-replay",
+        "chaos-provider-degradation",
+        "manual-review",
+        "promotion-gates",
+        "contract-coverage"
+      ],
+      "coveredFixtureIds": [
+        "football-chaos-provider-fx-1",
+        "football-chaos-provider-fx-2"
+      ],
+      "regenerationCriteria": "Regenerate only when chaos degradation semantics, manual review requirements, fixture pack contents or promotion gates intentionally change.",
+      "expectedArtifacts": [
+        ".artifacts/sandbox-certification/chaos-provider/football-chaos-provider.evidence.json",
+        ".artifacts/sandbox-certification/summary.json"
+      ],
+      "suggestedRunbooks": [
+        "runbooks/sandbox-certification.md",
+        "runbooks/quarantine-manual-review.md"
+      ]
+    },
+    {
+      "goldenPath": "fixtures/replays/goldens/human-qa-demo/football-human-qa-demo.json",
+      "profileName": "human-qa-demo",
+      "fixturePackId": "football-human-qa-demo",
+      "purpose": "Human QA walkthrough proof for manual checklist evidence, review-required promotion and operator-facing flows.",
+      "riskClass": "human-qa",
+      "logicalOwner": "operator-experience-owner",
+      "coveredCapabilities": [
+        "synthetic-replay",
+        "manual-qa-checklist",
+        "operator-console-smoke",
+        "promotion-gates",
+        "contract-coverage"
+      ],
+      "coveredFixtureIds": [
+        "football-human-qa-demo-fx-1",
+        "football-human-qa-demo-fx-2"
+      ],
+      "regenerationCriteria": "Regenerate only when manual QA checklist semantics, operator review expectations, fixture pack contents or promotion gates intentionally change.",
+      "expectedArtifacts": [
+        ".artifacts/sandbox-certification/human-qa-demo/football-human-qa-demo.evidence.json",
+        ".artifacts/sandbox-certification/summary.json"
+      ],
+      "suggestedRunbooks": [
+        "runbooks/sandbox-certification.md",
+        "runbooks/worktree-bootstrap-validation.md",
+        "runbooks/quarantine-manual-review.md"
+      ]
+    }
+  ]
+}

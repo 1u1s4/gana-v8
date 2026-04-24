@@ -11,14 +11,13 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`
 - `gana-v8-provider-market-alias-hardening.md`
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 
 ## Estado actual del backlog
 
-- El analisis de harness del 24 de abril de 2026 consolida los tres planes activos de QA navegable, registro de goldens/cobertura y remediacion legible por agentes en `gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`.
+- El frente consolidado de evidencia/cobertura/remediacion del harness ya quedo materializado con registry de goldens, summaries agent-readable, remediacion accionable y evidencia QA multi-step en `docs/plans/completado/gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`.
 - Los tres planes reemplazados quedaron preservados en `docs/plans/archivado/2026-04-24-harness-falta-consolidado/` para trazabilidad, sin competir como fuente activa.
 - El frente de extraccion segura de lineas de mercado ya quedo cerrado con parser over/under especifico, scoring conservador sin default de linea, validation con skip claro y trazabilidad en rationale.
 - El frente de aliases de provider ya tiene hardening inicial con tabla de aliases, corpus sintetico, filtro compatible, reporte de provider-specific markets, runbook de mantenimiento y evidencia live base; sigue activo hasta incorporar ejemplos reales sanitizados al corpus y confirmar discovery de unknown/provider-specific markets.
@@ -45,6 +44,7 @@ La lista anterior debe coincidir exactamente con los archivos reales dentro de `
 - `gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `gana-v8-runtime-release-adopcion-operativa.md`
 - `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
+- `gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`
 - `gana-v8-market-line-extraction-hardening.md`
 - `gana-v8-live-multimarket-provider-validation.md`
 - `gana-v8-corners-experimental-guardrails.md`

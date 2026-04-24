@@ -13,6 +13,7 @@ Detectar drift estructural en packs sintéticos, perfiles certificados y promoti
 ## Precondiciones
 
 - Dependencias instaladas con `pnpm install`.
+- `fixtures/replays/goldens/registry.json` debe tener una entrada por cada golden activo, con propósito, riesgo, owner lógico, fixtures cubiertas, regla de regeneración, artifacts esperados y runbooks sugeridos.
 - No usar este runbook como sustituto del gate MySQL-backed de runtime release; certifica sandbox sintético, no comportamiento durable contra MySQL.
 - Tener claro qué profile/pack cambió y qué decisión humana se espera del resultado.
 
@@ -36,6 +37,7 @@ pnpm --filter @gana-v8/sandbox-runner certify -- --mode smoke --profile ci-smoke
 
 - `0 diff entries` cuando la baseline sigue vigente.
 - Evidence packs regenerados en `.artifacts/sandbox-certification/`.
+- Summary agent-readable en `.artifacts/sandbox-certification/summary.json` con `schemaVersion=harness-artifact-summary-v1`, comando, evidence root, checks, fallos categorizados, artifacts y runbooks sugeridos.
 - Promotion gates explícitos por profile (`blocked`, `review-required`, `promotable`).
 - En CI, artifact `sandbox-certification-evidence` aun cuando la comparación falle.
 

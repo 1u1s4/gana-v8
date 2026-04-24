@@ -14,6 +14,7 @@ Triagear y resolver drift en certificación sintética sin confundir un cambio e
 
 - Tener el diff o artifact fallido de la corrida local/CI.
 - Identificar el `profile`, `pack` y golden afectado.
+- Revisar `.artifacts/sandbox-certification/summary.json` para confirmar `category=golden-drift`, artifact afectado, comando mínimo de repro y runbook sugerido.
 - Si el cambio también toca runtime durable o MySQL-backed behavior, preparar validación adicional con `runbooks/release-review-promotion.md`.
 
 ## Comandos
@@ -46,6 +47,7 @@ pnpm test:sandbox:certification
 
 - Diff acotado al `profile/pack` afectado.
 - Razón clara del drift: pack, provider mode, replay timeline, fingerprint, safety rails o promotion gates.
+- Summary actualizado con `failures[].category=golden-drift` mientras la falla esté abierta, o sin fallos cuando la baseline aceptada vuelva a pasar.
 - Corrida final con `0 diff entries` si se acepta la nueva baseline.
 
 ## Decisiones humanas

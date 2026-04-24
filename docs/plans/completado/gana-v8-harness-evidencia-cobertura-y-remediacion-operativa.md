@@ -1,5 +1,7 @@
 # Plan unificado de evidencia, cobertura y remediacion operativa del harness - gana-v8
 
+> **Estado de cierre:** completado. El repo ya materializa registry de goldens/cobertura, enforcement en lint, summaries agent-readable para certificacion/runtime-release/workspace-dev validate, remediacion categorizada y evidencia QA multi-step sin Playwright obligatorio.
+
 > **Para Hermes:** usar `subagent-driven-development` para implementar este plan por slices. Este documento reemplaza los tres planes activos anteriores de QA navegable, registro de goldens/cobertura y remediacion legible por agentes.
 
 **Goal:** consolidar la evidencia del harness para que agentes y humanos puedan saber que cubre cada golden, como interpretar artifacts y que accion tomar cuando algo falla.
