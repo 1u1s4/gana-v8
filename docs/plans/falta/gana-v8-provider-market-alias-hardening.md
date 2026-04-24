@@ -53,7 +53,7 @@
 
 ## Dependencias
 
-- Depende de `gana-v8-live-multimarket-provider-validation.md` para obtener ejemplos reales.
+- Consume `docs/plans/completado/gana-v8-live-multimarket-provider-validation.md` como evidencia live base para obtener ejemplos reales.
 - Debe mantener backwards compatibility con `h2h` y slugs previos.
 - No debe hardcodear datos sensibles ni payloads completos con credenciales.
 - Debe permitir que mercados desconocidos sigan persistiendo bajo slug provider-specific.
@@ -69,5 +69,5 @@
 
 - Codigo actual: `packages/source-connectors/src/markets.ts`, `packages/source-connectors/src/clients/api-football.ts`, `scripts/report-fixture-market-availability.mjs`.
 - Runbook: `runbooks/provider-market-alias-maintenance.md`.
-- Plan relacionado: `docs/plans/falta/gana-v8-live-multimarket-provider-validation.md`.
+- Plan relacionado: `docs/plans/completado/gana-v8-live-multimarket-provider-validation.md`.
 - Observacion de review: el hardening sintetico ya esta materializado, pero el cierre del plan requiere validacion con payloads reales.

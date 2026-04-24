@@ -65,7 +65,7 @@
 
 ## Dependencias
 
-- Depende de `gana-v8-live-multimarket-provider-validation.md` para evidencia real de odds/stats.
+- Consume `docs/plans/completado/gana-v8-live-multimarket-provider-validation.md` como evidencia real de odds/stats.
 - Depende del cierre `docs/plans/completado/gana-v8-market-line-extraction-hardening.md` para corners-total confiable.
 - Debe preservar la operacion base aunque corners no exista en provider.
 - No debe convertir corners en default hasta tener evidencia real suficiente.
@@ -84,5 +84,5 @@
 - Codigo actual: `apps/scoring-worker/src/index.ts`, `apps/validation-worker/src/index.ts`, `apps/public-api/src/index.ts`, `apps/operator-console/src/index.ts`.
 - Observacion de review: corners esta correctamente flaggeado, pero necesita criterios explicitos de promocion y reporting operativo.
 - Planes relacionados:
-  - `docs/plans/falta/gana-v8-live-multimarket-provider-validation.md`
+  - `docs/plans/completado/gana-v8-live-multimarket-provider-validation.md`
   - `docs/plans/completado/gana-v8-market-line-extraction-hardening.md`

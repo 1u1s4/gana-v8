@@ -85,3 +85,24 @@
 - Codigo actual: `scripts/run-live-ingestion.mjs`, `scripts/report-fixture-market-availability.mjs`, `apps/ingestion-worker/src/index.ts`.
 - Validacion previa de tests: source-connectors, ingestion-worker, scoring-worker, publisher-worker, validation-worker, public-api, operator-console.
 - Observacion de review: faltaba corrida live end-to-end multi-mercado despues de implementar el loop.
+
+## Cierre 2026-04-24
+
+- Preflight ejecutado contra MySQL live: `node --check` de runners/report, `pnpm prisma migrate status --schema prisma/schema.prisma` y `pnpm --filter @gana-v8/ingestion-worker build`.
+- Fixture set live:
+  - Odds scheduled: `1379303` Fulham vs Aston Villa, `1391129` Alaves vs Mallorca, `1378201` Parma vs Pisa.
+  - Statistics completed: `1379306` Sunderland vs Nottingham Forest, `1391131` Real Betis vs Real Madrid, `1378200` Napoli vs Cremonese.
+- Corrida base live: `h2h`, `totals-goals`, `both-teams-score` y `double-chance` persistieron sin `missingMarkets` en los 3 fixtures scheduled.
+- Matriz base observada:
+  - `1379303`: 58 snapshots, 13 bookmakers, latest `2026-04-24T21:02:36.000Z`.
+  - `1391129`: 45 snapshots, 13 bookmakers, latest `2026-04-24T21:41:28.000Z`.
+  - `1378201`: 45 snapshots, 13 bookmakers, latest `2026-04-24T21:00:30.000Z`.
+- Estado de mercados base:
+  - `h2h`: `live-validated`.
+  - `both-teams-score`: `live-validated`.
+  - `double-chance`: `live-validated`.
+  - `totals-goals`: `live-validated`; el reporte marca `scoreability=false` porque el provider devuelve multiples lineas over/under, no porque falte el mercado.
+- Corrida experimental corners: `corners-total` persistio para los 3 fixtures scheduled con 8 snapshots y 8 bookmakers por fixture; queda `experimental` por politica de producto y porque el reporte marca multiples lineas over/under.
+- Fixture statistics live: los 3 fixtures completed persistieron `corners` con scopes `home`, `away` y `match`.
+- Evidencia sanitaria local ignorada por git: `.artifacts/live-multimarket-provider-validation/2026-04-24/`.
+- Gap cerrado: API-Football devolvio mercados multi-mercado y fixture statistics reales, y el harness los persistio sin confundir ausencias del provider con fallas del pipeline.

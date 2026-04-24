@@ -321,11 +321,6 @@ const main = async () => {
             { fixtureId: { in: fixtureIds } },
           ],
         },
-        orderBy: [
-          { providerFixtureId: "asc" },
-          { marketKey: "asc" },
-          { capturedAt: "desc" },
-        ],
         select: {
           _count: {
             select: {
@@ -357,6 +352,20 @@ const main = async () => {
         },
       }),
     ]);
+
+    snapshots.sort((left, right) => {
+      const providerFixtureCompare = left.providerFixtureId.localeCompare(right.providerFixtureId);
+      if (providerFixtureCompare !== 0) {
+        return providerFixtureCompare;
+      }
+
+      const marketCompare = left.marketKey.localeCompare(right.marketKey);
+      if (marketCompare !== 0) {
+        return marketCompare;
+      }
+
+      return toIso(right.capturedAt).localeCompare(toIso(left.capturedAt));
+    });
 
     const fixtureById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
     const requestedByProviderId = new Map(inputs.map((input) => [input.providerFixtureId, input]));

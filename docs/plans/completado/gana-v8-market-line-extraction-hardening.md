@@ -82,4 +82,4 @@
 
 - Codigo actual: `apps/scoring-worker/src/index.ts`, `apps/validation-worker/src/index.ts`, `packages/domain-core/src/entities/prediction.ts`.
 - Observacion de review: el fallback amplio sobre JSON serializado es el mayor riesgo tecnico actual de totals/corners.
-- Plan relacionado: `docs/plans/falta/gana-v8-live-multimarket-provider-validation.md`.
+- Plan relacionado: `docs/plans/completado/gana-v8-live-multimarket-provider-validation.md`.
