@@ -814,7 +814,7 @@ export function createOperatorConsoleSnapshotFromOperation(
         selectionOverride: workflow?.selectionOverride ?? null,
         scoringEligibilityReason,
         statistics,
-        cornersGuardrail,
+        ...(cornersGuardrail ? { cornersGuardrail } : {}),
         recentAuditEvents,
       };
     }),

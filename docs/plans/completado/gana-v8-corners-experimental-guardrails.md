@@ -1,5 +1,7 @@
 # Plan de guardrails experimentales de corners - gana-v8
 
+> **Estado de cierre (2026-04-24):** guardrails materializados. Corners sigue opt-in y fuera de mercados base; el reporte separa evidencia base/experimental, publisher bloquea corners con reasons explicitos, validation/API/consola exponen estados accionables y el checklist de promocion queda documentado abajo.
+
 > **Para Hermes:** usar `subagent-driven-development` para implementar este plan como hardening de seguridad antes de promover corners a mercado base.
 
 **Goal:** mantener corners usable para pruebas reales sin permitir que odds o stats incompletas publiquen parlays inseguros.
@@ -78,6 +80,15 @@
 - Validation de corners informa `stats missing`, `line missing` o settlement listo con mensajes accionables.
 - Existe checklist de promocion de corners de experimental a base.
 - `pnpm --filter @gana-v8/scoring-worker test`, `publisher-worker test`, `validation-worker test`, `public-api test` y `operator-console test` pasan.
+
+## Checklist de promocion a mercado base
+
+- Odds de `corners-total` disponibles en provider y bookmaker objetivo para ligas objetivo durante una ventana operativa suficiente.
+- Fixture statistics finales de corners disponibles con scopes `home` y `away` para fixtures completed de esas ligas.
+- Line extraction de `corners-total` produce una linea unica, razonable y compartida entre over/under.
+- Validation liquida settlement real de `corners-total` y `corners-h2h` contra stats finales sin `stats-missing` ni `line-missing`.
+- Publisher conserva bloqueo experimental hasta que una policy explicita habilite corners y la anti-correlacion same-fixture tenga allowlist aprobada.
+- Operador humano revisa evidencia live y aprueba convertir corners de experimental a base.
 
 ## Fuentes consolidadas
 

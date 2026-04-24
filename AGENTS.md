@@ -57,7 +57,6 @@ pnpm test:sandbox:certification
 
 `docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
-- `docs/plans/falta/gana-v8-corners-experimental-guardrails.md`
 - `docs/plans/falta/gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`
 - `docs/plans/falta/gana-v8-provider-market-alias-hardening.md`
 
@@ -65,6 +64,7 @@ pnpm test:sandbox:certification
 
 - `docs/plans/archivado/2026-04-24-harness-falta-consolidado/`
 
+- `docs/plans/completado/gana-v8-corners-experimental-guardrails.md`
 - `docs/plans/completado/gana-v8-live-multimarket-provider-validation.md`
 - `docs/plans/completado/gana-v8-market-line-extraction-hardening.md`
 - `docs/plans/completado/gana-v8-corners-stats-prediction-validation.md`
