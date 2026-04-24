@@ -5,6 +5,7 @@ Este archivo es el indice canonico para descubrir procedimientos operativos. Los
 ## Runbooks operativos activos
 
 - `expensive-verification-triage.md`: escalera para verificaciones largas, DB-backed o costosas.
+- `harness-garbage-collection.md`: patrullaje recurrente de entropia, fronteras runtime y limpieza pequena del harness.
 - `observability-traceability-incident.md`: investigacion cuando health/readiness/summary/logs no explican un incidente.
 - `public-api-operator-console-read-model-staleness.md`: divergencias entre `public-api`, `operator-console` y estado durable.
 - `quarantine-manual-review.md`: revision manual de tareas en cuarentena o con decision humana pendiente.
@@ -22,6 +23,7 @@ Este archivo es el indice canonico para descubrir procedimientos operativos. Los
 | Objetivo | Disparador principal | Precondicion minima | Runbook |
 | --- | --- | --- | --- |
 | Elegir la verificacion mas barata antes de una corrida larga | Cambios con `pnpm test`, DB-backed checks o suites que ya consumen tiempo | Conocer superficies tocadas y si `DATABASE_URL` es compartida | [`expensive-verification-triage.md`](./expensive-verification-triage.md) |
+| Patrullar entropia del harness | Cierre de plan, PR docs/runbook, rutas legacy nuevas o artifacts sin owner | Contrato de principios dorados revisado y frente identificado | [`harness-garbage-collection.md`](./harness-garbage-collection.md) |
 | Validar promocion o revisar `runtime-release` | Candidato a `main`, fallo de release ops o estado `review-required` | MySQL preparado con migraciones versionadas y certificacion sintetica revisada | [`release-review-promotion.md`](./release-review-promotion.md) |
 | Diagnosticar certificacion sintetica | Fallo de `pnpm test:sandbox:certification` o diff contra golden | Goldens versionadas disponibles y artifact path definido | [`sandbox-certification.md`](./sandbox-certification.md) |
 | Clasificar drift sintetico | Evidence pack no coincide con golden vigente | Saber si el cambio esperado es de fixture, policy o runtime real | [`sandbox-certification-drift.md`](./sandbox-certification-drift.md) |
@@ -49,6 +51,6 @@ Este archivo es el indice canonico para descubrir procedimientos operativos. Los
 
 - Frecuencia: ejecutar en cada cierre de plan que toque docs, runbooks, release ops o entrypoints de agentes.
 - Owner de la corrida: quien mueve el plan o mergea el cambio a `main`.
-- Evidencia minima: resultado de `node scripts/workspace-lint.mjs --repo .`, resultado de `pnpm lint` cuando aplique y notas de cualquier drift no corregido.
+- Evidencia minima: resultado de `node scripts/workspace-lint.mjs --repo .`, resultado de `pnpm harness:scorecard`, resultado de `pnpm lint` cuando aplique y notas de cualquier drift no corregido.
 - Decision de backlog: corregir en el mismo cambio cuando el drift rompa discoverability, links, comandos canonicos o sync de planes; abrir o mantener plan activo solo si el drift requiere trabajo mayor.
 - Regla de fuente unica: este archivo mantiene el inventario exhaustivo de runbooks; los entrypoints principales enlazan aqui y los runbooks individuales conservan el procedimiento ejecutable.

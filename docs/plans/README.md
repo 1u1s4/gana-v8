@@ -10,7 +10,6 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-- `gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `gana-v8-harness-registro-goldens-y-cobertura.md`
 - `gana-v8-harness-remediacion-legible-por-agentes.md`
@@ -19,7 +18,8 @@ La lista anterior debe coincidir exactamente con los archivos reales dentro de `
 
 ## Estado actual del backlog
 
-- El analisis de harness del 23 de abril de 2026 reabre backlog activo solo para gaps no cubiertos por los cierres previos: QA navegable de flujos operativos, registro de goldens/cobertura, remediacion legible por agentes y patrullaje de principios dorados.
+- El analisis de harness del 23 de abril de 2026 mantiene backlog activo solo para gaps no cubiertos por cierres previos: QA navegable de flujos operativos, registro de goldens/cobertura y remediacion legible por agentes.
+- El frente de principios dorados y garbage collection ya quedo materializado con contrato canonico, scorecard advisory, enforcement estructural y runbook de patrullaje.
 - El cierre principal de harness, release ops y runbooks ya quedo materializado en `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`.
 - El cierre complementario de adopcion operativa de `runtime-release` ya quedo materializado en `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`.
 - El gap de bootstrap por worktree ya quedo materializado con CLI canonica, runbook operativo y validacion ejecutable HTTP/UI del harness vivo.
@@ -37,6 +37,7 @@ La lista anterior debe coincidir exactamente con los archivos reales dentro de `
 - `gana-v8-harness-runtime-release-y-verificacion-fiel.md`
 - `gana-v8-harness-doc-gardening-y-runbooks.md`
 - `gana-v8-harness-contratos-agentic-y-evaluacion.md`
+- `gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `gana-v8-runtime-release-adopcion-operativa.md`
 - `gana-v8-harness-verificacion-release-ops-y-runbooks.md`
 - `gana-v8-corners-stats-prediction-validation.md`

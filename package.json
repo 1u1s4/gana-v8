@@ -21,6 +21,7 @@
     "harness:serve": "node scripts/workspace-dev.mjs serve",
     "harness:validate": "node scripts/workspace-dev.mjs validate",
     "harness:clean": "node scripts/workspace-dev.mjs clean",
+    "harness:scorecard": "node scripts/harness-entropy-scorecard.mjs",
     "lint": "node scripts/workspace-lint.mjs --repo . && turbo run lint",
     "ops-history-retention": "tsx scripts/ops-history-retention.ts",
     "test": "turbo run test",

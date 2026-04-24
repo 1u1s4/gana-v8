@@ -6,11 +6,12 @@ Entry point corto y canónico para agentes que trabajen en `gana-v8`.
 
 1. Leer `README.md` para topología operativa, comandos y superficies activas.
 2. Leer `docs/README.md` para el mapa documental y la taxonomía vigente.
-3. Tratar `docs/plans/falta/` como la fuente de verdad para gaps activos del repo.
-4. Usar `docs/agentic-handoff.md` cuando haya subagentes, handoff entre sesiones o trabajo largo.
-5. Usar `docs/agentic-sprint-contract.md` y `docs/agentic-evaluation-rubric.md` para trabajo agentic no trivial, paralelo o con evaluador separado.
-6. Ir a `runbooks/README.md` para elegir procedimientos operativos activos; usar `runbooks/expensive-verification-triage.md` para corridas largas o DB-backed y `runbooks/sandbox-certification.md` para la certificación sintética.
-7. Si hace falta escalar verificaciones costosas desde Codex, usar la skill versionada en `skills/gana-v8-verification-guard/`.
+3. Leer `docs/harness-principios-dorados.md` para distinguir reglas bloqueantes, guidelines y excepciones temporales del harness.
+4. Tratar `docs/plans/falta/` como la fuente de verdad para gaps activos del repo.
+5. Usar `docs/agentic-handoff.md` cuando haya subagentes, handoff entre sesiones o trabajo largo.
+6. Usar `docs/agentic-sprint-contract.md` y `docs/agentic-evaluation-rubric.md` para trabajo agentic no trivial, paralelo o con evaluador separado.
+7. Ir a `runbooks/README.md` para elegir procedimientos operativos activos; usar `runbooks/expensive-verification-triage.md` para corridas largas o DB-backed, `runbooks/sandbox-certification.md` para la certificación sintética y `runbooks/harness-garbage-collection.md` para patrullaje de entropía.
+8. Si hace falta escalar verificaciones costosas desde Codex, usar la skill versionada en `skills/gana-v8-verification-guard/`.
 
 ## Topología oficial hoy
 
@@ -56,7 +57,6 @@ pnpm test:sandbox:certification
 
 `docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
-- `docs/plans/falta/gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `docs/plans/falta/gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `docs/plans/falta/gana-v8-harness-registro-goldens-y-cobertura.md`
 - `docs/plans/falta/gana-v8-harness-remediacion-legible-por-agentes.md`
@@ -69,6 +69,7 @@ pnpm test:sandbox:certification
 - `docs/plans/completado/gana-v8-harness-worktree-bootstrap-y-validacion-ejecutable.md`
 - `docs/plans/completado/gana-v8-harness-doc-gardening-y-runbooks.md`
 - `docs/plans/completado/gana-v8-harness-contratos-agentic-y-evaluacion.md`
+- `docs/plans/completado/gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `docs/plans/completado/gana-v8-harness-runtime-release-y-verificacion-fiel.md`
 - `docs/plans/completado/gana-v8-runtime-release-adopcion-operativa.md`
 - `docs/plans/completado/gana-v8-harness-verificacion-release-ops-y-runbooks.md`
