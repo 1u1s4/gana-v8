@@ -118,6 +118,8 @@ export interface PublisherWorkerSkipReason {
     | "invalid-implied-probability"
     | "missing-fixture"
     | "unsupported-market"
+    | "experimental-corners-policy-blocked"
+    | "experimental-corners-anti-correlation-blocked"
     | "not-published"
     | "outside-live-window"
     | "workflow-excluded"
@@ -173,6 +175,10 @@ const SUPPORTED_SCORE_DERIVED_MARKETS = [
   "both-teams-score",
   "double-chance",
 ] as const satisfies readonly PredictionEntity["market"][];
+const EXPERIMENTAL_CORNERS_MARKETS = [
+  "corners-total",
+  "corners-h2h",
+] as const satisfies readonly PredictionEntity["market"][];
 
 const round = (value: number): number => Number(value.toFixed(4));
 
@@ -181,6 +187,13 @@ const isSupportedScoreDerivedMarket = (
 ): boolean =>
   SUPPORTED_SCORE_DERIVED_MARKETS.includes(
     market as (typeof SUPPORTED_SCORE_DERIVED_MARKETS)[number],
+  );
+
+const isExperimentalCornersMarket = (
+  market: PredictionEntity["market"],
+): boolean =>
+  EXPERIMENTAL_CORNERS_MARKETS.includes(
+    market as (typeof EXPERIMENTAL_CORNERS_MARKETS)[number],
   );
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
@@ -548,9 +561,37 @@ const isFixtureWithinLiveParlayWindow = (
   );
 };
 
+const isBaseMarketCandidateForFixture = (
+  prediction: PublishedPredictionRecord,
+  generatedAt: string,
+): boolean => {
+  if (
+    prediction.status !== "published" ||
+    !isSupportedScoreDerivedMarket(prediction.market) ||
+    !prediction.fixture ||
+    !isFixtureWithinLiveParlayWindow(prediction.fixture, generatedAt)
+  ) {
+    return false;
+  }
+
+  const implied = prediction.probabilities.implied;
+  return Number.isFinite(implied) && implied > 0 && implied < 1;
+};
+
+const collectBaseMarketCandidateFixtureIds = (
+  predictions: readonly PublishedPredictionRecord[],
+  generatedAt: string,
+): ReadonlySet<string> =>
+  new Set(
+    predictions
+      .filter((prediction) => isBaseMarketCandidateForFixture(prediction, generatedAt))
+      .map((prediction) => prediction.fixtureId),
+  );
+
 const collectCandidateValidation = (
   prediction: PublishedPredictionRecord,
   generatedAt: string,
+  baseMarketCandidateFixtureIds: ReadonlySet<string>,
 ): PublisherWorkerSkipReason | null => {
   if (prediction.status !== "published") {
     return {
@@ -558,6 +599,20 @@ const collectCandidateValidation = (
       fixtureId: prediction.fixtureId,
       reason: "not-published",
       detail: `Prediction ${prediction.id} has status ${prediction.status}`,
+    };
+  }
+
+  if (isExperimentalCornersMarket(prediction.market)) {
+    const hasSameFixtureBaseCandidate = baseMarketCandidateFixtureIds.has(prediction.fixtureId);
+    return {
+      predictionId: prediction.id,
+      fixtureId: prediction.fixtureId,
+      reason: hasSameFixtureBaseCandidate
+        ? "experimental-corners-anti-correlation-blocked"
+        : "experimental-corners-policy-blocked",
+      detail: hasSameFixtureBaseCandidate
+        ? `Prediction ${prediction.id} market ${prediction.market} is experimental and blocked from same-fixture parlay candidates to avoid corners anti-correlation`
+        : `Prediction ${prediction.id} market ${prediction.market} is experimental and blocked by publisher corners policy`,
     };
   }
 
@@ -670,9 +725,17 @@ export const loadPublishedPredictionCandidates = async (
 
     const candidates: AtomicCandidate[] = [];
     const skipReasons: PublisherWorkerSkipReason[] = [];
+    const baseMarketCandidateFixtureIds = collectBaseMarketCandidateFixtureIds(
+      predictions,
+      generatedAt,
+    );
 
     for (const prediction of predictions) {
-      const invalid = collectCandidateValidation(prediction, generatedAt);
+      const invalid = collectCandidateValidation(
+        prediction,
+        generatedAt,
+        baseMarketCandidateFixtureIds,
+      );
       if (invalid) {
         skipReasons.push(invalid);
         continue;
@@ -839,9 +902,17 @@ export const publishParlayMvp = async (
     const coverageContext = shouldEvaluateCoveragePolicy
       ? await loadPublisherCoveragePolicyContext(runtime.unitOfWork)
       : null;
+    const baseMarketCandidateFixtureIds = collectBaseMarketCandidateFixtureIds(
+      scopedLoaded,
+      generatedAt,
+    );
 
     for (const prediction of scopedLoaded) {
-      const invalid = collectCandidateValidation(prediction, generatedAt);
+      const invalid = collectCandidateValidation(
+        prediction,
+        generatedAt,
+        baseMarketCandidateFixtureIds,
+      );
       if (invalid) {
         skipReasons.push(invalid);
         continue;

@@ -334,6 +334,112 @@ test("publishParlayMvp persists a mixed-market parlay across different fixtures"
   );
 });
 
+test("publishParlayMvp skips published corners predictions with explicit experimental policy reason", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2"]);
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord("pred-corners", "fx-corners", {
+        market: "corners-total",
+        outcome: "over",
+        confidence: 0.82,
+        probabilities: { implied: 0.46, model: 0.65, edge: 0.19, line: 9.5 },
+      }),
+      predictionRecord("pred-moneyline", "fx-1", {
+        market: "moneyline",
+        outcome: "home",
+        confidence: 0.72,
+        probabilities: { implied: 0.48, model: 0.63, edge: 0.15 },
+      }),
+      predictionRecord("pred-totals", "fx-2", {
+        market: "totals",
+        outcome: "over",
+        confidence: 0.7,
+        probabilities: { implied: 0.49, model: 0.61, edge: 0.12 },
+      }),
+    ]),
+    generatedAt: "2026-04-16T12:30:00.000Z",
+    stake: 10,
+    unitOfWork,
+    maxLegs: 2,
+    env: previewEnv,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.deepEqual(
+    result.selectedCandidates.map((candidate) => candidate.predictionId),
+    ["pred-moneyline", "pred-totals"],
+  );
+  assert.equal(
+    result.skipReasons.some(
+      (skip) =>
+        skip.predictionId === "pred-corners" &&
+        skip.reason === "experimental-corners-policy-blocked",
+    ),
+    true,
+  );
+  assert.equal(
+    result.skipReasons.some(
+      (skip) => skip.predictionId === "pred-corners" && skip.reason === "unsupported-market",
+    ),
+    false,
+  );
+});
+
+test("publishParlayMvp blocks same-fixture corners candidates with anti-correlation reason", async () => {
+  const unitOfWork = createInMemoryUnitOfWork();
+  await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2"]);
+
+  const result = await publishParlayMvp(undefined, {
+    client: createClient([
+      predictionRecord("pred-fx1-corners", "fx-1", {
+        market: "corners-h2h",
+        outcome: "home",
+        confidence: 0.91,
+        probabilities: { implied: 0.44, model: 0.69, edge: 0.25 },
+      }),
+      predictionRecord("pred-fx1-moneyline", "fx-1", {
+        market: "moneyline",
+        outcome: "home",
+        confidence: 0.73,
+        probabilities: { implied: 0.48, model: 0.63, edge: 0.15 },
+      }),
+      predictionRecord("pred-fx2-totals", "fx-2", {
+        market: "totals",
+        outcome: "over",
+        confidence: 0.7,
+        probabilities: { implied: 0.49, model: 0.61, edge: 0.12 },
+      }),
+    ]),
+    generatedAt: "2026-04-16T12:30:00.000Z",
+    stake: 10,
+    unitOfWork,
+    maxLegs: 2,
+    env: previewEnv,
+  });
+
+  assert.equal(result.status, "persisted");
+  assert.deepEqual(
+    result.selectedCandidates.map((candidate) => candidate.predictionId),
+    ["pred-fx1-moneyline", "pred-fx2-totals"],
+  );
+  assert.equal(
+    result.skipReasons.some(
+      (skip) =>
+        skip.predictionId === "pred-fx1-corners" &&
+        skip.reason === "experimental-corners-anti-correlation-blocked",
+    ),
+    true,
+  );
+  assert.equal(
+    result.skipReasons.some(
+      (skip) => skip.predictionId === "pred-fx1-corners" && skip.reason === "unsupported-market",
+    ),
+    false,
+  );
+});
+
 test("publishParlayMvp keeps max one leg per fixture across mixed markets", async () => {
   const unitOfWork = createInMemoryUnitOfWork();
   await seedPublishableResearch(unitOfWork, ["fx-1", "fx-2"]);
