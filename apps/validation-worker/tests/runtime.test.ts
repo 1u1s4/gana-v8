@@ -370,9 +370,9 @@ test("runValidationWorker voids pushed corners-total and skips corners predictio
   assert.equal(result.predictionResults.find((item) => item.predictionId === pushPrediction.id)?.verdict, "voided");
   assert.equal((await unitOfWork.predictions.getById(pushPrediction.id))?.status, "voided");
   assert.equal(pushValidation?.status, "partial");
-  assert.match(
+  assert.equal(
     result.predictionResults.find((item) => item.predictionId === missingStatsPrediction.id)?.reason ?? "",
-    /corners statistic coverage/i,
+    "Corners-h2h prediction cannot be settled because fixture home/away corners stats are missing or incomplete. Ingest final home/away corners statistics before validation.",
   );
 });
 
@@ -421,7 +421,7 @@ test("runValidationWorker skips totals and corners-total predictions without a m
   );
   assert.equal(
     result.predictionResults.find((item) => item.predictionId === cornersPrediction.id)?.reason,
-    "Market line is missing or ambiguous",
+    "Corners-total prediction cannot be settled because the corners market line is missing or ambiguous. Re-run corners line extraction or exclude this corners-total prediction.",
   );
 });
 

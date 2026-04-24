@@ -1540,7 +1540,7 @@ test("public api exposes fixture ops corners statistics from statistic snapshots
     homeTeam: "Antigua",
     awayTeam: "Coban",
     scheduledAt: "2026-04-15T18:00:00.000Z",
-    status: "scheduled",
+    status: "completed",
     metadata: {},
   });
   const fixtureWithPartialCorners = createFixture({
@@ -1563,8 +1563,18 @@ test("public api exposes fixture ops corners statistics from statistic snapshots
     status: "scheduled",
     metadata: {},
   });
+  const fixtureWithLineMissing = createFixture({
+    id: "fixture:corners:line-missing",
+    sport: "football",
+    competition: "Liga Nacional",
+    homeTeam: "Marquense",
+    awayTeam: "Mixco",
+    scheduledAt: "2026-04-16T00:00:00.000Z",
+    status: "completed",
+    metadata: {},
+  });
   const snapshot = createOperationSnapshot({
-    fixtures: [fixtureWithCorners, fixtureWithPartialCorners, fixtureWithoutCorners],
+    fixtures: [fixtureWithCorners, fixtureWithPartialCorners, fixtureWithoutCorners, fixtureWithLineMissing],
     fixtureStatisticSnapshots: [
       {
         id: "stat-corners-old-home",
@@ -1598,6 +1608,54 @@ test("public api exposes fixture ops corners statistics from statistic snapshots
         valueNumeric: 4,
         capturedAt: "2026-04-15T20:05:00.000Z",
       },
+      {
+        id: "stat-corners-line-home",
+        fixtureId: fixtureWithLineMissing.id,
+        statKey: "corners",
+        scope: "home",
+        valueNumeric: 4,
+        capturedAt: "2026-04-16T00:05:00.000Z",
+      },
+      {
+        id: "stat-corners-line-away",
+        fixtureId: fixtureWithLineMissing.id,
+        statKey: "corners",
+        scope: "away",
+        valueNumeric: 4,
+        capturedAt: "2026-04-16T00:05:00.000Z",
+      },
+    ],
+    predictions: [
+      createPrediction({
+        id: "prediction:corners:ready",
+        fixtureId: fixtureWithCorners.id,
+        market: "corners-total" as never,
+        outcome: "over",
+        status: "published",
+        confidence: 0.6,
+        probabilities: { implied: 0.5, model: 0.6, edge: 0.1, line: 7.5 },
+        rationale: ["corners ready"],
+      }),
+      createPrediction({
+        id: "prediction:corners:stats-missing",
+        fixtureId: fixtureWithPartialCorners.id,
+        market: "corners-h2h" as never,
+        outcome: "home",
+        status: "published",
+        confidence: 0.58,
+        probabilities: { implied: 0.5, model: 0.58, edge: 0.08 },
+        rationale: ["corners stats missing"],
+      }),
+      createPrediction({
+        id: "prediction:corners:line-missing",
+        fixtureId: fixtureWithLineMissing.id,
+        market: "corners-total" as never,
+        outcome: "over",
+        status: "published",
+        confidence: 0.57,
+        probabilities: { implied: 0.5, model: 0.57, edge: 0.07 },
+        rationale: ["corners line missing"],
+      }),
     ],
   });
   const handlers = createPublicApiHandlers(snapshot);
@@ -1623,6 +1681,28 @@ test("public api exposes fixture ops corners statistics from statistic snapshots
     totalCorners: null,
     capturedAt: null,
   });
+  assert.deepEqual(handlers.fixtureOpsById(fixtureWithCorners.id)?.cornersGuardrail.statuses, [
+    "settlement-ready",
+  ]);
+  assert.deepEqual(handlers.fixtureOpsById(fixtureWithPartialCorners.id)?.cornersGuardrail.statuses, [
+    "stats-missing",
+  ]);
+  assert.match(
+    handlers.fixtureOpsById(fixtureWithPartialCorners.id)?.cornersGuardrail.actionableText ?? "",
+    /stats are missing or incomplete/i,
+  );
+  assert.deepEqual(handlers.fixtureOpsById(fixtureWithLineMissing.id)?.cornersGuardrail.statuses, [
+    "line-missing",
+  ]);
+  assert.match(
+    handlers.fixtureOpsById(fixtureWithLineMissing.id)?.cornersGuardrail.actionableText ?? "",
+    /line is missing or ambiguous/i,
+  );
+  assert.deepEqual(handlers.fixtureOpsById(fixtureWithoutCorners.id)?.cornersGuardrail.statuses, []);
+  assert.equal(
+    handlers.fixtureOpsById(fixtureWithoutCorners.id)?.cornersGuardrail.actionableText,
+    "No corners predictions are present in the snapshot.",
+  );
 });
 
 test("public api returns consistent 404 payloads for missing detail resources", () => {

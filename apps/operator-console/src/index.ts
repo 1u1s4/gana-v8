@@ -11,6 +11,7 @@ import {
   type AiRunReadModel,
   type AutomationCycleReadModel,
   type CoverageDailyScopeReadModel,
+  type FixtureCornersGuardrailReadModel,
   type FixtureOpsStatisticsReadModel,
   getDailyAutomationPolicy,
   listCoverageDailyScope,
@@ -57,6 +58,7 @@ export interface OperatorConsoleFixture {
   readonly selectionOverride?: string | null;
   readonly scoringEligibilityReason?: string | null;
   readonly statistics?: FixtureOpsStatisticsReadModel;
+  readonly cornersGuardrail?: FixtureCornersGuardrailReadModel;
   readonly recentAuditEvents?: readonly string[];
 }
 
@@ -385,6 +387,16 @@ const formatCornersStatistics = (
     `away ${corners.awayCorners ?? "n/a"} | ` +
     `total ${corners.totalCorners ?? "n/a"}`;
   return `corners ${corners.status} | ${values}${corners.capturedAt ? ` | captured ${corners.capturedAt}` : ""}`;
+};
+
+const formatCornersGuardrail = (
+  guardrail: FixtureCornersGuardrailReadModel | null | undefined,
+): string => {
+  if (!guardrail) {
+    return "corners guardrail none | Corners guardrail summary is unavailable.";
+  }
+
+  return `corners guardrail ${guardrail.statuses.length > 0 ? guardrail.statuses.join(",") : "none"} | ${guardrail.actionableText}`;
 };
 
 const deriveFixtureCornersStatistics = (
@@ -730,6 +742,8 @@ export function createOperatorConsoleSnapshotFromOperation(
       const workflow = fixtureWorkflows.find((candidate) => candidate.fixtureId === fixture.id);
       const research = fixtureResearch.find((candidate) => candidate.fixtureId === fixture.id);
       const statistics = deriveFixtureCornersStatistics(operationSnapshot, fixture.id);
+      const cornersGuardrail =
+        (fixture as typeof fixture & { readonly cornersGuardrail?: FixtureCornersGuardrailReadModel }).cornersGuardrail;
       const latestFixtureOddsSnapshot =
         sortByNewest(
           operationSnapshot.oddsSnapshots.filter((snapshot) => snapshot.fixtureId === fixture.id),
@@ -800,6 +814,7 @@ export function createOperatorConsoleSnapshotFromOperation(
         selectionOverride: workflow?.selectionOverride ?? null,
         scoringEligibilityReason,
         statistics,
+        cornersGuardrail,
         recentAuditEvents,
       };
     }),
@@ -1392,7 +1407,7 @@ export function buildOperatorConsoleModel(
         ]
           .filter((value): value is string => Boolean(value))
           .join(" | ");
-        return `${fixture.id} | workflow ${fixture.featureReadinessStatus ?? "unknown"}${manualSelection}${selectionOverride}${eligibility}${researchContext ? ` | ${researchContext}` : ""} | ${formatCornersStatistics(fixture.statistics)} | predictions ${predictions.length} | parlays ${parlays.length} | validations ${snapshot.validationSummary.total}${recentOps}`;
+        return `${fixture.id} | workflow ${fixture.featureReadinessStatus ?? "unknown"}${manualSelection}${selectionOverride}${eligibility}${researchContext ? ` | ${researchContext}` : ""} | ${formatCornersStatistics(fixture.statistics)} | ${formatCornersGuardrail(fixture.cornersGuardrail)} | predictions ${predictions.length} | parlays ${parlays.length} | validations ${snapshot.validationSummary.total}${recentOps}`;
       }),
     },
     {
@@ -2204,6 +2219,14 @@ const formatFixtureCorners = (statistics) => {
     (corners.capturedAt ? ' | captured ' + corners.capturedAt : '');
 };
 
+const formatFixtureCornersGuardrail = (guardrail) => {
+  if (!guardrail) {
+    return 'Corners guardrail: none | summary unavailable';
+  }
+
+  return 'Corners guardrail: ' + (guardrail.statuses.length > 0 ? guardrail.statuses.join(',') : 'none') + ' | ' + guardrail.actionableText;
+};
+
 const renderFixtureActions = (fixtureId) => {
   const actions = [
     ['manual-select', 'Select', 'neutral'],
@@ -2235,7 +2258,7 @@ const renderFixturesTable = (snapshot) => {
         '<td>' + formatBadge(fixture.status) + '</td>' +
         '<td><strong>' + escapeHtml(fixture.researchRecommendedLean || 'n/a') + '</strong><span class="subtle">Readiness: ' + escapeHtml(fixture.featureReadinessStatus || 'unknown') + ' | bundle ' + escapeHtml(fixture.researchBundleStatus || 'n/a') + '</span><br /><span class="subtle">Cycle: ' + escapeHtml(fixture.researchCycle || 'n/a') + ' | Generated: ' + escapeHtml(fixture.researchGeneratedAt || 'n/a') + '</span><br /><span class="subtle">' + escapeHtml(fixture.researchNarrative || 'No persisted narrative') + '</span></td>' +
         '<td><span class="subtle">Manual: ' + escapeHtml(fixture.manualSelectionStatus || 'none') + ' by ' + escapeHtml(fixture.manualSelectionBy || 'n/a') + '</span><br /><span class="subtle">Override: ' + escapeHtml(fixture.selectionOverride || 'none') + '</span></td>' +
-        '<td><span class="subtle">' + escapeHtml(fixture.scoringEligibilityReason || 'n/a') + '</span><br /><span class="subtle">' + escapeHtml(formatFixtureCorners(fixture.statistics)) + '</span></td>' +
+        '<td><span class="subtle">' + escapeHtml(fixture.scoringEligibilityReason || 'n/a') + '</span><br /><span class="subtle">' + escapeHtml(formatFixtureCorners(fixture.statistics)) + '</span><br /><span class="subtle">' + escapeHtml(formatFixtureCornersGuardrail(fixture.cornersGuardrail)) + '</span></td>' +
         '<td>' + renderFixtureActions(fixture.id) + '</td>' +
       '</tr>'
     ).join('') +

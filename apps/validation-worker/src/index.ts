@@ -123,6 +123,12 @@ interface PredictionSettlementOutcome {
 const CORNERS_TOTAL_MARKET: CornerPredictionMarket = "corners-total";
 const CORNERS_H2H_MARKET: CornerPredictionMarket = "corners-h2h";
 const MARKET_LINE_MISSING_OR_AMBIGUOUS_REASON = "Market line is missing or ambiguous";
+const CORNERS_TOTAL_LINE_MISSING_REASON =
+  "Corners-total prediction cannot be settled because the corners market line is missing or ambiguous. Re-run corners line extraction or exclude this corners-total prediction.";
+const CORNERS_TOTAL_STATS_MISSING_REASON =
+  "Corners-total prediction cannot be settled because fixture corners stats are missing or incomplete. Ingest final home/away corners statistics before validation.";
+const CORNERS_H2H_STATS_MISSING_REASON =
+  "Corners-h2h prediction cannot be settled because fixture home/away corners stats are missing or incomplete. Ingest final home/away corners statistics before validation.";
 
 const createManagedRuntime = (
   databaseUrl?: string,
@@ -692,20 +698,32 @@ const derivePredictionVerdict = (
   });
 };
 
-const skippedReasonForUngradeablePrediction = (prediction: PredictionEntity): string => {
-  if (
-    (prediction.market === "totals" || prediction.market === CORNERS_TOTAL_MARKET) &&
-    !Number.isFinite(prediction.probabilities.line)
-  ) {
+const skippedReasonForUngradeablePrediction = async (
+  unitOfWork: StorageUnitOfWork,
+  prediction: PredictionEntity,
+): Promise<string> => {
+  if (prediction.market === "totals" && !Number.isFinite(prediction.probabilities.line)) {
     return MARKET_LINE_MISSING_OR_AMBIGUOUS_REASON;
   }
 
   if (prediction.market === CORNERS_TOTAL_MARKET) {
-    return "Corners-total prediction cannot be settled because fixture corners statistic coverage is missing.";
+    const snapshots = await findFixtureStatisticSnapshots(unitOfWork, prediction.fixtureId);
+    const stats = deriveCornerStatisticsSummary(snapshots) ?? getCornerStatsFromSnapshot(
+      [...snapshots].sort((left, right) => snapshotTimestamp(right) - snapshotTimestamp(left))[0] ?? null,
+    );
+    if (!stats) {
+      return CORNERS_TOTAL_STATS_MISSING_REASON;
+    }
+
+    if (!Number.isFinite(prediction.probabilities.line)) {
+      return CORNERS_TOTAL_LINE_MISSING_REASON;
+    }
+
+    return CORNERS_TOTAL_STATS_MISSING_REASON;
   }
 
   if (prediction.market === CORNERS_H2H_MARKET) {
-    return "Corners-h2h prediction cannot be settled because fixture home/away corners statistic coverage is missing.";
+    return CORNERS_H2H_STATS_MISSING_REASON;
   }
 
   return `Prediction ${prediction.market}:${prediction.outcome} cannot be settled from completed fixture score and market metadata.`;
@@ -754,7 +772,7 @@ const settlePredictionValidation = async (
       predictionId: prediction.id,
       fixtureId: prediction.fixtureId,
       status: "skipped",
-      reason: skippedReasonForUngradeablePrediction(prediction),
+      reason: await skippedReasonForUngradeablePrediction(unitOfWork, prediction),
     };
   }
 
