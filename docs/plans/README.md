@@ -10,10 +10,13 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
+- `gana-v8-corners-stats-prediction-validation.md`
 - `gana-v8-harness-principios-dorados-y-garbage-collection.md`
 - `gana-v8-harness-qa-navegable-y-flujos-operativos.md`
 - `gana-v8-harness-registro-goldens-y-cobertura.md`
 - `gana-v8-harness-remediacion-legible-por-agentes.md`
+- `gana-v8-multi-market-odds-taxonomy-ingestion.md`
+- `gana-v8-multi-market-scoring-publishing-validation.md`
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 
