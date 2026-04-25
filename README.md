@@ -236,7 +236,7 @@ La skill reusable del repo vive en `skills/gana-v8-verification-guard/` con su `
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-Sin planes activos.
+- `docs/plans/falta/gana-v8-llm-web-research-evidence-pipeline.md`: fuerza web research vía LLM y convierte fuentes/citas en evidencia y claims accionables para destrabar research -> scoring.
 
 Cierre reciente y contexto histórico:
 - `docs/plans/completado/gana-v8-provider-market-alias-hardening.md`

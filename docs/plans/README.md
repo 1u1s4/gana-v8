@@ -11,7 +11,7 @@ Esta carpeta agrupa planes y propuestas de implementación de `gana-v8`.
 
 ## Planes vigentes en `falta/`
 
-Sin planes vigentes.
+- `gana-v8-llm-web-research-evidence-pipeline.md`: fuerza web research vía LLM y convierte fuentes/citas en evidencia y claims accionables para destrabar research -> scoring.
 
 La lista anterior debe coincidir exactamente con los archivos reales dentro de `docs/plans/falta/` y con el bloque equivalente en `README.md`.
 

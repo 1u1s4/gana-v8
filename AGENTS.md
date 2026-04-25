@@ -57,7 +57,7 @@ pnpm test:sandbox:certification
 
 `docs/plans/falta/` contiene planes activos cuando existan. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
-Sin planes activos.
+- `docs/plans/falta/gana-v8-llm-web-research-evidence-pipeline.md`: fuerza web research vía LLM y convierte fuentes/citas en evidencia y claims accionables para destrabar research -> scoring.
 
 Último cierre relevante:
 
