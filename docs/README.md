@@ -6,6 +6,7 @@ Este directorio es el mapa canónico de documentación del repo. Su función es 
 
 - [`architecture/`](./architecture/) contiene la vista del sistema y la topología materializada. Punto de entrada recomendado: [`gana-v8-architecture.html`](./architecture/gana-v8-architecture.html).
 - [`adr/`](./adr/) contiene decisiones de arquitectura aceptadas. Punto de entrada recomendado: [`adr/README.md`](./adr/README.md).
+- [`srs/`](./srs/) contiene especificaciones de requisitos de software para frentes o versiones futuras antes de abrir planes de implementacion. Punto de entrada recomendado: [`srs/README.md`](./srs/README.md).
 - [`plans/`](./plans/) contiene planes y propuestas de ejecución. Punto de entrada recomendado: [`plans/README.md`](./plans/README.md).
 - [`plans/falta/`](./plans/falta/) contiene los planes canónicos vigentes para brechas reales del repo actual.
 - [`plans/completado/`](./plans/completado/) contiene planes cuyo resultado principal ya quedó materializado de forma sustancial.

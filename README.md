@@ -28,6 +28,7 @@ El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-m
 - `docs/agentic-handoff.md`: contrato de subagentes, handoff y aislamientos de trabajo.
 - `docs/agentic-sprint-contract.md`: contrato para sprint agentic no trivial, roles, baseline y validación.
 - `docs/agentic-evaluation-rubric.md`: rúbrica para evaluador separado y salida `promotable`/`review-required`/`blocked`.
+- `docs/srs/`: especificaciones de requisitos para versiones o frentes futuros antes de abrir planes activos.
 - `docs/plans/falta/`: fuente de verdad para gaps activos del repo.
 - `runbooks/README.md`: índice canónico para elegir procedimientos operativos activos.
 - `skills/gana-v8-verification-guard/`: skill reusable versionada en git para escalonar verificaciones costosas del monorepo sin depender de `~/.codex/skills`.
