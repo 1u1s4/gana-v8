@@ -28,7 +28,7 @@ El layout completo vive en `docs/plans/`, especialmente en `docs/plans/gana-v8-m
 - `docs/agentic-handoff.md`: contrato de subagentes, handoff y aislamientos de trabajo.
 - `docs/agentic-sprint-contract.md`: contrato para sprint agentic no trivial, roles, baseline y validación.
 - `docs/agentic-evaluation-rubric.md`: rúbrica para evaluador separado y salida `promotable`/`review-required`/`blocked`.
-- `docs/plans/falta/`: fuente de verdad para gaps activos del harness.
+- `docs/plans/falta/`: fuente de verdad para gaps activos del repo.
 - `runbooks/README.md`: índice canónico para elegir procedimientos operativos activos.
 - `skills/gana-v8-verification-guard/`: skill reusable versionada en git para escalonar verificaciones costosas del monorepo sin depender de `~/.codex/skills`.
 
@@ -236,9 +236,10 @@ La skill reusable del repo vive en `skills/gana-v8-verification-guard/` con su `
 `docs/plans/falta/` es la fuente de verdad para planes activos. `README.md` y `docs/plans/README.md` deben mantenerse alineados con esa carpeta.
 
 Activos:
-- `docs/plans/falta/gana-v8-provider-market-alias-hardening.md`
+Sin planes activos.
 
 Cierre reciente y contexto histórico:
+- `docs/plans/completado/gana-v8-provider-market-alias-hardening.md`
 - `docs/plans/completado/gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`
 - `docs/plans/archivado/2026-04-24-harness-falta-consolidado/`
 - `docs/plans/completado/gana-v8-corners-experimental-guardrails.md`

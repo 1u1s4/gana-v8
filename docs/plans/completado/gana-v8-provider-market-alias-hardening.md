@@ -71,3 +71,11 @@
 - Runbook: `runbooks/provider-market-alias-maintenance.md`.
 - Plan relacionado: `docs/plans/completado/gana-v8-live-multimarket-provider-validation.md`.
 - Observacion de review: el hardening sintetico ya esta materializado, pero el cierre del plan requiere validacion con payloads reales.
+
+## Cierre 2026-04-24
+
+- Evidencia live sanitizada versionada en `packages/source-connectors/tests/fixtures/api-football-market-aliases.json` a partir de `OddsSnapshot.payload.bet` de la validacion multi-mercado live del 2026-04-24.
+- Descriptores live cubiertos: `Match Winner`/`1`, `Goals Over/Under`/`5`, `Both Teams Score`/`8`, `Double Chance`/`12` y `Corners Over Under`/`45`, observados en fixtures `1379303`, `1391129` y `1378201`.
+- `packages/source-connectors/tests/markets.test.ts` valida que los descriptores live sanitizados normalicen a sus claves canonicas.
+- El comportamiento de discovery sin filtro para mercados desconocidos queda cubierto por `packages/source-connectors/tests/api-football-client.test.ts`, que preserva mercados provider-specific como slug estable (`99-half-time-odd-even`).
+- Criterio de done satisfecho con verificacion focalizada de `@gana-v8/source-connectors` y `pnpm lint`; no se escalo a suites DB-backed o sandbox porque el cambio no toca runtime durable, Prisma ni superficies operativas.

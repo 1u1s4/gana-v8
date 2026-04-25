@@ -10,6 +10,15 @@ import {
 } from "../src/markets.js";
 
 interface AliasCorpus {
+  readonly liveEvidence?: {
+    readonly descriptors: readonly {
+      readonly bookmakerKey?: string;
+      readonly canonicalKey: CanonicalOddsMarketKey;
+      readonly id?: string;
+      readonly name?: string;
+      readonly providerFixtureId?: string;
+    }[];
+  };
   readonly markets: readonly {
     readonly aliases: readonly {
       readonly id?: string;
@@ -32,6 +41,27 @@ test("normalizes the API-Football alias corpus to canonical keys", () => {
         `${alias.id ?? "name-only"} ${alias.name ?? "id-only"}`,
       );
     }
+  }
+});
+
+test("normalizes sanitized live API-Football bet descriptors to canonical keys", () => {
+  const liveDescriptors = aliasCorpus.liveEvidence?.descriptors ?? [];
+
+  assert.ok(liveDescriptors.length > 0, "expected sanitized live API-Football descriptors");
+
+  for (const descriptor of liveDescriptors) {
+    const label = [
+      descriptor.providerFixtureId ?? "fixture",
+      descriptor.bookmakerKey ?? "bookmaker",
+      descriptor.id ?? "name-only",
+      descriptor.name ?? "id-only",
+    ].join(" ");
+
+    assert.equal(
+      normalizeProviderMarketKey(descriptor),
+      descriptor.canonicalKey,
+      label,
+    );
   }
 });
 

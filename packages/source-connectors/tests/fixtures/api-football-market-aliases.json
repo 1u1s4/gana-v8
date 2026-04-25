@@ -1,5 +1,48 @@
 {
-  "description": "Synthetic, sanitized API-Football market alias corpus for connector normalization tests.",
+  "description": "Sanitized API-Football market alias corpus for connector normalization tests.",
+  "liveEvidence": {
+    "description": "Sanitized bet.id/bet.name descriptors observed in live API-Football OddsSnapshot payloads.",
+    "observedAt": "2026-04-24",
+    "provider": "api-football",
+    "source": "OddsSnapshot.payload.bet from live multi-market validation fixtures 1379303, 1391129, and 1378201.",
+    "descriptors": [
+      {
+        "canonicalKey": "h2h",
+        "id": "1",
+        "name": "Match Winner",
+        "providerFixtureId": "1379303",
+        "bookmakerKey": "william-hill"
+      },
+      {
+        "canonicalKey": "totals-goals",
+        "id": "5",
+        "name": "Goals Over/Under",
+        "providerFixtureId": "1378201",
+        "bookmakerKey": "sbo"
+      },
+      {
+        "canonicalKey": "both-teams-score",
+        "id": "8",
+        "name": "Both Teams Score",
+        "providerFixtureId": "1378201",
+        "bookmakerKey": "bet365"
+      },
+      {
+        "canonicalKey": "double-chance",
+        "id": "12",
+        "name": "Double Chance",
+        "providerFixtureId": "1391129",
+        "bookmakerKey": "10bet"
+      },
+      {
+        "canonicalKey": "corners-total",
+        "id": "45",
+        "name": "Corners Over Under",
+        "providerFixtureId": "1378201",
+        "bookmakerKey": "betano"
+      }
+    ]
+  },
   "markets": [
     {
       "canonicalKey": "h2h",

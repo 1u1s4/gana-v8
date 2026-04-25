@@ -55,12 +55,13 @@ pnpm test:sandbox:certification
 
 ## Planes activos
 
-`docs/plans/falta/` contiene planes activos hoy. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
+`docs/plans/falta/` contiene planes activos cuando existan. Mantener esta lista alineada con `README.md`, `docs/plans/README.md` y los archivos reales:
 
-- `docs/plans/falta/gana-v8-provider-market-alias-hardening.md`
+Sin planes activos.
 
 Último cierre relevante:
 
+- `docs/plans/completado/gana-v8-provider-market-alias-hardening.md`
 - `docs/plans/completado/gana-v8-harness-evidencia-cobertura-y-remediacion-operativa.md`
 - `docs/plans/archivado/2026-04-24-harness-falta-consolidado/`
 
