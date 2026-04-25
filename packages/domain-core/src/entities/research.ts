@@ -48,7 +48,8 @@ export interface ResearchGateReason {
     | "freshness"
     | "corroboration"
     | "contradiction"
-    | "coverage";
+    | "coverage"
+    | "web-research";
   readonly severity: ResearchGateSeverity;
   readonly message: string;
 }

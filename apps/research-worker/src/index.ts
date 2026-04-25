@@ -56,6 +56,8 @@ import type {
   ResearchBundleStatus,
   ResearchGateReason as PersistableResearchGateReason,
   ResearchTraceMetadata as PersistableResearchTraceMetadata,
+  EvidenceItem,
+  EvidenceKind,
   SourceRecord as PersistableSourceRecord,
 } from "@gana-v8/research-contracts";
 import {
@@ -90,11 +92,62 @@ const DEFAULT_AI_PROMPT_KEY: PromptRegistryKey = "research.fixture-analysis";
 const DEFAULT_AI_PROVIDER = "codex";
 const DEFAULT_AI_REQUESTED_MODEL = "gpt-5.4";
 const DEFAULT_AI_REQUESTED_REASONING: ReasoningLevel = "medium";
-const RESEARCH_OUTPUT_CONTRACT = '{"summary":"string","risks":["string"]}';
+const RESEARCH_OUTPUT_CONTRACT = JSON.stringify({
+  summary: "string",
+  risks: ["string"],
+  sources: [
+    {
+      title: "string",
+      url: "https://example.com/article-or-official-page",
+      provider: "official-club|league|trusted-media|stats-provider",
+      publishedAt: "ISO-8601 optional",
+      capturedAt: "ISO-8601 optional",
+      sourceType: "official|news|market|stats|social|other",
+      independenceKey: "publisher-or-domain",
+      snippet: "short quoted-or-paraphrased evidence snippet",
+    },
+  ],
+  evidence: [
+    {
+      title: "string",
+      summary: "string",
+      kind: "form|schedule|availability|lineups|motivation|market|tactical|model-hook",
+      direction: "home|away|draw|neutral",
+      confidence: 0.75,
+      impact: 0.3,
+      sourceIndexes: [0, 1],
+      tags: ["web-research"],
+    },
+  ],
+});
+
+const researchAiSourceCandidateSchema = z.object({
+  title: z.string().min(1),
+  url: z.string().url().optional(),
+  provider: z.string().min(1),
+  publishedAt: z.string().datetime().optional(),
+  capturedAt: z.string().datetime().optional(),
+  sourceType: z.enum(["official", "news", "market", "stats", "social", "other"]).default("news"),
+  independenceKey: z.string().min(1).optional(),
+  snippet: z.string().min(1),
+});
+
+const researchAiEvidenceCandidateSchema = z.object({
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  kind: z.enum(["form", "schedule", "availability", "lineups", "motivation", "market", "tactical", "model-hook"]),
+  direction: z.enum(["home", "away", "draw", "neutral"]),
+  confidence: z.number().min(0).max(1),
+  impact: z.number().min(0).max(1),
+  sourceIndexes: z.array(z.number().int().nonnegative()).min(1),
+  tags: z.array(z.string().min(1)).default([]),
+});
 
 const researchStructuredOutputSchema = z.object({
   summary: z.string().min(1),
   risks: z.array(z.string().min(1)).max(8).optional(),
+  sources: z.array(researchAiSourceCandidateSchema).default([]),
+  evidence: z.array(researchAiEvidenceCandidateSchema).default([]),
 });
 
 type ResearchStructuredOutput = z.infer<typeof researchStructuredOutputSchema>;
@@ -234,6 +287,133 @@ const LEGACY_METADATA_PREFIXES = ["research", "feature"] as const;
 const isAiEnabled = (config?: ResearchSynthesisAiConfig): boolean => config?.enabled === true;
 
 const round = (value: number): number => Number(value.toFixed(4));
+
+const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+
+const stableHash = (value: string): string => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+};
+
+const optionalMetadata = (
+  key: string,
+  value: string | undefined,
+): readonly [string, string][] => (value ? [[key, value]] : []);
+
+const buildAiWebEvidence = (
+  fixture: FixtureEntity,
+  generatedAt: string,
+  structuredOutput: ResearchStructuredOutput,
+): EvidenceItem[] => {
+  const evidence: EvidenceItem[] = [];
+
+  structuredOutput.evidence.forEach((candidate, candidateIndex) => {
+    const validSourceIndexes = [...new Set(candidate.sourceIndexes)]
+      .filter((sourceIndex) => structuredOutput.sources[sourceIndex] !== undefined);
+
+    validSourceIndexes.forEach((sourceIndex, sourceLinkIndex) => {
+      const source = structuredOutput.sources[sourceIndex]!;
+      const reference = source.url ?? source.title;
+      const capturedAt = source.capturedAt ?? generatedAt;
+      const sourceProvider = `web:${source.provider}`;
+      const identity = [
+        fixture.id,
+        candidateIndex,
+        sourceIndex,
+        candidate.title,
+        reference,
+      ].join("|");
+
+      evidence.push({
+        id: `evidence:web-ai:${fixture.id}:${candidateIndex}:${sourceIndex}:${stableHash(identity)}`,
+        fixtureId: fixture.id,
+        kind: candidate.kind as EvidenceKind,
+        title: candidate.title,
+        summary: candidate.summary,
+        direction: candidate.direction,
+        confidence: round(clamp01(candidate.confidence)),
+        impact: round(clamp01(candidate.impact)),
+        source: {
+          provider: sourceProvider,
+          reference,
+        },
+        tags: [...new Set(["web-research", ...candidate.tags])],
+        extractedAt: capturedAt,
+        metadata: Object.fromEntries([
+          ["webResearchMode", "llm-web-search"],
+          ["webResearchSourceIndex", String(sourceIndex)],
+          ["webResearchEvidenceIndex", String(candidateIndex)],
+          ["webResearchSourceLinkIndex", String(sourceLinkIndex)],
+          ["webSourceTitle", source.title],
+          ["webSourceProvider", source.provider],
+          ["webSourceType", source.sourceType],
+          ["webSourceSnippet", source.snippet],
+          ["webSourceIndependenceKey", source.independenceKey ?? source.url ?? source.provider],
+          ...optionalMetadata("webSourceUrl", source.url),
+          ...optionalMetadata("webSourcePublishedAt", source.publishedAt),
+          ...optionalMetadata("webSourceCapturedAt", source.capturedAt),
+        ]),
+      });
+    });
+  });
+
+  return evidence;
+};
+
+const resolveWebResearchStatus = (
+  webSearchMode: ResearchSynthesisAiConfig["webSearchMode"] | undefined,
+  structuredOutput: ResearchStructuredOutput,
+  aiWebEvidence: readonly EvidenceItem[],
+): NonNullable<ResearchTraceMetadata["webResearchStatus"]> => {
+  if (!webSearchMode || webSearchMode === "disabled") {
+    return "not-requested";
+  }
+  return structuredOutput.sources.length > 0 && aiWebEvidence.length > 0 ? "used" : "empty";
+};
+
+const applyRequiredWebResearchGuard = (
+  bundle: ResearchBundle,
+  researchTrace: ResearchTraceMetadata,
+): ResearchBundle => {
+  if (
+    researchTrace.webSearchMode !== "required" ||
+    researchTrace.webResearchStatus !== "empty"
+  ) {
+    return bundle;
+  }
+
+  const emptyReason =
+    "web-research-empty: required LLM web research returned no usable sources or evidence.";
+
+  return {
+    ...bundle,
+    publicationStatus: "hold",
+    risks: bundle.risks.some((risk) => risk.includes("web-research-empty"))
+      ? bundle.risks
+      : [...bundle.risks, emptyReason],
+  };
+};
+
+const buildWebResearchGateReason = (
+  trace: PersistableResearchTraceMetadata,
+  generatedAt: string,
+): PersistableResearchGateReason | undefined => {
+  if (
+    trace.webSearchMode !== "required" ||
+    trace.webResearchStatus !== "empty"
+  ) {
+    return undefined;
+  }
+
+  return {
+    code: "web-research",
+    severity: "block",
+    message: "Required LLM web research returned no usable sources or evidence.",
+  };
+};
 
 const addHours = (iso: string, hours: number): string | undefined => {
   const timestamp = Date.parse(iso);
@@ -622,12 +802,30 @@ const renderResearchAiPrompt = (
   renderPrompt(
     input.config?.promptKey ?? DEFAULT_AI_PROMPT_KEY,
     {
-      context: createAiContext(
-        input.fixture,
-        input.brief,
-        input.evidence,
-        input.directionalScore,
-      ),
+      context: [
+        createAiContext(
+          input.fixture,
+          input.brief,
+          input.evidence,
+          input.directionalScore,
+        ),
+        input.config?.webSearchMode === "required"
+          ? [
+              "Web research is REQUIRED for this task.",
+              "Search current team news, injuries, suspensions, probable lineups, tactical context, and market-moving facts.",
+              "Return at least two independent sources for any critical non-official claim.",
+              "Prefer official club, league, or team channels for availability and lineups; use trusted media or stats providers for supporting claims.",
+              "Do not invent URLs.",
+              "If no usable source is found, return empty sources/evidence arrays and explain the gap in risks.",
+            ].join("\n")
+          : input.config?.webSearchMode === "auto"
+            ? [
+                "Web research is available.",
+                "Use web search when current injuries, lineups, suspensions, or market-moving facts are missing from the context.",
+                "Do not invent URLs.",
+              ].join("\n")
+            : "Web research is not requested; do not invent external sources.",
+      ].join("\n\n"),
       outputContract: RESEARCH_OUTPUT_CONTRACT,
     },
     input.config?.promptVersion,
@@ -896,10 +1094,24 @@ const buildPersistableSources = (
     bundleId: bundle.id,
     provider: source.provider,
     reference: source.reference,
-    sourceType: source.sourceType,
+    sourceType:
+      typeof source.metadata.webSourceType === "string"
+        ? source.metadata.webSourceType
+        : source.sourceType,
+    ...(typeof source.metadata.webSourceTitle === "string" ? { title: source.metadata.webSourceTitle } : {}),
+    ...(typeof source.metadata.webSourceUrl === "string" ? { url: source.metadata.webSourceUrl } : {}),
     admissibility: toSourceAdmissibility(source),
-    independenceKey: source.independenceKey,
-    capturedAt: source.fetchedAt,
+    independenceKey:
+      typeof source.metadata.webSourceIndependenceKey === "string"
+        ? source.metadata.webSourceIndependenceKey
+        : source.independenceKey,
+    capturedAt:
+      typeof source.metadata.webSourceCapturedAt === "string"
+        ? source.metadata.webSourceCapturedAt
+        : source.fetchedAt,
+    ...(typeof source.metadata.webSourcePublishedAt === "string"
+      ? { publishedAt: source.metadata.webSourcePublishedAt }
+      : {}),
     metadata: {
       sourceTier: source.sourceTier,
       baseAuthorityScore: source.baseAuthorityScore,
@@ -985,9 +1197,13 @@ const toPersistableResearchBundle = (
   const sources = buildPersistableSources(bundle);
   const claims = buildPersistableClaims(bundle, assignments);
   const conflicts = buildPersistableConflicts(bundle);
+  const webResearchGateReason = buildWebResearchGateReason(trace, bundle.generatedAt);
   const gateResult = {
     status: toBundleStatus(bundle.publicationStatus),
-    reasons: buildGateReasons(bundle),
+    reasons: [
+      ...buildGateReasons(bundle),
+      ...(webResearchGateReason ? [webResearchGateReason] : []),
+    ],
     gatedAt: bundle.generatedAt,
   } as const;
 
@@ -1403,6 +1619,15 @@ export const runResearchSynthesisAi = async (
       aiProvider: aiRun.provider,
       aiModel: aiRun.model,
       aiPromptVersion: aiRun.promptVersion,
+      webSearchMode: result.webSearchMode,
+      webResearchStatus:
+        result.webSearchMode === "disabled"
+          ? "not-requested"
+          : result.structuredOutput.sources.length > 0 && result.structuredOutput.evidence.length > 0
+            ? "used"
+            : "empty",
+      webResearchSourceCount: result.structuredOutput.sources.length,
+      webResearchEvidenceCount: result.structuredOutput.evidence.length,
       ...(aiRun.providerRequestId ? { providerRequestId: aiRun.providerRequestId } : {}),
     },
   };
@@ -1436,6 +1661,8 @@ const createFallbackTrace = async (
     structuredOutput: {
       summary: "",
       risks: [],
+      sources: [],
+      evidence: [],
     },
     metadata: {
       synthesisMode: "ai-fallback",
@@ -1443,6 +1670,12 @@ const createFallbackTrace = async (
       aiProvider: aiRun.provider,
       aiModel: aiRun.model,
       aiPromptVersion: aiRun.promptVersion,
+      webSearchMode: input.config?.webSearchMode ?? "disabled",
+      webResearchStatus: input.config?.webSearchMode && input.config.webSearchMode !== "disabled"
+        ? "fallback"
+        : "not-requested",
+      webResearchSourceCount: 0,
+      webResearchEvidenceCount: 0,
       fallbackSummary: `AI synthesis fallback to deterministic baseline: ${message}`,
     },
   };
@@ -1487,13 +1720,37 @@ export const runResearchTask = async (
         ...(input.persistence ? { persistence: input.persistence } : {}),
       });
       aiRun = aiTrace.aiRun;
-      researchTrace = aiTrace.metadata;
+      const aiWebEvidence = buildAiWebEvidence(
+        input.fixture,
+        generatedAt,
+        aiTrace.structuredOutput,
+      );
+      const webResearchStatus = resolveWebResearchStatus(
+        input.ai?.webSearchMode,
+        aiTrace.structuredOutput,
+        aiWebEvidence,
+      );
+      researchTrace = {
+        ...aiTrace.metadata,
+        webSearchMode: input.ai?.webSearchMode ?? "disabled",
+        webResearchStatus,
+        webResearchSourceCount: aiTrace.structuredOutput.sources.length,
+        webResearchEvidenceCount: aiWebEvidence.length,
+      };
+      bundle = buildResearchBundle(input.fixture, {
+        ...baseBundleOptions,
+        evidence: [
+          ...(input.evidence ?? []),
+          ...aiWebEvidence,
+        ],
+      });
       bundle = applyResearchSynthesis(bundle, {
         summary: aiTrace.structuredOutput.summary,
         ...(aiTrace.structuredOutput.risks && aiTrace.structuredOutput.risks.length > 0
           ? { risks: aiTrace.structuredOutput.risks }
           : {}),
       });
+      bundle = applyRequiredWebResearchGuard(bundle, researchTrace);
     } catch (error) {
       const fallbackTrace = await createFallbackTrace(
         {

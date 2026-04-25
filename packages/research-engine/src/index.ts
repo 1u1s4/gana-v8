@@ -1039,18 +1039,43 @@ const createSourceRecord = (
     authority: 0.6,
     official: false,
   };
+  const webSourceType = metadata.webSourceType;
+  const webAuthority =
+    webSourceType === "official"
+      ? {
+          sourceType: "official" as const,
+          tier: "A" as const,
+          authority: 0.95,
+          official: true,
+        }
+      : webSourceType === "market"
+        ? {
+            sourceType: "market" as const,
+            tier: "B" as const,
+            authority: 0.72,
+            official: false,
+          }
+        : webSourceType === "stats"
+          ? {
+              sourceType: "media" as const,
+              tier: "B" as const,
+              authority: 0.72,
+              official: false,
+            }
+          : undefined;
+  const resolvedAuthority = webAuthority ?? authority;
 
   return {
     id: createSourceId(fixture.id, provider, reference),
     fixtureId: fixture.id,
     provider,
     reference,
-    sourceType: authority.sourceType,
-    sourceTier: authority.tier,
-    baseAuthorityScore: authority.authority,
-    independenceKey: slugify(provider),
-    admissible: authority.tier !== "D",
-    official: authority.official,
+    sourceType: resolvedAuthority.sourceType,
+    sourceTier: resolvedAuthority.tier,
+    baseAuthorityScore: resolvedAuthority.authority,
+    independenceKey: slugify(metadata.webSourceIndependenceKey ?? provider),
+    admissible: resolvedAuthority.tier !== "D",
+    official: resolvedAuthority.official,
     fetchedAt,
     metadata,
   };
@@ -1352,7 +1377,7 @@ const createInjectedSource = (
     evidence.source.provider,
     evidence.source.reference,
     evidence.extractedAt,
-    { injected: "true" },
+    { injected: "true", ...evidence.metadata },
   );
 
 const runResearchAssignments = (

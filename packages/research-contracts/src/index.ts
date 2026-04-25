@@ -132,7 +132,8 @@ export interface ResearchGateReason {
     | "freshness"
     | "corroboration"
     | "contradiction"
-    | "coverage";
+    | "coverage"
+    | "web-research";
   readonly severity: ResearchGateSeverity;
   readonly message: string;
 }
@@ -151,6 +152,10 @@ export interface ResearchTraceMetadata {
   readonly aiPromptVersion?: string;
   readonly providerRequestId?: string;
   readonly fallbackSummary?: string;
+  readonly webSearchMode?: "disabled" | "auto" | "required";
+  readonly webResearchStatus?: "not-requested" | "used" | "empty" | "fallback";
+  readonly webResearchSourceCount?: number;
+  readonly webResearchEvidenceCount?: number;
   readonly plannerVersion?: string;
   readonly assignmentIds?: readonly string[];
 }

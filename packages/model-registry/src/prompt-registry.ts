@@ -50,7 +50,7 @@ function buildResearchFixtureAnalysisPrompt(
           "Responde en español con trazabilidad clara y evita inventar datos.",
         ].join(" "),
         userPrompt: [
-          "Analizá el fixture usando exclusivamente el contexto provisto.",
+          "Analizá el fixture usando el contexto provisto; si hay herramienta web disponible o requerida, usala sólo para verificar fuentes actuales citables.",
           input.outputContract
             ? `Contrato de salida: ${input.outputContract}`
             : "Si faltan datos, señalalo explícitamente.",

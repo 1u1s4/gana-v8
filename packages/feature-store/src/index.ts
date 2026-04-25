@@ -36,6 +36,10 @@ export interface ResearchTraceMetadata {
   readonly aiPromptVersion?: string;
   readonly providerRequestId?: string;
   readonly fallbackSummary?: string;
+  readonly webSearchMode?: "disabled" | "auto" | "required";
+  readonly webResearchStatus?: "not-requested" | "used" | "empty" | "fallback";
+  readonly webResearchSourceCount?: number;
+  readonly webResearchEvidenceCount?: number;
 }
 
 export interface FeatureVectorValues {
